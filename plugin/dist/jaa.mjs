@@ -8,7 +8,7 @@ var __export = (target, all) => {
 
 // src/cli/main.ts
 import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
-import { text as text5 } from "node:stream/consumers";
+import { text as text6 } from "node:stream/consumers";
 
 // node_modules/zod/v4/core/util.js
 function getEnumValues(entries) {
@@ -185,14 +185,14 @@ function codePointLength(str) {
   const units = str.length;
   if (!highSurrogate.test(str))
     return units;
-  let count2 = units;
+  let count3 = units;
   for (let i = 0; i < units - 1; i++) {
     if ((str.charCodeAt(i) & 64512) === 55296 && (str.charCodeAt(i + 1) & 64512) === 56320) {
-      count2--;
+      count3--;
       i++;
     }
   }
-  return count2;
+  return count3;
 }
 function getLengthableOrigin(input) {
   if (Array.isArray(input))
@@ -1206,14 +1206,14 @@ var $ZodObject = /* @__PURE__ */ $constructor("$ZodObject", (inst, def) => {
   const desc = Object.getOwnPropertyDescriptor(def, "shape");
   const sh = desc?.get ? desc.get.raw : def.shape ?? {};
   if (sh) {
-    const get = () => {
+    const get2 = () => {
       const newSh = { ...sh };
       Object.defineProperty(def, "shape", { value: newSh });
-      get.raw = newSh;
+      get2.raw = newSh;
       return newSh;
     };
-    get.raw = sh;
-    Object.defineProperty(def, "shape", { get });
+    get2.raw = sh;
+    Object.defineProperty(def, "shape", { get: get2 });
   }
   const _normalized = cached(() => normalizeDef(def));
   defineLazyInternal(inst, "propValues", (zod) => {
@@ -2239,6 +2239,214 @@ function validateCardDocument(docId, input) {
   return result;
 }
 
+// src/contract/news.ts
+var NEWS_COLLECTION = "news";
+var FORUMS = ["r/csMajors", "r/cscareerquestions", "Hacker News"];
+var COMPANY_NEWS_KINDS = [
+  "layoffs",
+  "hiring_freeze",
+  "hiring",
+  "funding",
+  "acquisition",
+  "other"
+];
+var INDUSTRY_TOPICS = ["ai", "big_tech", "entry_level_market"];
+var NEWS_SECTIONS = [
+  "hiringSignals",
+  "forumHighlights",
+  "companyNews",
+  "industryNews"
+];
+var MIN_INDUSTRY_STORIES = 5;
+var MAX_INDUSTRY_STORIES = 8;
+var NEWS_DAYS_KEPT = 90;
+var MAX_SIGNAL_POSTINGS = 3;
+var BLOCKED_NEWS_HOSTS = ["linkedin.com", "lnkd.in", "teamblind.com"];
+var text2 = (max) => string2().check(
+  _trim(),
+  _minLength(1, "must not be blank"),
+  _maxLength(max, `must be ${String(max)} characters or fewer`)
+);
+var isoDaySchema = string2().check(
+  _regex(/^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/, "must be a day written as YYYY-MM-DD")
+);
+function hostOf(url) {
+  try {
+    return new URL(url).hostname.toLowerCase();
+  } catch {
+    return void 0;
+  }
+}
+function blockedNewsHost(url) {
+  const host = hostOf(url);
+  if (host === void 0) return void 0;
+  return BLOCKED_NEWS_HOSTS.find((blocked) => host === blocked || host.endsWith(`.${blocked}`));
+}
+var sourceUrl = string2().check(
+  _maxLength(2e3, "must be 2000 characters or fewer"),
+  _regex(/^https?:\/\/[^\s/]+\.[^\s]*$/, "must be an http or https web address"),
+  superRefine((url, ctx) => {
+    const blocked = blockedNewsHost(url);
+    if (blocked !== void 0) {
+      ctx.addIssue({
+        code: "custom",
+        message: `must not link to ${blocked}; the digest never reads LinkedIn or Blind`,
+        input: url
+      });
+    }
+  })
+);
+var signalPosting = strictObject({
+  id: postingIdSchema,
+  title: text2(300),
+  level: _enum(SENIORITIES),
+  postedOn: isoDaySchema,
+  /** The Posting's apply URL: the signal's source. */
+  applyUrl: sourceUrl
+});
+var hiringSignal = strictObject({
+  company: text2(200),
+  /** Why the company stands out, as on its Postings, for example "Fortune 500". */
+  boosts: array(text2(80)).check(_minLength(1, "list at least one boost"), _maxLength(10)),
+  /** How many of its Postings in the Job List went up this week. */
+  newPostings: int().check(_gte(1, "must be at least 1")),
+  /** Its newest Postings, newest first. */
+  postings: array(signalPosting).check(
+    _minLength(1, "list at least one Posting"),
+    _maxLength(MAX_SIGNAL_POSTINGS, `list at most ${String(MAX_SIGNAL_POSTINGS)} Postings`)
+  )
+}).check(
+  superRefine((value, ctx) => {
+    if (value.newPostings < value.postings.length) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["newPostings"],
+        message: "cannot be fewer than the Postings listed",
+        input: value.newPostings
+      });
+    }
+  })
+);
+var FORUM_ADDRESSES = {
+  "r/csMajors": /^https:\/\/(?:www\.|old\.)?reddit\.com\/r\/csmajors\//i,
+  "r/cscareerquestions": /^https:\/\/(?:www\.|old\.)?reddit\.com\/r\/cscareerquestions\//i,
+  "Hacker News": /^https:\/\/news\.ycombinator\.com\/item\?id=\d+/
+};
+var FORUM_EXAMPLES = {
+  "r/csMajors": "https://www.reddit.com/r/csMajors/comments/...",
+  "r/cscareerquestions": "https://www.reddit.com/r/cscareerquestions/comments/...",
+  "Hacker News": "https://news.ycombinator.com/item?id=..."
+};
+var forumHighlight = strictObject({
+  forum: _enum(FORUMS),
+  title: text2(300),
+  /** What people are saying, in a sentence or two. */
+  summary: text2(400),
+  /** The thread itself. */
+  url: sourceUrl
+}).check(
+  superRefine((value, ctx) => {
+    if (!FORUM_ADDRESSES[value.forum].test(value.url)) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["url"],
+        message: `must be a ${value.forum} thread, like ${FORUM_EXAMPLES[value.forum]}`,
+        input: value.url
+      });
+    }
+  })
+);
+var companyNews = strictObject({
+  company: text2(200),
+  kind: _enum(COMPANY_NEWS_KINDS),
+  headline: text2(300),
+  summary: text2(400),
+  url: sourceUrl,
+  /** Who published it, for example "Reuters". */
+  source: text2(80),
+  publishedOn: isoDaySchema
+});
+var industryStory = strictObject({
+  topic: _enum(INDUSTRY_TOPICS),
+  headline: text2(300),
+  summary: text2(400),
+  /** One line on why it matters to the Candidate, for interviews or for their search. */
+  whyItMatters: text2(240),
+  url: sourceUrl,
+  source: text2(80),
+  publishedOn: isoDaySchema
+});
+var gap = strictObject({
+  section: _enum(NEWS_SECTIONS),
+  note: text2(300)
+});
+var digest = strictObject({
+  schemaVersion: literal(1),
+  /** The Candidate's local day the digest was built for; also its document id. */
+  day: isoDaySchema,
+  builtAt: timestampSchema,
+  /** Postings in the Job List that went up in the 7 days up to `day`. */
+  newThisWeek: int().check(_gte(0)),
+  hiringSignals: array(hiringSignal).check(_maxLength(15)),
+  forumHighlights: array(forumHighlight).check(_maxLength(12)),
+  companyNews: array(companyNews).check(_maxLength(30)),
+  industryNews: array(industryStory).check(
+    _maxLength(
+      MAX_INDUSTRY_STORIES,
+      `list at most ${String(MAX_INDUSTRY_STORIES)} industry stories`
+    )
+  ),
+  gaps: array(gap).check(_maxLength(10))
+}).check(
+  superRefine((value, ctx) => {
+    const stories = value.industryNews.length;
+    const explained = value.gaps.some((g) => g.section === "industryNews");
+    if (stories < MIN_INDUSTRY_STORIES && !(stories === 0 && explained)) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["industryNews"],
+        message: `list ${String(MIN_INDUSTRY_STORIES)} to ${String(MAX_INDUSTRY_STORIES)} industry stories, or none with a gap that says why`,
+        input: value.industryNews
+      });
+    }
+    const seen = /* @__PURE__ */ new Set();
+    const items = [
+      ...value.forumHighlights.map((item, i) => ({
+        url: item.url,
+        path: ["forumHighlights", i]
+      })),
+      ...value.companyNews.map((item, i) => ({ url: item.url, path: ["companyNews", i] })),
+      ...value.industryNews.map((item, i) => ({ url: item.url, path: ["industryNews", i] }))
+    ];
+    for (const { url, path } of items) {
+      if (seen.has(url)) {
+        ctx.addIssue({
+          code: "custom",
+          path: [...path, "url"],
+          message: "links a source another item already links",
+          input: url
+        });
+      }
+      seen.add(url);
+    }
+  })
+);
+function validateNewsDigest(input) {
+  return validateWith(digest, input);
+}
+function validateNewsDocument(docId, input) {
+  const result = validateNewsDigest(input);
+  if (result.ok && result.value.day !== docId) {
+    return {
+      ok: false,
+      issues: [
+        `A News Digest is stored under its day: ${NEWS_COLLECTION}/${result.value.day}, not ${NEWS_COLLECTION}/${docId}.`
+      ]
+    };
+  }
+  return result;
+}
+
 // src/contract/skips.ts
 var SKIPS_COLLECTION = "skips";
 var SKIP_REASONS = [
@@ -2337,7 +2545,7 @@ var JOB_BOARD_NAMES = {
 };
 var MAX_WATCHLIST = 200;
 var MAX_ADDED_POSTINGS = 200;
-var text2 = (max) => string2().check(
+var text3 = (max) => string2().check(
   _trim(),
   _minLength(1, "must not be blank"),
   _maxLength(max, `must be ${String(max)} characters or fewer`)
@@ -2351,7 +2559,7 @@ var timestamp = iso_exports.datetime({ error: "must be an ISO 8601 timestamp" })
 var SLUG = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
 var watchedCompany = strictObject({
   /** The company's name as the Candidate wants it shown. */
-  name: text2(200),
+  name: text3(200),
   board: _enum(JOB_BOARDS),
   /** The company's name in its job board link, for example `stripe`. */
   slug: string2().check(_regex(SLUG, "must be the company's name in its job board link, for example stripe"))
@@ -2359,10 +2567,10 @@ var watchedCompany = strictObject({
 var addedPosting = strictObject({
   /** The URL the Candidate pasted; Refresh uses it as the apply URL. */
   url: webAddress2,
-  company: text2(200),
-  title: text2(300),
+  company: text3(200),
+  title: text3(300),
   /** Where the job is, as the Candidate typed it, for example "New York, NY" or "Remote". */
-  location: text2(200),
+  location: text3(200),
   addedAt: timestamp
 });
 function noRepeats2(key, message) {
@@ -2519,7 +2727,8 @@ var collections = {
   [CARDS_COLLECTION]: validateCardDocument,
   [SKIPS_COLLECTION]: validateSkipDocument,
   [VARIANT_OVERRIDES_COLLECTION]: validateVariantOverrideDocument,
-  [SOURCES_COLLECTION]: validateSourceDocument
+  [SOURCES_COLLECTION]: validateSourceDocument,
+  [NEWS_COLLECTION]: validateNewsDocument
 };
 var CONTRACT_COLLECTIONS = Object.keys(collections);
 function validateDocument(collection, docId, input) {
@@ -2533,8 +2742,8 @@ function validateDocument(collection, docId, input) {
   return rule(docId, input);
 }
 
-// src/refresh/run.ts
-import { join, resolve } from "node:path";
+// src/refresh/news.ts
+import { join as join2, resolve as resolve2 } from "node:path";
 
 // src/engine/fortune-500.ts
 var FORTUNE_500 = [
@@ -3349,8 +3558,277 @@ function companyBoost(company, companyTier) {
   return { value, reasons };
 }
 
-// src/engine/freshness.ts
+// src/engine/news.ts
+var HIRING_SIGNAL_DAYS = 7;
+var MAX_HIRING_SIGNALS = 12;
+var MINOR_BOOSTS = /^Company tier (3|4)$/;
 var DAY_MS2 = 864e5;
+function addDays(day, days) {
+  return new Date(Date.parse(`${day}T00:00:00Z`) + days * DAY_MS2).toISOString().slice(0, 10);
+}
+function dayIn(iso, timeZone) {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).format(new Date(iso));
+}
+function hiringSignals(thisWeek) {
+  const byCompany = /* @__PURE__ */ new Map();
+  for (const posting of thisWeek) {
+    if (!posting.boosts.some((boost) => !MINOR_BOOSTS.test(boost))) continue;
+    const key = companyKey(posting.company);
+    byCompany.set(key, [...byCompany.get(key) ?? [], posting]);
+  }
+  return [...byCompany.values()].map((postings) => {
+    const newest = [...postings].sort(
+      (a, b) => b.postedOn.localeCompare(a.postedOn) || b.score - a.score
+    );
+    const lead = newest[0];
+    return {
+      company: lead.company,
+      boosts: lead.boosts.filter((boost) => !MINOR_BOOSTS.test(boost)),
+      newPostings: postings.length,
+      postings: newest.slice(0, MAX_SIGNAL_POSTINGS).map(({ id, title, level, postedOn, applyUrl }) => ({
+        id,
+        title,
+        level,
+        postedOn,
+        applyUrl
+      }))
+    };
+  }).sort(
+    (a, b) => b.newPostings - a.newPostings || Number(b.boosts.includes("Fortune 500")) - Number(a.boosts.includes("Fortune 500")) || a.company.localeCompare(b.company)
+  ).slice(0, MAX_HIRING_SIGNALS);
+}
+function queueCompanies(cards) {
+  const names = /* @__PURE__ */ new Map();
+  const queued = cards.filter((card2) => card2.stage === "queued").sort((a, b) => a.queuedAt.localeCompare(b.queuedAt));
+  for (const { posting } of queued) {
+    const name = displayCompany(posting.company);
+    const key = companyKey(name);
+    if (name === UNKNOWN_COMPANY || key === "" || names.has(key)) continue;
+    names.set(key, name);
+  }
+  return [...names.values()].sort((a, b) => a.localeCompare(b));
+}
+function recentUrls(recent, day) {
+  const since = addDays(day, -HIRING_SIGNAL_DAYS);
+  const urls = /* @__PURE__ */ new Set();
+  for (const digest2 of recent) {
+    if (digest2.day >= day || digest2.day < since) continue;
+    for (const item of [...digest2.forumHighlights, ...digest2.companyNews, ...digest2.industryNews]) {
+      urls.add(item.url);
+    }
+  }
+  return [...urls].sort();
+}
+function planNews({ day, postings, cards, recent }) {
+  const since = addDays(day, -(HIRING_SIGNAL_DAYS - 1));
+  const thisWeek = postings.filter((p) => p.postedOn >= since && p.postedOn <= day);
+  return {
+    day,
+    newThisWeek: thisWeek.length,
+    hiringSignals: hiringSignals(thisWeek),
+    queueCompanies: queueCompanies(cards),
+    recentUrls: recentUrls(recent, day)
+  };
+}
+var GATHERED_SECTIONS = ["forumHighlights", "companyNews", "industryNews", "gaps"];
+var SECTION_LIST = "forumHighlights, companyNews, industryNews and gaps";
+function buildDigest(plan2, gathered, builtAt) {
+  if (typeof gathered !== "object" || gathered === null || Array.isArray(gathered)) {
+    return {
+      ok: false,
+      issues: [`The gathered news must be an object with ${SECTION_LIST}.`]
+    };
+  }
+  const extra = Object.keys(gathered).filter(
+    (key) => !GATHERED_SECTIONS.includes(key)
+  );
+  if (extra.length > 0) {
+    return {
+      ok: false,
+      issues: extra.map((key) => `${key}: is not a news section; write only ${SECTION_LIST}`)
+    };
+  }
+  const sections = gathered;
+  const digest2 = {
+    schemaVersion: 1,
+    day: plan2.day,
+    builtAt,
+    newThisWeek: plan2.newThisWeek,
+    hiringSignals: plan2.hiringSignals,
+    forumHighlights: sections.forumHighlights ?? [],
+    companyNews: sections.companyNews ?? [],
+    industryNews: sections.industryNews ?? [],
+    gaps: sections.gaps ?? []
+  };
+  const result = validateNewsDocument(plan2.day, digest2);
+  if (!result.ok) return result;
+  const value = result.value;
+  const queue = new Set(plan2.queueCompanies.map(companyKey));
+  const outside = value.companyNews.flatMap(
+    (item, i) => queue.has(companyKey(item.company)) ? [] : [
+      `companyNews.${String(i)}.company: "${item.company}" is not in the Queue; company news covers only ${plan2.queueCompanies.join(", ") || "companies in the Queue, and the Queue is empty"}`
+    ]
+  );
+  return outside.length > 0 ? { ok: false, issues: outside } : { ok: true, value };
+}
+function staleNewsDays(days, today) {
+  const oldest = addDays(today, -(NEWS_DAYS_KEPT - 1));
+  return days.filter((day) => safeParse(isoDaySchema, day).success && day < oldest).sort();
+}
+
+// src/refresh/forums.ts
+var USER_AGENT = "job-app-assist (+https://github.com/dereksun64/job-app-assist)";
+var REDDIT_FEED = "https://www.reddit.com/r/csMajors+cscareerquestions/top/.rss?t=day&limit=40";
+var HACKER_NEWS_FEED = "https://hn.algolia.com/api/v1/search?tags=front_page&hitsPerPage=30";
+var SUBREDDITS = {
+  csmajors: "r/csMajors",
+  cscareerquestions: "r/cscareerquestions"
+};
+var THREADS_PER_SUBREDDIT = 15;
+var TIMEOUT_MS = 2e4;
+var MAX_RETRY_WAIT_MS = 65e3;
+var EXCERPT_CHARS = 300;
+var ENTITIES = {
+  amp: "&",
+  lt: "<",
+  gt: ">",
+  quot: '"',
+  apos: "'",
+  nbsp: " "
+};
+function decode2(text7) {
+  return text7.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (whole, name) => {
+    if (name.startsWith("#x") || name.startsWith("#X")) {
+      return String.fromCodePoint(Number.parseInt(name.slice(2), 16));
+    }
+    if (name.startsWith("#")) return String.fromCodePoint(Number(name.slice(1)));
+    return ENTITIES[name.toLowerCase()] ?? whole;
+  });
+}
+function plain(html) {
+  return decode2(html.replace(/<[^>]*>/g, " ")).replace(/\s+/g, " ").trim();
+}
+function excerpt(text7) {
+  if (text7 === "") return void 0;
+  return text7.length <= EXCERPT_CHARS ? text7 : `${text7.slice(0, EXCERPT_CHARS - 1).trimEnd()}\u2026`;
+}
+var tag = (xml, name) => new RegExp(`<${name}[^>]*>([\\s\\S]*?)</${name}>`).exec(xml)?.[1];
+function parseRedditFeed(xml) {
+  if (!/<feed[\s>]/.test(xml)) return void 0;
+  const bySubreddit = new Map(
+    Object.values(SUBREDDITS).map((forum) => [forum, []])
+  );
+  for (const [, entry = ""] of xml.matchAll(/<entry>([\s\S]*?)<\/entry>/g)) {
+    const subreddit = /<category term="([^"]+)"/.exec(entry)?.[1]?.toLowerCase() ?? "";
+    const threads = bySubreddit.get(SUBREDDITS[subreddit] ?? "");
+    if (!threads || threads.length >= THREADS_PER_SUBREDDIT) continue;
+    const title = plain(tag(entry, "title") ?? "");
+    const url = /<link href="([^"]+)"/.exec(entry)?.[1];
+    const postedAt = tag(entry, "published") ?? tag(entry, "updated") ?? "";
+    if (title === "" || url === void 0) continue;
+    const body = decode2(tag(entry, "content") ?? "").replace(/<!-- SC_ON -->[\s\S]*$/, "").replace(/submitted by[\s\S]*$/, "");
+    const thread = { title, url: decode2(url), postedAt };
+    const text7 = excerpt(plain(body));
+    if (text7 !== void 0) thread.excerpt = text7;
+    threads.push(thread);
+  }
+  return bySubreddit;
+}
+function parseHackerNews(json) {
+  const hits = json?.hits;
+  if (!Array.isArray(hits)) return void 0;
+  return hits.flatMap((hit) => {
+    if (typeof hit.objectID !== "string" || typeof hit.title !== "string") return [];
+    const thread = {
+      title: hit.title,
+      url: `https://news.ycombinator.com/item?id=${hit.objectID}`,
+      postedAt: typeof hit.created_at === "string" ? hit.created_at : ""
+    };
+    if (typeof hit.points === "number") thread.points = hit.points;
+    if (typeof hit.num_comments === "number") thread.comments = hit.num_comments;
+    if (typeof hit.url === "string" && hit.url !== "") thread.links = hit.url;
+    if (typeof hit.story_text === "string") {
+      const text7 = excerpt(plain(hit.story_text));
+      if (text7 !== void 0) thread.excerpt = text7;
+    }
+    return [thread];
+  }).sort((a, b) => (b.points ?? 0) - (a.points ?? 0));
+}
+function describe2(error2) {
+  if (error2 instanceof Error) {
+    if (error2.name === "TimeoutError") return "it took too long to answer";
+    const cause = error2.cause;
+    return cause instanceof Error ? cause.message : error2.message;
+  }
+  return String(error2);
+}
+function retryWait(response) {
+  for (const header of ["retry-after", "x-ratelimit-reset"]) {
+    const seconds = Number(response.headers.get(header) ?? Number.NaN);
+    if (Number.isFinite(seconds) && seconds > 0) return Math.ceil(seconds) * 1e3;
+  }
+  return 5e3;
+}
+async function get(url, io) {
+  const request = () => io.fetch(url, {
+    headers: { "user-agent": USER_AGENT },
+    signal: AbortSignal.timeout(TIMEOUT_MS)
+  });
+  const response = await request();
+  if (response.status !== 429) return response;
+  const wait = retryWait(response);
+  if (wait > MAX_RETRY_WAIT_MS) return response;
+  await io.sleep(wait);
+  return request();
+}
+async function read(name, url, io, parse3) {
+  let response;
+  try {
+    response = await get(url, io);
+  } catch (error2) {
+    return { ok: false, error: `${name} could not be reached: ${describe2(error2)}.` };
+  }
+  if (!response.ok) {
+    return { ok: false, error: `${name} answered HTTP ${String(response.status)}.` };
+  }
+  try {
+    const data = await parse3(response);
+    if (data !== void 0) return { ok: true, data };
+  } catch {
+  }
+  return { ok: false, error: `${name} sent data in an unexpected format.` };
+}
+async function readForums(io) {
+  const reddit = await read(
+    "Reddit",
+    REDDIT_FEED,
+    io,
+    async (r) => parseRedditFeed(await r.text())
+  );
+  const hn = await read(
+    "Hacker News",
+    HACKER_NEWS_FEED,
+    io,
+    async (r) => parseHackerNews(await r.json())
+  );
+  return FORUMS.map((forum) => {
+    if (forum === "Hacker News") {
+      return hn.ok ? { forum, ok: true, threads: hn.data } : { forum, ok: false, error: hn.error };
+    }
+    return reddit.ok ? { forum, ok: true, threads: reddit.data.get(forum) ?? [] } : { forum, ok: false, error: reddit.error };
+  });
+}
+
+// src/refresh/run.ts
+import { join, resolve } from "node:path";
+
+// src/engine/freshness.ts
+var DAY_MS3 = 864e5;
 var MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
 var UNIT_DAYS = { h: 1 / 24, d: 1, w: 7, mo: 30, y: 365 };
 function isoDay2(time3) {
@@ -3358,13 +3836,13 @@ function isoDay2(time3) {
 }
 function postedOnFrom(age, generatedAt) {
   const reference = Date.parse(generatedAt);
-  const text6 = age.trim().toLowerCase();
-  const relative = /^(\d+)\s*(h|d|w|mo|y)$/.exec(text6);
+  const text7 = age.trim().toLowerCase();
+  const relative = /^(\d+)\s*(h|d|w|mo|y)$/.exec(text7);
   if (relative) {
     const days = Number(relative[1]) * (UNIT_DAYS[relative[2] ?? "d"] ?? 1);
-    return isoDay2(reference - Math.floor(days) * DAY_MS2);
+    return isoDay2(reference - Math.floor(days) * DAY_MS3);
   }
-  const absolute = /^([a-z]{3})[a-z]*\.?\s+(\d{1,2})$/.exec(text6);
+  const absolute = /^([a-z]{3})[a-z]*\.?\s+(\d{1,2})$/.exec(text7);
   const month = absolute ? MONTHS.indexOf(absolute[1] ?? "") : -1;
   if (absolute && month !== -1) {
     const now = new Date(reference);
@@ -3379,7 +3857,7 @@ function postedOnFrom(age, generatedAt) {
   return isoDay2(reference);
 }
 function daysSince(postedOn, now) {
-  return Math.max(0, Math.floor((Date.parse(now) - Date.parse(`${postedOn}T00:00:00Z`)) / DAY_MS2));
+  return Math.max(0, Math.floor((Date.parse(now) - Date.parse(`${postedOn}T00:00:00Z`)) / DAY_MS3));
 }
 function freshness(postedOn, now) {
   return 0.5 ** (daysSince(postedOn, now) / 14);
@@ -3533,7 +4011,7 @@ var CITY_ALIASES = {
   manhattan: "New York",
   "san fransisco": "San Francisco"
 };
-var escape = (text6) => text6.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+var escape = (text7) => text7.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 var longestFirst = (names) => [...names].sort((a, b) => b.length - a.length).map(escape).join("|");
 var COUNTRY_NAMES = longestFirst(
   Object.keys(COUNTRIES).map(
@@ -3636,27 +4114,27 @@ function cityInCountry(city, country) {
   return place;
 }
 function parseLocations(raw) {
-  const text6 = raw.replace(/^\s*\d+\s+locations?/i, "").replace(/\s*\+\d+\s*$/, "").replace(/\bD\.C\./g, "DC").replace(/\s+/g, " ").trim();
+  const text7 = raw.replace(/^\s*\d+\s+locations?/i, "").replace(/\s*\+\d+\s*$/, "").replace(/\bD\.C\./g, "DC").replace(/\s+/g, " ").trim();
   const places = [];
   let at = 0;
-  while (at < text6.length) {
-    if (" ;|/,-()".includes(text6[at] ?? "")) {
+  while (at < text7.length) {
+    if (" ;|/,-()".includes(text7[at] ?? "")) {
       at += 1;
       continue;
     }
     let matched = false;
-    for (const { re, read } of PATTERNS) {
+    for (const { re, read: read2 } of PATTERNS) {
       re.lastIndex = at;
-      const m = re.exec(text6);
+      const m = re.exec(text7);
       if (m && m[0].length > 0) {
-        places.push(read(m));
+        places.push(read2(m));
         at += m[0].length;
         matched = true;
         break;
       }
     }
     if (!matched) {
-      places.push({ label: text6.slice(at).trim(), remote: false });
+      places.push({ label: text7.slice(at).trim(), remote: false });
       break;
     }
   }
@@ -3991,15 +4469,15 @@ var INTERN = /\bintern(ship)?s?\b|\bco-?op\b|\bapprentice(ship)?\b/;
 var NEW_GRAD = /\bnew (college )?grad(uate)?s?\b|\bgraduate\b|\buniversity\b|\bcollege\b|\bcampus\b|\bentry[- ]level\b|\bearly[- ]career\b|\bncg\b|\brotational\b|\bresidency\b/;
 var JUNIOR = /\bjunior\b|\bjr\.?(?=\s|$)|\bassociate\b|\b(engineer|developer|scientist|sde|swe|analyst|programmer)\s+(i|1)\b/;
 var SENIOR = /\bsenior\b|\bsr\.?(?=\s|$)|\bstaff (?!intern)(?=\w)|\bprincipal\b|\blead (engineer|developer|scientist|software|data|machine)|\b(engineer|developer|scientist|sde|swe|programmer),?\s+(ii|iii|iv|2|3|4)\b|\bdirector\b|\bhead of\b|\barchitect\b|\bexperienced\b|\bmid[- ]level\b|\bengineering manager\b|\bmanager,? (software|engineering)\b/;
-function normalize(text6) {
-  return ` ${text6.toLowerCase().replace(/[\u2013\u2014]/g, "-").replace(/\s+/g, " ")} `;
+function normalize(text7) {
+  return ` ${text7.toLowerCase().replace(/[\u2013\u2014]/g, "-").replace(/\s+/g, " ")} `;
 }
 function levelOf(title, jobType, { stated = false } = {}) {
-  const text6 = normalize(title);
-  if (INTERN.test(text6)) return "intern";
-  if (NEW_GRAD.test(text6)) return "new_grad";
-  if (JUNIOR.test(text6)) return "junior";
-  if (SENIOR.test(text6)) return void 0;
+  const text7 = normalize(title);
+  if (INTERN.test(text7)) return "intern";
+  if (NEW_GRAD.test(text7)) return "new_grad";
+  if (JUNIOR.test(text7)) return "junior";
+  if (SENIOR.test(text7)) return void 0;
   if (/intern/i.test(jobType)) return "intern";
   return stated ? void 0 : "new_grad";
 }
@@ -4020,8 +4498,8 @@ var CATEGORY_FAMILIES = [
   [/quant/i, ["quant"]],
   [/hardware/i, ["hardware"]]
 ];
-function familiesOf(text6) {
-  const normalized = normalize(text6);
+function familiesOf(text7) {
+  const normalized = normalize(text7);
   return new Set(
     Object.entries(FAMILIES).filter(([, re]) => re.test(normalized)).map(([family]) => family)
   );
@@ -4070,9 +4548,9 @@ var VAGUE_WORDS = /* @__PURE__ */ new Set([
 function significantWords(name) {
   return normalize(name).replace(/\(.*?\)/g, " ").split(/[^a-z0-9+#]+/).filter((word) => word !== "" && !/^\d+$/.test(word) && !GENERIC_WORDS.has(word));
 }
-function hasWord(text6, word) {
+function hasWord(text7, word) {
   const stem = word.length > 5 ? word.slice(0, -2) : word;
-  return new RegExp(`\\b${stem.replace(/[+#]/g, "\\$&")}`).test(text6);
+  return new RegExp(`\\b${stem.replace(/[+#]/g, "\\$&")}`).test(text7);
 }
 function matchRoleType(title, category, roleTypes) {
   let titleFamilies = familiesOf(title);
@@ -4081,7 +4559,7 @@ function matchRoleType(title, category, roleTypes) {
       CATEGORY_FAMILIES.filter(([re]) => re.test(category)).flatMap(([, families]) => families)
     );
   }
-  const text6 = normalize(title);
+  const text7 = normalize(title);
   const ordered = ROLE_TYPE_PRIORITIES.flatMap(
     (priority) => roleTypes.filter((roleType2) => roleType2.priority === priority)
   );
@@ -4089,7 +4567,7 @@ function matchRoleType(title, category, roleTypes) {
     const families = familiesOf(roleType2.name);
     if (families.size > 0) return [...families].some((family) => titleFamilies.has(family));
     const words = significantWords(roleType2.name);
-    return words.length > 0 && words.every((word) => hasWord(text6, word));
+    return words.length > 0 && words.every((word) => hasWord(text7, word));
   });
 }
 var SEASONS = {
@@ -4100,13 +4578,13 @@ var SEASONS = {
   autumn: ["08", "12"]
 };
 function startWindowOf(title) {
-  const text6 = title.toLowerCase();
-  const years = [...text6.matchAll(/(?<!\d)(20[2-4]\d)(?![\d])/g)].map((m) => Number(m[1]));
+  const text7 = title.toLowerCase();
+  const years = [...text7.matchAll(/(?<!\d)(20[2-4]\d)(?![\d])/g)].map((m) => Number(m[1]));
   if (years.length === 0) return void 0;
   const first = Math.min(...years);
   const last = Math.max(...years);
   if (first !== last) return { from: `${String(first)}-01`, to: `${String(last)}-12` };
-  const seasons = [...text6.matchAll(/\b(winter|spring|summer|fall|autumn)\b/g)].map((m) => SEASONS[m[1] ?? ""]).filter((months) => months !== void 0);
+  const seasons = [...text7.matchAll(/\b(winter|spring|summer|fall|autumn)\b/g)].map((m) => SEASONS[m[1] ?? ""]).filter((months) => months !== void 0);
   if (seasons.length === 0) return { from: `${String(first)}-01`, to: `${String(first)}-12` };
   const from = seasons.map(([start]) => start).sort()[0] ?? "01";
   const to = seasons.map(([, end]) => end).sort().at(-1) ?? "12";
@@ -4142,13 +4620,13 @@ var FAMILY_LABELS = {
   hardware: "hardware",
   security: "security"
 };
-function escape2(text6) {
-  return text6.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+function escape2(text7) {
+  return text7.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
-function mentions(text6, keyword) {
+function mentions(text7, keyword) {
   const words = keyword.trim().toLowerCase().split(/[\s-]+/).map(escape2);
   const phrase = words.join("[\\s-]+");
-  return new RegExp(`(?<![\\p{L}\\p{N}])${phrase}(?![\\p{L}\\p{N}+#])`, "u").test(text6);
+  return new RegExp(`(?<![\\p{L}\\p{N}])${phrase}(?![\\p{L}\\p{N}+#])`, "u").test(text7);
 }
 function quoteList(words) {
   const quoted = words.slice(0, SHOWN_KEYWORDS).map((word) => `"${word}"`);
@@ -4160,11 +4638,11 @@ function nameList(names) {
   return `${names.slice(0, -1).join(", ")} and ${names.at(-1) ?? ""}`;
 }
 function sentence(parts) {
-  const text6 = parts.join("; ");
-  return `${text6.charAt(0).toUpperCase()}${text6.slice(1)}.`;
+  const text7 = parts.join("; ");
+  return `${text7.charAt(0).toUpperCase()}${text7.slice(1)}.`;
 }
-function fit(text6) {
-  return text6.length <= MAX_REASON ? text6 : `${text6.slice(0, MAX_REASON - 1).trimEnd()}\u2026`;
+function fit(text7) {
+  return text7.length <= MAX_REASON ? text7 : `${text7.slice(0, MAX_REASON - 1).trimEnd()}\u2026`;
 }
 function score(variant, index, posting, title, listing, titleFamilies) {
   const evidence = [];
@@ -4393,19 +4871,19 @@ function groupDuplicates(candidates) {
     return root;
   };
   const owner = /* @__PURE__ */ new Map();
-  const join2 = (key, i) => {
+  const join3 = (key, i) => {
     const other = owner.get(key);
     if (other === void 0) owner.set(key, i);
     else parent[find(i)] = find(other);
   };
   candidates.forEach((candidate, i) => {
-    join2(`url:${candidate.canonicalUrl}`, i);
+    join3(`url:${candidate.canonicalUrl}`, i);
     const textKey = [
       companyKey(candidate.listing.company),
       titleKey(candidate.listing.title),
       [...new Set(candidate.places.map(placeKey))].sort().join(";")
     ].join("|");
-    join2(`text:${textKey}`, i);
+    join3(`text:${textKey}`, i);
   });
   const groups = /* @__PURE__ */ new Map();
   candidates.forEach((candidate, i) => {
@@ -4429,16 +4907,16 @@ function mergeSources(sources) {
   const unique = new Map(sources.map((source) => [sourceKey(source), source]));
   return [...unique.values()].sort((a, b) => compareText(sourceKey(a), sourceKey(b)));
 }
-function excerpt(description) {
-  const text6 = description?.replace(/\s+/g, " ").trim();
-  if (!text6) return void 0;
-  if (text6.length <= POSTING_DESCRIPTION_MAX) return text6;
-  const cut = text6.slice(0, POSTING_DESCRIPTION_MAX);
+function excerpt2(description) {
+  const text7 = description?.replace(/\s+/g, " ").trim();
+  if (!text7) return void 0;
+  if (text7.length <= POSTING_DESCRIPTION_MAX) return text7;
+  const cut = text7.slice(0, POSTING_DESCRIPTION_MAX);
   const atWord = cut.slice(0, cut.lastIndexOf(" ")).replace(/[\s,;:.-]+$/, "");
   return `${atWord}\u2026`;
 }
-function lowerFirst(text6) {
-  return /^[A-Z][a-z]/.test(text6) ? `${text6.charAt(0).toLowerCase()}${text6.slice(1)}` : text6;
+function lowerFirst(text7) {
+  return /^[A-Z][a-z]/.test(text7) ? `${text7.charAt(0).toLowerCase()}${text7.slice(1)}` : text7;
 }
 function withResumeVariant(base, evidence, settings2, judgments) {
   const judgment = Object.hasOwn(judgments, base.id) ? judgments[base.id] : void 0;
@@ -4469,7 +4947,7 @@ function merge2(group, tiers, now) {
   const named = group.find((c) => companyKnown(c.listing.company)) ?? representative;
   const tierOfPlace = (place) => locationTierOf([place], tiers) ?? Number.MAX_SAFE_INTEGER;
   const places = representative.places.map((place, index) => ({ place, index, tier: tierOfPlace(place) })).sort((a, b) => a.tier - b.tier || a.index - b.index).map(({ place }) => place);
-  const description = group.map((c) => c.listing.description).find((text6) => text6?.trim());
+  const description = group.map((c) => c.listing.description).find((text7) => text7?.trim());
   const posting = {
     id: postingId(representative.canonicalUrl),
     applyUrl: representative.canonicalUrl,
@@ -4484,7 +4962,7 @@ function merge2(group, tiers, now) {
     score: score2(representative.priority, boost.value, postedOn, now),
     boosts: boost.reasons
   };
-  const short = excerpt(description);
+  const short = excerpt2(description);
   if (short !== void 0) posting.description = short;
   const evidence = {
     title: posting.title,
@@ -4649,16 +5127,16 @@ function jobBoardApiUrl({ board, slug }) {
 function isRecord(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
-var text3 = (value) => typeof value === "string" ? value.trim() : "";
-var texts = (value) => Array.isArray(value) ? value.map(text3).filter((item) => item !== "") : [];
+var text4 = (value) => typeof value === "string" ? value.trim() : "";
+var texts = (value) => Array.isArray(value) ? value.map(text4).filter((item) => item !== "") : [];
 function greenhouseJobs(json) {
   if (!isRecord(json) || !Array.isArray(json.jobs)) return void 0;
   return json.jobs.filter(isRecord).map((job) => ({
-    applyUrl: text3(job.absolute_url),
-    title: text3(job.title),
-    location: isRecord(job.location) ? text3(job.location.name) : "",
+    applyUrl: text4(job.absolute_url),
+    title: text4(job.title),
+    location: isRecord(job.location) ? text4(job.location.name) : "",
     jobType: "",
-    postedAt: text3(job.first_published) || text3(job.updated_at)
+    postedAt: text4(job.first_published) || text4(job.updated_at)
   }));
 }
 function leverJobs(json) {
@@ -4666,13 +5144,13 @@ function leverJobs(json) {
   return json.filter(isRecord).map((job) => {
     const categories = isRecord(job.categories) ? job.categories : {};
     const locations = texts(categories.allLocations);
-    const location = locations.length > 0 ? locations.join("; ") : text3(categories.location);
+    const location = locations.length > 0 ? locations.join("; ") : text4(categories.location);
     const created = typeof job.createdAt === "number" ? new Date(job.createdAt) : void 0;
     return {
-      applyUrl: text3(job.hostedUrl),
-      title: text3(job.text),
-      location: location || (text3(job.workplaceType) === "remote" ? "Remote" : ""),
-      jobType: text3(categories.commitment),
+      applyUrl: text4(job.hostedUrl),
+      title: text4(job.text),
+      location: location || (text4(job.workplaceType) === "remote" ? "Remote" : ""),
+      jobType: text4(categories.commitment),
       postedAt: created && !Number.isNaN(created.getTime()) ? created.toISOString() : ""
     };
   });
@@ -4680,22 +5158,22 @@ function leverJobs(json) {
 function ashbyJobs(json) {
   if (!isRecord(json) || !Array.isArray(json.jobs)) return void 0;
   return json.jobs.filter(isRecord).filter((job) => job.isListed !== false).map((job) => {
-    const secondary = Array.isArray(job.secondaryLocations) ? job.secondaryLocations.map((place) => isRecord(place) ? text3(place.location) : "") : [];
-    let location = [text3(job.location), ...secondary].filter(Boolean).join("; ");
-    if (text3(job.workplaceType) === "Remote" && !/remote/i.test(location)) {
+    const secondary = Array.isArray(job.secondaryLocations) ? job.secondaryLocations.map((place) => isRecord(place) ? text4(place.location) : "") : [];
+    let location = [text4(job.location), ...secondary].filter(Boolean).join("; ");
+    if (text4(job.workplaceType) === "Remote" && !/remote/i.test(location)) {
       location = location ? `Remote in ${location}` : "Remote";
     }
     return {
-      applyUrl: text3(job.jobUrl),
-      title: text3(job.title),
+      applyUrl: text4(job.jobUrl),
+      title: text4(job.title),
       location,
-      jobType: text3(job.employmentType),
-      postedAt: text3(job.publishedAt)
+      jobType: text4(job.employmentType),
+      postedAt: text4(job.publishedAt)
     };
   });
 }
 var PARSERS = { greenhouse: greenhouseJobs, lever: leverJobs, ashby: ashbyJobs };
-function describe2(error2) {
+function describe3(error2) {
   if (error2 instanceof Error) {
     if (error2.name === "TimeoutError") return "it took too long to answer";
     const cause = error2.cause;
@@ -4713,7 +5191,7 @@ async function readJobBoard(fetch2, company, now) {
       signal: AbortSignal.timeout(BOARD_TIMEOUT_MS)
     });
   } catch (error2) {
-    return fail2(`${board} could not be reached: ${describe2(error2)}.`);
+    return fail2(`${board} could not be reached: ${describe3(error2)}.`);
   }
   if (response.status === 404) {
     return fail2(
@@ -4764,7 +5242,7 @@ var FEED_TIMEOUT_MS = 6e4;
 function isRecord2(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
-var text4 = (value) => typeof value === "string" ? value : "";
+var text5 = (value) => typeof value === "string" ? value : "";
 function parseJobFeed(json, fallbackTime) {
   if (!isRecord2(json) || !Array.isArray(json.jobs)) {
     return {
@@ -4773,32 +5251,32 @@ function parseJobFeed(json, fallbackTime) {
       error: "The Job Feed's data is not in the expected format (no jobs list)."
     };
   }
-  const generated = text4(json.generatedAt) || text4(json.fetchedAt);
+  const generated = text5(json.generatedAt) || text5(json.fetchedAt);
   const fetchedAt = Number.isNaN(Date.parse(generated)) ? fallbackTime : new Date(generated).toISOString();
   const postings = [];
   for (const job of json.jobs) {
     if (!isRecord2(job)) continue;
-    const applyUrl = text4(job.applyUrl).trim();
-    const company = text4(job.company).trim();
-    const title = text4(job.title).trim();
+    const applyUrl = text5(job.applyUrl).trim();
+    const company = text5(job.company).trim();
+    const title = text5(job.title).trim();
     if (!applyUrl || !company || !title) continue;
     const posting = {
       applyUrl,
       company,
       title,
-      location: text4(job.location),
-      jobType: text4(job.jobType),
-      age: text4(job.age),
-      category: text4(job.category),
-      companyTier: text4(job.companyTier)
+      location: text5(job.location),
+      jobType: text5(job.jobType),
+      age: text5(job.age),
+      category: text5(job.category),
+      companyTier: text5(job.companyTier)
     };
-    const list = text4(job.source).trim();
+    const list = text5(job.source).trim();
     if (list) posting.list = list;
     postings.push(posting);
   }
   return { name: JOB_FEED_SOURCE, ok: true, fetchedAt, postings };
 }
-function describe3(error2) {
+function describe4(error2) {
   if (error2 instanceof Error) {
     if (error2.name === "TimeoutError") return "it took too long to answer";
     const cause = error2.cause;
@@ -4814,7 +5292,7 @@ async function readJobFeed(fetch2, now, url = JOB_FEED_URL) {
     return {
       name: JOB_FEED_SOURCE,
       ok: false,
-      error: `The Job Feed could not be reached: ${describe3(error2)}.`
+      error: `The Job Feed could not be reached: ${describe4(error2)}.`
     };
   }
   if (!response.ok) {
@@ -4891,14 +5369,14 @@ var BATCH_MAX_BYTES = 900 * 1024;
 var RefreshError = class extends Error {
 };
 async function readJson(io, path) {
-  let text6;
+  let text7;
   try {
-    text6 = await io.readFile(path);
+    text7 = await io.readFile(path);
   } catch {
     return void 0;
   }
   try {
-    return JSON.parse(text6);
+    return JSON.parse(text7);
   } catch {
     throw new RefreshError(`${path} is not valid JSON.`);
   }
@@ -5043,10 +5521,10 @@ function formatSources(summary) {
     }
   }
   if (watchlist.length > 0) {
-    const read = watchlist.filter((source) => source.ok);
-    const postings = read.reduce((sum, source) => sum + source.postings, 0);
+    const read2 = watchlist.filter((source) => source.ok);
+    const postings = read2.reduce((sum, source) => sum + source.postings, 0);
     lines.push(
-      `- ${WATCHLIST_SOURCE}: read ${number2(postings)} Postings from ${number2(read.length)} of ${number2(watchlist.length)} companies.`
+      `- ${WATCHLIST_SOURCE}: read ${number2(postings)} Postings from ${number2(read2.length)} of ${number2(watchlist.length)} companies.`
     );
     for (const source of watchlist.filter((s) => !s.ok)) {
       lines.push(
@@ -5059,7 +5537,7 @@ function formatSources(summary) {
 function formatSummary(summary, paths, batches, sourceIssues = []) {
   const { writes: writesPath, review: reviewPath } = paths;
   const lines = [];
-  const tiers = summary.byTier.map((count2, i) => `Tier ${String(i + 1)}: ${number2(count2)}`).join(", ");
+  const tiers = summary.byTier.map((count3, i) => `Tier ${String(i + 1)}: ${number2(count3)}`).join(", ");
   lines.push(`Refresh finished at ${summary.refreshedAt.slice(0, 16).replace("T", " ")} UTC.`);
   lines.push(
     `Job List: ${number2(summary.total)} Postings (${tiers}); ${number2(summary.newPostings)} new and ${number2(summary.removedPostings)} gone since the last Refresh.`
@@ -5244,13 +5722,13 @@ ${check.issues.map((i) => `- ${i}`).join("\n")}`
         );
       }
       const filePath = join(out, collection, `${docId}.json`);
-      const text6 = `${JSON.stringify(data)}
+      const text7 = `${JSON.stringify(data)}
 `;
-      await io.writeFile(filePath, text6);
+      await io.writeFile(filePath, text7);
       const write = { op: "set", collection, doc_id: docId, file_path: filePath };
       const version2 = versionOf(collection, docId);
       if (version2 !== void 0) write.if_version = version2;
-      writes.push({ write, bytes: Buffer.byteLength(text6) });
+      writes.push({ write, bytes: Buffer.byteLength(text7) });
     }
     const written = new Set(
       changeSet.set.filter((w) => w.collection === POSTINGS_COLLECTION).map((w) => w.docId)
@@ -5283,6 +5761,173 @@ ${check.issues.map((i) => `- ${i}`).join("\n")}`
         sourceSettings.issues
       )
     );
+    return 0;
+  } catch (error2) {
+    if (error2 instanceof RefreshError) {
+      io.stderr(`${error2.message}
+`);
+      return 1;
+    }
+    throw error2;
+  }
+}
+
+// src/refresh/news.ts
+var PLAN_FILE = "news-plan.json";
+var GATHERED_FILE = "news-gathered.json";
+var WRITES_FILE = "news-writes.json";
+var number3 = (n) => n.toLocaleString("en-US");
+var count2 = (n, one, many = `${one}s`) => `${number3(n)} ${n === 1 ? one : many}`;
+function longDay(day) {
+  return (/* @__PURE__ */ new Date(`${day}T12:00:00Z`)).toLocaleDateString("en-US", {
+    weekday: "long",
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+    timeZone: "UTC"
+  });
+}
+async function readValid(io, folder, validate2) {
+  const docs = /* @__PURE__ */ new Map();
+  for (const docId of await savedIds(io, folder)) {
+    const result = validate2(docId, await readJson(io, join2(folder, `${docId}.json`)));
+    if (result.ok) docs.set(docId, result.value);
+  }
+  return docs;
+}
+async function readJobList(io, folder) {
+  const docs = await readValid(io, folder, validatePostingsDocument);
+  const meta3 = docs.get("meta");
+  if (!meta3) return void 0;
+  return [...docs.entries()].filter(([id]) => id !== "meta").map(([, doc]) => doc).filter((page2) => page2.refreshedAt === meta3.refreshedAt).sort((a, b) => a.page - b.page).flatMap((page2) => page2.postings);
+}
+async function plan(dir, io) {
+  const day = dayIn(io.now(), io.timeZone());
+  const postings = await readJobList(io, join2(dir, "out", POSTINGS_COLLECTION)) ?? await readJobList(io, join2(dir, "state", POSTINGS_COLLECTION)) ?? [];
+  const cards = /* @__PURE__ */ new Map();
+  for (const folder of [join2(dir, "state", CARDS_COLLECTION), join2(dir, "out", CARDS_COLLECTION)]) {
+    for (const [id, card2] of await readValid(io, folder, validateCardDocument)) {
+      cards.set(id, card2);
+    }
+  }
+  const recent = await readValid(
+    io,
+    join2(dir, "state", NEWS_COLLECTION),
+    validateNewsDocument
+  );
+  const forums = await readForums({ fetch: io.fetch, sleep: (ms) => io.sleep(ms) });
+  const result = {
+    ...planNews({ day, postings, cards: [...cards.values()], recent: [...recent.values()] }),
+    forums
+  };
+  const out = join2(dir, "out");
+  await io.makeDir(out);
+  const planPath = join2(out, PLAN_FILE);
+  await io.writeFile(planPath, `${JSON.stringify(result, null, 2)}
+`);
+  const lines = [`News Digest for ${longDay(day)}.`];
+  lines.push(`Job List: ${count2(result.newThisWeek, "Posting")} went up in the past 7 days.`);
+  lines.push(
+    result.hiringSignals.length === 0 ? "Hiring signals: none this week." : `Hiring signals: ${count2(result.hiringSignals.length, "company", "companies")} (${result.hiringSignals.map((s) => `${s.company}, ${count2(s.newPostings, "new Posting")}`).join("; ")}).`
+  );
+  lines.push(
+    result.queueCompanies.length === 0 ? "Companies in the Queue: none, so leave companyNews empty." : `Companies in the Queue: ${result.queueCompanies.join(", ")}.`
+  );
+  lines.push("Forums:");
+  for (const read2 of forums) {
+    lines.push(
+      read2.ok ? `- ${read2.forum}: ${count2(read2.threads.length, "thread")}, under forums in ${planPath}.` : `- ${read2.forum}: FAILED. ${read2.error}`
+    );
+  }
+  if (result.recentUrls.length > 0) {
+    lines.push(
+      `Already linked this week: ${count2(result.recentUrls.length, "source")}, listed under recentUrls in ${planPath}; do not repeat them.`
+    );
+  }
+  lines.push(`Next: gather the news and write it to ${join2(out, GATHERED_FILE)}.`);
+  io.stdout(`${lines.join("\n")}
+`);
+}
+function isPlan(value) {
+  if (typeof value !== "object" || value === null) return false;
+  const plan2 = value;
+  return typeof plan2.day === "string" && typeof plan2.newThisWeek === "number" && Array.isArray(plan2.hiringSignals) && Array.isArray(plan2.queueCompanies) && Array.isArray(plan2.recentUrls);
+}
+async function build(dir, io) {
+  const out = join2(dir, "out");
+  const planJson = await readJson(io, join2(out, PLAN_FILE));
+  if (!isPlan(planJson)) {
+    throw new RefreshError(
+      `No News Digest plan at ${join2(out, PLAN_FILE)}. Run jaa news plan first.`
+    );
+  }
+  const gatheredPath = join2(out, GATHERED_FILE);
+  const gathered = await readJson(io, gatheredPath);
+  if (gathered === void 0) {
+    throw new RefreshError(
+      `No gathered news at ${gatheredPath}. Write the forum highlights, company news and industry stories there first.`
+    );
+  }
+  const result = buildDigest(planJson, gathered, io.now());
+  if (!result.ok) {
+    throw new RefreshError(
+      [
+        `The News Digest in ${gatheredPath} does not match the dashboard contract:`,
+        ...result.issues.map((issue2) => `- ${issue2}`),
+        "Fix those entries and run jaa news build again."
+      ].join("\n")
+    );
+  }
+  const digest2 = result.value;
+  const versions = await readJson(io, join2(dir, "versions.json"));
+  const versionOf = (docId) => {
+    const version2 = typeof versions === "object" && versions !== null ? versions[`${NEWS_COLLECTION}/${docId}`] : void 0;
+    return Number.isInteger(version2) && version2 > 0 ? version2 : void 0;
+  };
+  await io.makeDir(join2(out, NEWS_COLLECTION));
+  const filePath = join2(out, NEWS_COLLECTION, `${digest2.day}.json`);
+  const text7 = `${JSON.stringify(digest2)}
+`;
+  await io.writeFile(filePath, text7);
+  const set = {
+    op: "set",
+    collection: NEWS_COLLECTION,
+    doc_id: digest2.day,
+    file_path: filePath
+  };
+  const setVersion = versionOf(digest2.day);
+  if (setVersion !== void 0) set.if_version = setVersion;
+  const writes = [{ write: set, bytes: Buffer.byteLength(text7) }];
+  const stale = staleNewsDays(await savedIds(io, join2(dir, "state", NEWS_COLLECTION)), digest2.day);
+  for (const day of stale) {
+    const remove = { op: "delete", collection: NEWS_COLLECTION, doc_id: day };
+    const version2 = versionOf(day);
+    if (version2 !== void 0) remove.if_version = version2;
+    writes.push({ write: remove, bytes: 0 });
+  }
+  const batches = batchesOf(writes);
+  const writesPath = join2(out, WRITES_FILE);
+  await io.writeFile(writesPath, `${JSON.stringify({ batches }, null, 2)}
+`);
+  const lines = [
+    `News Digest for ${longDay(digest2.day)}: ${count2(digest2.hiringSignals.length, "hiring signal")}, ${count2(digest2.forumHighlights.length, "forum highlight")}, ${count2(digest2.companyNews.length, "company news item")}, ${count2(digest2.industryNews.length, "industry story", "industry stories")}.`
+  ];
+  for (const gap2 of digest2.gaps) lines.push(`Gap in ${gap2.section}: ${gap2.note}`);
+  if (stale.length > 0) {
+    lines.push(
+      `Removing ${count2(stale.length, "digest")} older than ${String(NEWS_DAYS_KEPT)} days.`
+    );
+  }
+  lines.push(
+    `Next: send the ${batches.length === 1 ? "batch" : `${String(batches.length)} batches`} in ${writesPath} with ArtifactData, one batch call each, in order.`
+  );
+  io.stdout(`${lines.join("\n")}
+`);
+}
+async function runNewsCommand(step, dirArg, io) {
+  const dir = resolve2(dirArg);
+  try {
+    await (step === "plan" ? plan(dir, io) : build(dir, io));
     return 0;
   } catch (error2) {
     if (error2 instanceof RefreshError) {
@@ -5334,8 +5979,8 @@ var manifest = strictObject({
   )
 });
 async function readJson2(io, source) {
-  const text6 = source === "-" ? await io.readStdin() : await io.readFile(source);
-  return JSON.parse(text6);
+  const text7 = source === "-" ? await io.readStdin() : await io.readFile(source);
+  return JSON.parse(text7);
 }
 function fail(io, lines) {
   io.stderr(lines.map((line) => `${line}
@@ -5402,6 +6047,8 @@ function messageOf(error2) {
 // src/cli/jaa.ts
 var USAGE = `Usage: jaa validate <collection> <doc-id> <file|->
        jaa refresh <dir> [--feed <url|file> | --rerun]
+       jaa news plan <dir>
+       jaa news build <dir>
        jaa check-resumes <manifest> [--settings <file|->]
 
 validate       Checks one dashboard document (JSON, from a file or from stdin with -)
@@ -5410,6 +6057,10 @@ refresh        Builds the Job List from the dashboard state saved in <dir>/state
                Job Feed, and writes the documents and ArtifactData batches to <dir>/out.
                --rerun rebuilds from the Sources the last run read, without the network,
                applying the Resume Variant judgments in <dir>/variant-judgments.json.
+news           After refresh, in the same <dir>: plan computes the hiring signals, lists
+               the companies in the Queue and reads the forums (<dir>/out/news-plan.json);
+               build joins them with the news gathered in <dir>/out/news-gathered.json into
+               the day's News Digest and writes its batch to <dir>/out/news-writes.json.
 check-resumes  Checks that every Resume Variant file the manifest lists is in the Candidate
                folder, and with --settings that the settings document names the same
                Resume Variants in the same order.
@@ -5440,14 +6091,22 @@ async function runCli(argv, io) {
     }
     return runCheckResumes(manifest2, settings2, io);
   }
+  if (argv[0] === "news") {
+    const [, step, dir, ...rest2] = argv;
+    if (step !== "plan" && step !== "build" || !dir || dir.startsWith("--") || rest2.length > 0) {
+      io.stderr(USAGE);
+      return 2;
+    }
+    return runNewsCommand(step, dir, io);
+  }
   const [command, collection, docId, file, ...rest] = argv;
   if (command !== "validate" || !collection || !docId || !file || rest.length > 0) {
     io.stderr(USAGE);
     return 2;
   }
-  let text6;
+  let text7;
   try {
-    text6 = file === "-" ? await io.readStdin() : await io.readFile(file);
+    text7 = file === "-" ? await io.readStdin() : await io.readFile(file);
   } catch (error2) {
     io.stderr(`Could not read ${file}: ${messageOf2(error2)}
 `);
@@ -5455,7 +6114,7 @@ async function runCli(argv, io) {
   }
   let document;
   try {
-    document = JSON.parse(text6);
+    document = JSON.parse(text7);
   } catch (error2) {
     io.stderr(`The document is not valid JSON: ${messageOf2(error2)}
 `);
@@ -5489,7 +6148,9 @@ process.exitCode = await runCli(process.argv.slice(2), {
   removeDir: (path) => rm(path, { recursive: true, force: true }),
   fetch: (url, init) => fetch(url, init),
   now: () => (/* @__PURE__ */ new Date()).toISOString(),
-  readStdin: () => text5(process.stdin),
+  timeZone: () => Intl.DateTimeFormat().resolvedOptions().timeZone,
+  sleep: (ms) => new Promise((done) => setTimeout(done, ms)),
+  readStdin: () => text6(process.stdin),
   fileSize: (path) => stat(path).then(
     (info) => info.isFile() ? info.size : void 0,
     () => void 0

@@ -73,3 +73,36 @@ export function formatPostedAge(postedOn: string, now: number): string {
   if (days < 60) return `${String(Math.floor(days / 7))} weeks ago`;
   return `${String(Math.floor(days / 30))} months ago`;
 }
+
+/** A day (YYYY-MM-DD) as "Tuesday, November 10, 2026". Days carry no time zone. */
+export function formatDay(day: string): string {
+  return new Date(`${day}T12:00:00Z`).toLocaleDateString("en-US", {
+    weekday: "long",
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+    timeZone: "UTC",
+  });
+}
+
+/** A day (YYYY-MM-DD) as "Tue, Nov 10". */
+export function formatShortDay(day: string): string {
+  return new Date(`${day}T12:00:00Z`).toLocaleDateString("en-US", {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    timeZone: "UTC",
+  });
+}
+
+/** A day (YYYY-MM-DD) as "Nov 9", with the year only when it is not the year of `now`. */
+export function formatDate(day: string, now: number): string {
+  const date = new Date(`${day}T12:00:00Z`);
+  const sameYear = date.getUTCFullYear() === new Date(now).getUTCFullYear();
+  return date.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    ...(sameYear ? {} : { year: "numeric" }),
+    timeZone: "UTC",
+  });
+}

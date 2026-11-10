@@ -231,6 +231,15 @@ describe("database availability", () => {
       "Your dashboard data stopped loading. Reload the page to try again.",
     );
   });
+
+  it.each(["#news", "#postings"])("says it once, not again in the %s tab", async (hash) => {
+    window.location.hash = hash;
+    const db = createMemoryDb({}, { failWith: { code: "unavailable", message: "gone" } });
+    render(<App db={db} pageVersion="1.2.3" />);
+    await screen.findByRole("alert");
+    await act(() => Promise.resolve());
+    expect(screen.getAllByRole("alert")).toHaveLength(1);
+  });
 });
 
 describe("page version", () => {

@@ -8,10 +8,12 @@ import {
 } from "../contract/index.ts";
 import type { DashboardDb } from "./db.ts";
 import { STAGE_LABELS, formatSeniority, formatStartWindow } from "./format.ts";
+import { NewsTab } from "./NewsTab.tsx";
 import { PostingsTab } from "./PostingsTab.tsx";
 import { SourcesPanel } from "./SourcesPanel.tsx";
 import { useHashTab } from "./useHashTab.ts";
 import { useJobList } from "./useJobList.ts";
+import { useNews } from "./useNews.ts";
 import { queueActions, useQueue } from "./useQueue.ts";
 import { useSettings, type SettingsState } from "./useSettings.ts";
 import { useVariantOverrides } from "./useVariantOverrides.ts";
@@ -46,6 +48,7 @@ export interface AppProps {
 export function App({ db, pageVersion, now }: AppProps) {
   const settings = useSettings(db);
   const jobList = useJobList(db);
+  const news = useNews(db);
   const queue = useQueue(db);
   const actions = useMemo(() => (db ? queueActions(db, () => now ?? Date.now()) : null), [db, now]);
   const sources = useSources(db);
@@ -62,6 +65,9 @@ export function App({ db, pageVersion, now }: AppProps) {
   const clock = useCallback(() => now ?? Date.now(), [now]);
   const { overrides, choose } = useVariantOverrides(db, clock);
   const [tab, selectTab] = useHashTab(TABS);
+  // When the whole database stops loading, the notice above the tabs says so once; the tabs
+  // stay quiet instead of repeating it.
+  const down = settings.kind === "failed";
 
   return (
     <div class="shell">
@@ -124,17 +130,11 @@ export function App({ db, pageVersion, now }: AppProps) {
           tabIndex={0}
         >
           {tab === "news" && (
-            <EmptyState title="No News Digest yet">
-              <p>
-                Each Refresh writes a News Digest here: hiring signals from your Postings, forum
-                highlights, news about companies in your Queue, and the wider tech stories worth
-                knowing for interviews. Ask your Claude to refresh.
-              </p>
-            </EmptyState>
+            <NewsTab state={down ? { kind: "loading" } : news} now={now ?? Date.now()} />
           )}
           {tab === "postings" && (
             <PostingsTab
-              state={jobList}
+              state={down ? { kind: "loading" } : jobList}
               queue={queue}
               actions={actions}
               dailyQueueTarget={

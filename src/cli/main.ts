@@ -12,6 +12,8 @@ process.exitCode = await runCli(process.argv.slice(2), {
   removeDir: (path) => rm(path, { recursive: true, force: true }),
   fetch: (url, init) => fetch(url, init),
   now: () => new Date().toISOString(),
+  timeZone: () => Intl.DateTimeFormat().resolvedOptions().timeZone,
+  sleep: (ms) => new Promise((done) => setTimeout(done, ms)),
   readStdin: () => text(process.stdin),
   fileSize: (path) =>
     stat(path).then(
