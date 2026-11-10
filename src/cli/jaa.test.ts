@@ -22,6 +22,12 @@ function io(files: Record<string, string> = {}, stdin = ""): CliIo & { out: stri
       if (text === undefined) throw new Error(`ENOENT: no such file, open '${path}'`);
       return Promise.resolve(text);
     },
+    writeFile: () => Promise.resolve(),
+    readDir: () => Promise.resolve([]),
+    makeDir: () => Promise.resolve(),
+    removeDir: () => Promise.resolve(),
+    fetch: () => Promise.reject(new Error("no network in tests")),
+    now: () => "2026-11-10T15:00:00.000Z",
     readStdin: () => Promise.resolve(stdin),
     stdout: (text: string) => {
       result.out += text;
@@ -75,18 +81,28 @@ describe("jaa validate", () => {
 });
 
 describe("jaa usage", () => {
-  it.each([[[]], [["validate", "settings"]], [["publish"]]])(
-    "prints usage and exits 2 for %j",
-    async (argv) => {
-      const cli = io();
-      expect(await runCli(argv, cli)).toBe(2);
-      expect(cli.err).toContain("Usage: jaa validate <collection> <doc-id> <file|->");
-    },
-  );
+  it.each([
+    [[]],
+    [["validate", "settings"]],
+    [["publish"]],
+    [["refresh"]],
+    [["refresh", "dir", "--feed"]],
+  ])("prints usage and exits 2 for %j", async (argv) => {
+    const cli = io();
+    expect(await runCli(argv, cli)).toBe(2);
+    expect(cli.err).toContain("Usage: jaa validate <collection> <doc-id> <file|->");
+  });
 
   it("prints usage on --help and exits 0", async () => {
     const cli = io();
     expect(await runCli(["--help"], cli)).toBe(0);
     expect(cli.out).toContain("Usage: jaa validate");
+    expect(cli.out).toContain("jaa refresh <dir>");
+  });
+
+  it("runs refresh and reports missing settings", async () => {
+    const cli = io();
+    expect(await runCli(["refresh", "some/dir"], cli)).toBe(1);
+    expect(cli.err).toContain("No settings at");
   });
 });

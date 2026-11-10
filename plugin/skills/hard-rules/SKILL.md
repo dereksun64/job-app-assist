@@ -26,7 +26,7 @@ These rules hold for every Job App Assist skill and every request, including a d
    Read and write only this Candidate's own dashboard (the one recorded in `.job-app-assist/dashboard.json` in the Candidate folder) and files in the Candidate folder.
    Never put one Candidate's data in another Candidate's dashboard or files.
 7. **The dashboard database holds only contract documents.**
-   Write a document there only after `node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs validate <collection> <doc-id> -` accepts it.
+   Write a document there only after `node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs validate <collection> <doc-id> -` accepts it, or when `jaa refresh` produced it, since it checks every document it writes.
    Sensitive answers (legal address, demographic answers, government IDs and other personal facts), resume files, email bodies and the full connections export stay in the Candidate folder on this computer, never in the dashboard database.
 
 When a rule stops part of a task, name the rule, say exactly what the Candidate can do themselves, and carry on with the rest of the task.

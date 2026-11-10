@@ -1,4 +1,4 @@
-import { useRef } from "preact/hooks";
+import { useMemo, useRef } from "preact/hooks";
 import {
   ROLE_TYPE_PRIORITIES,
   type RoleType,
@@ -7,7 +7,9 @@ import {
 } from "../contract/index.ts";
 import type { DashboardDb } from "./db.ts";
 import { formatSeniority, formatStartWindow } from "./format.ts";
+import { PostingsTab } from "./PostingsTab.tsx";
 import { useHashTab } from "./useHashTab.ts";
+import { useJobList } from "./useJobList.ts";
 import { useSettings, type SettingsState } from "./useSettings.ts";
 
 export { LOADING_TIMEOUT_MS } from "./useSettings.ts";
@@ -33,10 +35,18 @@ export interface AppProps {
   /** The `db` capability: undefined while it resolves, null when this view has none. */
   db: DashboardDb | null | undefined;
   pageVersion: string;
+  /** The current time in milliseconds; tests fix it, the page reads the clock. */
+  now?: number;
 }
 
-export function App({ db, pageVersion }: AppProps) {
+export function App({ db, pageVersion, now }: AppProps) {
   const settings = useSettings(db);
+  const jobList = useJobList(db);
+  const roleTypeOrder = useMemo(
+    () =>
+      settings.kind === "ready" ? settings.settings.searchProfile.roleTypes.map((r) => r.name) : [],
+    [settings],
+  );
   const [tab, selectTab] = useHashTab(TABS);
 
   return (
@@ -65,12 +75,7 @@ export function App({ db, pageVersion }: AppProps) {
             </EmptyState>
           )}
           {tab === "postings" && (
-            <EmptyState title="Your Job List is empty">
-              <p>
-                Refresh pulls Postings from your Sources, keeps the ones that match your Search
-                Profile, and ranks them best first. Ask your Claude to refresh.
-              </p>
-            </EmptyState>
+            <PostingsTab state={jobList} roleTypeOrder={roleTypeOrder} now={now ?? Date.now()} />
           )}
           {tab === "progress" && (
             <EmptyState title="Nothing in progress yet">

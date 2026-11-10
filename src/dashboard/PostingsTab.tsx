@@ -1,0 +1,430 @@
+import { useMemo, useState } from "preact/hooks";
+import { JOB_FEED_SOURCE, type JobListMeta, type Posting } from "../contract/index.ts";
+import { daysSincePosted, formatLevel, formatMoment, formatPostedAge } from "./format.ts";
+import type { JobListState } from "./useJobList.ts";
+
+/** How many Postings the list shows at first, and adds per "Show more". */
+export const PAGE_SIZE = 100;
+
+const POSTED_WINDOWS = [
+  { value: "", label: "Any time" },
+  { value: "1", label: "Past day" },
+  { value: "3", label: "Past 3 days" },
+  { value: "7", label: "Past week" },
+  { value: "14", label: "Past 2 weeks" },
+  { value: "30", label: "Past month" },
+] as const;
+
+interface Filters {
+  text: string;
+  roleType: string;
+  tier: string;
+  source: string;
+  posted: string;
+}
+
+const NO_FILTERS: Filters = { text: "", roleType: "", tier: "", source: "", posted: "" };
+const LIST_SEPARATOR = "\u0000";
+
+const count = (n: number, one: string, many = `${one}s`) =>
+  `${n.toLocaleString("en-US")} ${n === 1 ? one : many}`;
+
+export interface PostingsTabProps {
+  state: JobListState;
+  /** The Search Profile's role types, in the Candidate's order, for the role type filter. */
+  roleTypeOrder: readonly string[];
+  now: number;
+}
+
+export function PostingsTab({ state, roleTypeOrder, now }: PostingsTabProps) {
+  switch (state.kind) {
+    case "loading":
+    case "unavailable":
+      return null;
+    case "failed":
+      return (
+        <p class="notice notice-problem" role="alert">
+          Your Job List stopped loading. Reload the page to try again.
+        </p>
+      );
+    case "invalid":
+      return (
+        <div class="notice notice-problem" role="alert">
+          <p>
+            Your Job List doesn't match what this dashboard expects. Ask your Claude to refresh
+            again to rebuild it.
+          </p>
+          <ul class="issues">
+            {state.issues.slice(0, 5).map((issue) => (
+              <li key={issue}>{issue}</li>
+            ))}
+          </ul>
+        </div>
+      );
+    case "writing":
+      return (
+        <p class="notice notice-quiet" role="status">
+          Refresh is writing your Job List. It will appear here in a moment.
+        </p>
+      );
+    case "empty":
+      return (
+        <div class="empty">
+          <h2>Your Job List is empty</h2>
+          <p>
+            Refresh pulls Postings from your Sources, keeps the ones that match your Search Profile,
+            and ranks them best first. Ask your Claude to refresh.
+          </p>
+        </div>
+      );
+    case "ready":
+      return (
+        <JobList
+          meta={state.meta}
+          postings={state.postings}
+          updating={state.updating}
+          roleTypeOrder={roleTypeOrder}
+          now={now}
+        />
+      );
+  }
+}
+
+/** A Source's name as it reads inside a sentence. */
+function sourceLabel(name: string): string {
+  return name === JOB_FEED_SOURCE ? "the Job Feed" : name;
+}
+
+function SourceProblems({ meta }: { meta: JobListMeta }) {
+  const failing = meta.sources.filter((source) => !source.ok);
+  if (failing.length === 0) return null;
+  return (
+    <div class="notice notice-problem" role="alert">
+      {failing.map((source) => (
+        <p key={source.name}>
+          {`Your Job List may be incomplete. The last Refresh couldn't read ${sourceLabel(source.name)}, so it kept the Postings found there before.`}
+          {source.error ? ` ${source.error}` : ""}
+        </p>
+      ))}
+    </div>
+  );
+}
+
+interface JobListProps {
+  meta: JobListMeta;
+  postings: readonly Posting[];
+  updating: boolean;
+  roleTypeOrder: readonly string[];
+  now: number;
+}
+
+function JobList({ meta, postings, updating, roleTypeOrder, now }: JobListProps) {
+  const [filters, setFilters] = useState<Filters>(NO_FILTERS);
+  const [shown, setShown] = useState(PAGE_SIZE);
+  const update = (patch: Partial<Filters>) => {
+    setFilters((current) => ({ ...current, ...patch }));
+    setShown(PAGE_SIZE);
+  };
+
+  const options = useMemo(() => filterOptions(postings, roleTypeOrder), [postings, roleTypeOrder]);
+  const ranked = useMemo(
+    () => postings.map((posting, index) => ({ posting, rank: index + 1 })),
+    [postings],
+  );
+  const matches = useMemo(
+    () => ranked.filter(({ posting }) => matchesFilters(posting, filters, now)),
+    [ranked, filters, now],
+  );
+  const filtered = Object.values(filters).some((value) => value !== "");
+
+  return (
+    <div class="job-list">
+      <SourceProblems meta={meta} />
+      <div class="job-list-status">
+        <p>
+          <strong>{count(meta.total, "Posting")}</strong> in your Job List
+          {meta.matched > meta.total && (
+            <>, the best of {count(meta.matched, "match", "matches")}</>
+          )}
+          . Refreshed {formatMoment(meta.refreshedAt)}.
+        </p>
+        {updating && (
+          <p class="job-list-updating" role="status">
+            Refresh is updating your Job List…
+          </p>
+        )}
+      </div>
+
+      {postings.length === 0 ? (
+        <div class="empty">
+          <h2>No Postings matched your Search Profile</h2>
+          <p>
+            The last Refresh found nothing that fits your role types, seniority, start window and
+            Location Tiers. Ask your Claude to tune your Search Profile, or refresh again later.
+          </p>
+        </div>
+      ) : (
+        <>
+          <form
+            class="filters"
+            role="search"
+            aria-label="Filter the Job List"
+            onSubmit={(event) => {
+              event.preventDefault();
+            }}
+          >
+            <div class="filter filter-search">
+              <label class="filter-label" for="job-list-search">
+                Search
+              </label>
+              <input
+                id="job-list-search"
+                type="search"
+                value={filters.text}
+                placeholder="Company, title or location"
+                onInput={(event) => {
+                  update({ text: event.currentTarget.value });
+                }}
+              />
+            </div>
+            <Select
+              label="Role type"
+              value={filters.roleType}
+              onChange={(roleType) => {
+                update({ roleType });
+              }}
+            >
+              <option value="">All role types</option>
+              {options.roleTypes.map((roleType) => (
+                <option key={roleType} value={roleType}>
+                  {roleType}
+                </option>
+              ))}
+            </Select>
+            <Select
+              label="Location Tier"
+              value={filters.tier}
+              onChange={(tier) => {
+                update({ tier });
+              }}
+            >
+              <option value="">All tiers</option>
+              {options.tiers.map((tier) => (
+                <option key={tier} value={String(tier)}>
+                  Tier {tier}
+                </option>
+              ))}
+            </Select>
+            <Select
+              label="Source"
+              value={filters.source}
+              onChange={(source) => {
+                update({ source });
+              }}
+            >
+              <option value="">All Sources</option>
+              {options.sources.map(({ name, lists }) =>
+                lists.length === 0 ? (
+                  <option key={name} value={name}>
+                    {name}
+                  </option>
+                ) : (
+                  <optgroup key={name} label={name}>
+                    <option value={name}>All of {name}</option>
+                    {lists.map((list) => (
+                      <option key={list} value={`${name}${LIST_SEPARATOR}${list}`}>
+                        {list}
+                      </option>
+                    ))}
+                  </optgroup>
+                ),
+              )}
+            </Select>
+            <Select
+              label="Posted"
+              value={filters.posted}
+              onChange={(posted) => {
+                update({ posted });
+              }}
+            >
+              {POSTED_WINDOWS.map((window) => (
+                <option key={window.value} value={window.value}>
+                  {window.label}
+                </option>
+              ))}
+            </Select>
+          </form>
+
+          <div class="job-list-count">
+            <p aria-live="polite">
+              {filtered
+                ? `Showing ${count(matches.length, "Posting")} of ${postings.length.toLocaleString("en-US")}`
+                : `Showing all ${count(postings.length, "Posting")}, best first`}
+            </p>
+            {filtered && (
+              <button
+                type="button"
+                class="link-button"
+                onClick={() => {
+                  setFilters(NO_FILTERS);
+                  setShown(PAGE_SIZE);
+                }}
+              >
+                Clear filters
+              </button>
+            )}
+          </div>
+
+          {matches.length === 0 ? (
+            <div class="empty empty-compact">
+              <h2>No Postings match these filters</h2>
+              <p>Try a broader search or clear the filters.</p>
+            </div>
+          ) : (
+            <ol class="postings" aria-label="Job List">
+              {matches.slice(0, shown).map(({ posting, rank }) => (
+                <PostingRow key={posting.id} posting={posting} rank={rank} now={now} />
+              ))}
+            </ol>
+          )}
+
+          {matches.length > shown && (
+            <button
+              type="button"
+              class="show-more"
+              onClick={() => {
+                setShown((current) => current + PAGE_SIZE);
+              }}
+            >
+              Show {Math.min(PAGE_SIZE, matches.length - shown)} more
+            </button>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+function Select({
+  label,
+  value,
+  onChange,
+  children,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  children: preact.ComponentChildren;
+}) {
+  const id = `job-list-${label.toLowerCase().replace(/\W+/g, "-")}`;
+  return (
+    <div class="filter">
+      <label class="filter-label" for={id}>
+        {label}
+      </label>
+      <select
+        id={id}
+        value={value}
+        onChange={(event) => {
+          onChange(event.currentTarget.value);
+        }}
+      >
+        {children}
+      </select>
+    </div>
+  );
+}
+
+const SHOWN_LOCATIONS = 2;
+
+function PostingRow({ posting, rank, now }: { posting: Posting; rank: number; now: number }) {
+  const extra = posting.locations.length - SHOWN_LOCATIONS;
+  const lists = posting.sources.map((source) => source.list ?? source.name);
+  return (
+    <li class="posting">
+      <span class="posting-rank numeric">
+        <span class="visually-hidden">Rank </span>
+        {rank}
+      </span>
+      <div class="posting-main">
+        <h3 class="posting-title">
+          <a href={posting.applyUrl} target="_blank" rel="noopener noreferrer">
+            {posting.title}
+          </a>
+        </h3>
+        <p class="posting-company">{posting.company}</p>
+        <ul class="posting-facts">
+          <li title={extra > 0 ? posting.locations.join("; ") : undefined}>
+            {posting.locations.slice(0, SHOWN_LOCATIONS).join("; ")}
+            {extra > 0 && <span class="muted"> +{extra} more</span>}
+          </li>
+          <li>Tier {posting.locationTier}</li>
+          <li>{posting.roleType}</li>
+          <li>{formatLevel(posting.level)}</li>
+          <li>{formatPostedAge(posting.postedOn, now)}</li>
+        </ul>
+      </div>
+      <div class="posting-side">
+        <span class="score numeric" title="Score within its Location Tier, out of 100">
+          <span class="visually-hidden">Score </span>
+          {posting.score}
+        </span>
+        {posting.boosts.length > 0 && (
+          <ul class="boosts" aria-label="Company boosts">
+            {posting.boosts.map((boost) => (
+              <li key={boost}>{boost}</li>
+            ))}
+          </ul>
+        )}
+        <p class="posting-sources">
+          <span class="visually-hidden">Found in </span>
+          {lists.join(", ")}
+        </p>
+      </div>
+    </li>
+  );
+}
+
+function filterOptions(postings: readonly Posting[], roleTypeOrder: readonly string[]) {
+  const roleTypes = [...new Set(postings.map((p) => p.roleType))].sort((a, b) => {
+    const order = (name: string) => {
+      const index = roleTypeOrder.indexOf(name);
+      return index === -1 ? Number.MAX_SAFE_INTEGER : index;
+    };
+    return order(a) - order(b) || a.localeCompare(b);
+  });
+  const tiers = [...new Set(postings.map((p) => p.locationTier))].sort((a, b) => a - b);
+  const lists = new Map<string, Set<string>>();
+  for (const posting of postings) {
+    for (const source of posting.sources) {
+      const known = lists.get(source.name) ?? new Set<string>();
+      if (source.list) known.add(source.list);
+      lists.set(source.name, known);
+    }
+  }
+  const sources = [...lists]
+    .map(([name, names]) => ({ name, lists: [...names].sort((a, b) => a.localeCompare(b)) }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  return { roleTypes, tiers, sources };
+}
+
+function matchesFilters(posting: Posting, filters: Filters, now: number): boolean {
+  if (filters.roleType && posting.roleType !== filters.roleType) return false;
+  if (filters.tier && posting.locationTier !== Number(filters.tier)) return false;
+  if (filters.source) {
+    const [name, list] = filters.source.split(LIST_SEPARATOR);
+    const found = posting.sources.some(
+      (source) => source.name === name && (list === undefined || source.list === list),
+    );
+    if (!found) return false;
+  }
+  if (filters.posted && daysSincePosted(posting.postedOn, now) > Number(filters.posted)) {
+    return false;
+  }
+  const words = filters.text.toLowerCase().split(/\s+/).filter(Boolean);
+  if (words.length > 0) {
+    const haystack = [posting.company, posting.title, ...posting.locations].join(" ").toLowerCase();
+    if (!words.every((word) => haystack.includes(word))) return false;
+  }
+  return true;
+}
