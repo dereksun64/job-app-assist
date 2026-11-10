@@ -43,7 +43,12 @@ const isoDay = z
     z.regex(/^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/, "must be a day written as YYYY-MM-DD"),
   );
 
-const timestamp = z.iso.datetime({ error: "must be an ISO 8601 timestamp" });
+export const timestampSchema = z.iso.datetime({ error: "must be an ISO 8601 timestamp" });
+
+/** A Posting's id: a short hash of its canonical apply URL, stable across Refreshes. */
+export const postingIdSchema = z
+  .string()
+  .check(z.regex(/^[0-9a-f]{12}$/, "must be 12 lowercase hex characters"));
 
 const postingSource = z.strictObject({
   /** The Source, for example "Job Feed". */
@@ -52,9 +57,10 @@ const postingSource = z.strictObject({
   list: z.optional(text(120)),
 });
 
-const posting = z.strictObject({
+/** One Posting; cards and skips keep a snapshot of the Posting they refer to. */
+export const postingSchema = z.strictObject({
   /** A short hash of the Posting's canonical apply URL; stable across Refreshes. */
-  id: z.string().check(z.regex(/^[0-9a-f]{12}$/, "must be 12 lowercase hex characters")),
+  id: postingIdSchema,
   /** Where the Candidate applies, with short links already resolved when they could be. */
   applyUrl: webAddress,
   company: text(200),
@@ -82,9 +88,9 @@ const posting = z.strictObject({
 const page = z.strictObject({
   schemaVersion: z.literal(1),
   /** The Refresh that wrote this page; it matches the meta document's `refreshedAt`. */
-  refreshedAt: timestamp,
+  refreshedAt: timestampSchema,
   page: z.int().check(z.gte(1), z.lte(MAX_JOB_LIST_PAGES)),
-  postings: z.array(posting).check(
+  postings: z.array(postingSchema).check(
     z.maxLength(POSTINGS_PER_PAGE, `a page holds at most ${String(POSTINGS_PER_PAGE)} Postings`),
     z.superRefine((postings, ctx) => {
       const seen = new Set<string>();
@@ -114,7 +120,7 @@ const sourceReport = z.strictObject({
 const meta = z
   .strictObject({
     schemaVersion: z.literal(1),
-    refreshedAt: timestamp,
+    refreshedAt: timestampSchema,
     pageCount: z.int().check(z.gte(0), z.lte(MAX_JOB_LIST_PAGES)),
     /** Postings stored in the Job List. */
     total: z.int().check(z.gte(0), z.lte(MAX_JOB_LIST)),
@@ -145,7 +151,7 @@ const meta = z
   );
 
 export type PostingSource = z.output<typeof postingSource>;
-export type Posting = z.output<typeof posting>;
+export type Posting = z.output<typeof postingSchema>;
 export type JobListPage = z.output<typeof page>;
 export type SourceReport = z.output<typeof sourceReport>;
 export type JobListMeta = z.output<typeof meta>;

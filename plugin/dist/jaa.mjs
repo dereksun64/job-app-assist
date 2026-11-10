@@ -185,14 +185,14 @@ function codePointLength(str) {
   const units = str.length;
   if (!highSurrogate.test(str))
     return units;
-  let count = units;
+  let count2 = units;
   for (let i = 0; i < units - 1; i++) {
     if ((str.charCodeAt(i) & 64512) === 55296 && (str.charCodeAt(i + 1) & 64512) === 56320) {
-      count--;
+      count2--;
       i++;
     }
   }
-  return count;
+  return count2;
 }
 function getLengthableOrigin(input) {
   if (Array.isArray(input))
@@ -2010,16 +2010,17 @@ var webAddress = string2().check(
 var isoDay = string2().check(
   _regex(/^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/, "must be a day written as YYYY-MM-DD")
 );
-var timestamp = iso_exports.datetime({ error: "must be an ISO 8601 timestamp" });
+var timestampSchema = iso_exports.datetime({ error: "must be an ISO 8601 timestamp" });
+var postingIdSchema = string2().check(_regex(/^[0-9a-f]{12}$/, "must be 12 lowercase hex characters"));
 var postingSource = strictObject({
   /** The Source, for example "Job Feed". */
   name: text(80),
   /** Where inside the Source the Posting was listed, for example "Simplify New Grad". */
   list: optional(text(120))
 });
-var posting = strictObject({
+var postingSchema = strictObject({
   /** A short hash of the Posting's canonical apply URL; stable across Refreshes. */
-  id: string2().check(_regex(/^[0-9a-f]{12}$/, "must be 12 lowercase hex characters")),
+  id: postingIdSchema,
   /** Where the Candidate applies, with short links already resolved when they could be. */
   applyUrl: webAddress,
   company: text(200),
@@ -2040,9 +2041,9 @@ var posting = strictObject({
 var page = strictObject({
   schemaVersion: literal(1),
   /** The Refresh that wrote this page; it matches the meta document's `refreshedAt`. */
-  refreshedAt: timestamp,
+  refreshedAt: timestampSchema,
   page: int().check(_gte(1), _lte(MAX_JOB_LIST_PAGES)),
-  postings: array(posting).check(
+  postings: array(postingSchema).check(
     _maxLength(POSTINGS_PER_PAGE, `a page holds at most ${String(POSTINGS_PER_PAGE)} Postings`),
     superRefine((postings, ctx) => {
       const seen = /* @__PURE__ */ new Set();
@@ -2069,7 +2070,7 @@ var sourceReport = strictObject({
 });
 var meta2 = strictObject({
   schemaVersion: literal(1),
-  refreshedAt: timestamp,
+  refreshedAt: timestampSchema,
   pageCount: int().check(_gte(0), _lte(MAX_JOB_LIST_PAGES)),
   /** Postings stored in the Job List. */
   total: int().check(_gte(0), _lte(MAX_JOB_LIST)),
@@ -2126,13 +2127,100 @@ function validatePostingsDocument(docId, input) {
   return result;
 }
 
+// src/contract/cards.ts
+var CARDS_COLLECTION = "cards";
+var STAGES = [
+  "queued",
+  "ready_for_review",
+  "submitted",
+  "interviewing",
+  "offer",
+  "closed"
+];
+var QUEUED_BY = ["refresh", "candidate"];
+var POSSIBLY_CLOSED_DAYS = 5;
+var DAY_MS = 864e5;
+function queueAgeDays(queuedAt, now) {
+  return Math.max(0, Math.floor((now - Date.parse(queuedAt)) / DAY_MS));
+}
+function snapshotMatches(kind) {
+  return superRefine((value, ctx) => {
+    if (value.posting.id !== value.postingId) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["posting", "id"],
+        message: `must be the ${kind}'s postingId, ${value.postingId}`,
+        input: value.posting.id
+      });
+    }
+  });
+}
+var card = strictObject({
+  schemaVersion: literal(1),
+  postingId: postingIdSchema,
+  stage: _enum(STAGES),
+  queuedAt: timestampSchema,
+  queuedBy: _enum(QUEUED_BY),
+  posting: postingSchema,
+  updatedAt: timestampSchema
+}).check(snapshotMatches("card"));
+function validateCard(input) {
+  return validateWith(card, input);
+}
+function validateCardDocument(docId, input) {
+  const result = validateCard(input);
+  if (result.ok && result.value.postingId !== docId) {
+    return {
+      ok: false,
+      issues: [
+        `A card is stored under its Posting's id: ${CARDS_COLLECTION}/${result.value.postingId}, not ${CARDS_COLLECTION}/${docId}.`
+      ]
+    };
+  }
+  return result;
+}
+
+// src/contract/skips.ts
+var SKIPS_COLLECTION = "skips";
+var SKIP_REASONS = [
+  "wrong_role",
+  "wrong_location",
+  "wrong_company",
+  "too_senior",
+  "other"
+];
+var skip = strictObject({
+  schemaVersion: literal(1),
+  postingId: postingIdSchema,
+  reason: _enum(SKIP_REASONS),
+  skippedAt: timestampSchema,
+  posting: postingSchema
+}).check(snapshotMatches("skip"));
+function validateSkip(input) {
+  return validateWith(skip, input);
+}
+function validateSkipDocument(docId, input) {
+  const result = validateSkip(input);
+  if (result.ok && result.value.postingId !== docId) {
+    return {
+      ok: false,
+      issues: [
+        `A skip is stored under its Posting's id: ${SKIPS_COLLECTION}/${result.value.postingId}, not ${SKIPS_COLLECTION}/${docId}.`
+      ]
+    };
+  }
+  return result;
+}
+
 // src/contract/index.ts
 var collections = {
   [SETTINGS_COLLECTION]: (docId, input) => docId === SETTINGS_DOC_ID ? validateSettings(input) : {
     ok: false,
     issues: [`The settings collection holds one document, with the id "${SETTINGS_DOC_ID}".`]
   },
-  [POSTINGS_COLLECTION]: validatePostingsDocument
+  [POSTINGS_COLLECTION]: validatePostingsDocument,
+  [CARDS_COLLECTION]: validateCardDocument,
+  [SKIPS_COLLECTION]: validateSkipDocument
 };
 var CONTRACT_COLLECTIONS = Object.keys(collections);
 function validateDocument(collection, docId, input) {
@@ -2963,7 +3051,7 @@ function companyBoost(company, companyTier) {
 }
 
 // src/engine/freshness.ts
-var DAY_MS = 864e5;
+var DAY_MS2 = 864e5;
 var MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
 var UNIT_DAYS = { h: 1 / 24, d: 1, w: 7, mo: 30, y: 365 };
 function isoDay2(time3) {
@@ -2975,7 +3063,7 @@ function postedOnFrom(age, generatedAt) {
   const relative = /^(\d+)\s*(h|d|w|mo|y)$/.exec(text4);
   if (relative) {
     const days = Number(relative[1]) * (UNIT_DAYS[relative[2] ?? "d"] ?? 1);
-    return isoDay2(reference - Math.floor(days) * DAY_MS);
+    return isoDay2(reference - Math.floor(days) * DAY_MS2);
   }
   const absolute = /^([a-z]{3})[a-z]*\.?\s+(\d{1,2})$/.exec(text4);
   const month = absolute ? MONTHS.indexOf(absolute[1] ?? "") : -1;
@@ -2992,7 +3080,7 @@ function postedOnFrom(age, generatedAt) {
   return isoDay2(reference);
 }
 function daysSince(postedOn, now) {
-  return Math.max(0, Math.floor((Date.parse(now) - Date.parse(`${postedOn}T00:00:00Z`)) / DAY_MS));
+  return Math.max(0, Math.floor((Date.parse(now) - Date.parse(`${postedOn}T00:00:00Z`)) / DAY_MS2));
 }
 function freshness(postedOn, now) {
   return 0.5 ** (daysSince(postedOn, now) / 14);
@@ -3525,6 +3613,39 @@ function unmatchedTierLocations(places, tiers) {
   return tiers.flatMap((tier) => tier.locations).filter((entry) => !places.some(cachedMatcher(entry)));
 }
 
+// src/engine/queue.ts
+function planQueue({ now, dailyQueueTarget, jobList, queue }) {
+  const nowMs = Date.parse(now);
+  const queued = queue.cards.filter((card2) => card2.stage === "queued");
+  const taken = /* @__PURE__ */ new Set([...queue.cardIds, ...queue.cards.map((c) => c.postingId)]);
+  const skipped = new Set(queue.skippedIds);
+  const listed = new Set(jobList.map((p) => p.id));
+  const open = Math.max(0, dailyQueueTarget - queued.length);
+  const picks = jobList.map((posting, rank) => ({ posting, rank })).filter(({ posting }) => !taken.has(posting.id) && !skipped.has(posting.id)).sort((a, b) => a.posting.locationTier - b.posting.locationTier || a.rank - b.rank).slice(0, open).map(({ posting }) => posting);
+  const cards = picks.map((posting) => ({
+    schemaVersion: 1,
+    postingId: posting.id,
+    stage: "queued",
+    queuedAt: now,
+    queuedBy: "refresh",
+    posting,
+    updatedAt: now
+  }));
+  return {
+    cards,
+    summary: {
+      target: dailyQueueTarget,
+      size: queued.length + cards.length,
+      preQueued: cards.length,
+      carriedOver: queued.length,
+      possiblyClosed: queued.filter(
+        (card2) => queueAgeDays(card2.queuedAt, nowMs) >= POSSIBLY_CLOSED_DAYS
+      ).length,
+      notListed: queued.filter((card2) => !listed.has(card2.postingId)).length
+    }
+  };
+}
+
 // src/engine/roles.ts
 var INTERN = /\bintern(ship)?s?\b|\bco-?op\b|\bapprentice(ship)?\b/;
 var NEW_GRAD = /\bnew (college )?grad(uate)?s?\b|\bgraduate\b|\buniversity\b|\bcollege\b|\bcampus\b|\bentry[- ]level\b|\bearly[- ]career\b|\bncg\b|\brotational\b|\bresidency\b/;
@@ -3879,25 +4000,25 @@ function merge2(group, tiers, now) {
 function carryOver(current, failed, settings2, now) {
   if (failed.size === 0) return [];
   const { roleTypes, seniority, locationTiers } = settings2.searchProfile;
-  return current.pages.flatMap((page2) => page2.postings).filter((posting2) => posting2.sources.some((source) => failed.has(source.name))).flatMap((posting2) => {
-    const locationTier2 = locationTierOf(posting2.locations.flatMap(parseLocations), locationTiers);
-    const roleType2 = matchRoleType(posting2.title, "", roleTypes);
-    if (locationTier2 === void 0 || !roleType2 || !seniority.includes(posting2.level)) return [];
+  return current.pages.flatMap((page2) => page2.postings).filter((posting) => posting.sources.some((source) => failed.has(source.name))).flatMap((posting) => {
+    const locationTier2 = locationTierOf(posting.locations.flatMap(parseLocations), locationTiers);
+    const roleType2 = matchRoleType(posting.title, "", roleTypes);
+    if (locationTier2 === void 0 || !roleType2 || !seniority.includes(posting.level)) return [];
     return [
       {
-        ...posting2,
+        ...posting,
         locationTier: locationTier2,
         roleType: roleType2.name,
-        score: score(roleType2.priority, companyBoostFromReasons(posting2), posting2.postedOn, now)
+        score: score(roleType2.priority, companyBoostFromReasons(posting), posting.postedOn, now)
       }
     ];
   });
 }
-function companyBoostFromReasons(posting2) {
-  const tier = posting2.boosts.map((reason) => /^Company tier (.+)$/.exec(reason)?.[1]).find(Boolean);
+function companyBoostFromReasons(posting) {
+  const tier = posting.boosts.map((reason) => /^Company tier (.+)$/.exec(reason)?.[1]).find(Boolean);
   const fromTier = tier === void 0 ? 0 : companyBoost("", `Tier ${tier}`).value;
   return Math.max(
-    posting2.boosts.includes("Fortune 500") ? companyBoost("Walmart", "").value : 0,
+    posting.boosts.includes("Fortune 500") ? companyBoost("Walmart", "").value : 0,
     fromTier
   );
 }
@@ -3934,6 +4055,12 @@ function runRefresh(input) {
     matched: ranked.length,
     sources: matching.sourceReports
   };
+  const queue = planQueue({
+    now,
+    dailyQueueTarget: settings2.dailyQueueTarget,
+    jobList,
+    queue: input.queue
+  });
   const keptPages = new Set(pages.map((p) => jobListPageId(p.page)));
   const changeSet = {
     set: [
@@ -3942,7 +4069,12 @@ function runRefresh(input) {
         docId: jobListPageId(data.page),
         data
       })),
-      { collection: POSTINGS_COLLECTION, docId: JOB_LIST_META_ID, data: meta3 }
+      { collection: POSTINGS_COLLECTION, docId: JOB_LIST_META_ID, data: meta3 },
+      ...queue.cards.map((data) => ({
+        collection: CARDS_COLLECTION,
+        docId: data.postingId,
+        data
+      }))
     ],
     delete: current.pages.map((page2) => jobListPageId(page2.page)).filter((docId) => !keptPages.has(docId)).sort().map((docId) => ({ collection: POSTINGS_COLLECTION, docId }))
   };
@@ -3971,9 +4103,10 @@ function runRefresh(input) {
       locationTier: locationTier2,
       score: s,
       applyUrl
-    }))
+    })),
+    queue: queue.summary
   };
-  return { jobList, meta: meta3, changeSet, summary };
+  return { jobList, meta: meta3, preQueued: queue.cards, changeSet, summary };
 }
 
 // src/refresh/job-feed.ts
@@ -4000,7 +4133,7 @@ function parseJobFeed(json, fallbackTime) {
     const company = text2(job.company).trim();
     const title = text2(job.title).trim();
     if (!applyUrl || !company || !title) continue;
-    const posting2 = {
+    const posting = {
       applyUrl,
       company,
       title,
@@ -4011,8 +4144,8 @@ function parseJobFeed(json, fallbackTime) {
       companyTier: text2(job.companyTier)
     };
     const list = text2(job.source).trim();
-    if (list) posting2.list = list;
-    postings.push(posting2);
+    if (list) posting.list = list;
+    postings.push(posting);
   }
   return { name: JOB_FEED_SOURCE, ok: true, fetchedAt, postings };
 }
@@ -4140,6 +4273,23 @@ async function readState(io, dir) {
   if (meta3) current.meta = meta3;
   return { current, existing };
 }
+async function savedIds(io, folder) {
+  return (await io.readDir(folder)).filter((name) => name.endsWith(".json")).map((name) => name.slice(0, -".json".length)).sort();
+}
+async function readQueue(io, dir) {
+  const cardsFolder = join(dir, "state", CARDS_COLLECTION);
+  const cardIds = await savedIds(io, cardsFolder);
+  const cards = [];
+  for (const docId of cardIds) {
+    const result = validateCardDocument(
+      docId,
+      await readJson(io, join(cardsFolder, `${docId}.json`))
+    );
+    if (result.ok) cards.push(result.value);
+  }
+  const skippedIds = await savedIds(io, join(dir, "state", SKIPS_COLLECTION));
+  return { cards, cardIds, skippedIds };
+}
 async function readVersions(io, dir) {
   const json = await readJson(io, join(dir, "versions.json"));
   if (json === void 0) return {};
@@ -4180,9 +4330,10 @@ function batchesOf(writes) {
   return batches;
 }
 var number2 = (n) => n.toLocaleString("en-US");
+var count = (n, one, many = `${one}s`) => `${number2(n)} ${n === 1 ? one : many}`;
 function formatSummary(summary, writesPath, batches) {
   const lines = [];
-  const tiers = summary.byTier.map((count, i) => `Tier ${String(i + 1)}: ${number2(count)}`).join(", ");
+  const tiers = summary.byTier.map((count2, i) => `Tier ${String(i + 1)}: ${number2(count2)}`).join(", ");
   lines.push(`Refresh finished at ${summary.refreshedAt.slice(0, 16).replace("T", " ")} UTC.`);
   lines.push(
     `Job List: ${number2(summary.total)} Postings (${tiers}); ${number2(summary.newPostings)} new and ${number2(summary.removedPostings)} gone since the last Refresh.`
@@ -4219,11 +4370,25 @@ function formatSummary(summary, writesPath, batches) {
       `Location Tier entries that matched no Posting location: ${summary.unmatchedLocations.join(", ")}.`
     );
   }
+  const { queue } = summary;
+  lines.push(
+    `Queue: ${count(queue.size, "Posting")} for a daily target of ${number2(queue.target)}; ${number2(queue.preQueued)} pre-queued now and ${number2(queue.carriedOver)} carried over.`
+  );
+  if (queue.possiblyClosed > 0) {
+    lines.push(
+      `${count(queue.possiblyClosed, "Queue item has", "Queue items have")} waited ${String(POSSIBLY_CLOSED_DAYS)} or more days and may have closed.`
+    );
+  }
+  if (queue.notListed > 0) {
+    lines.push(
+      `${count(queue.notListed, "Queue item is", "Queue items are")} no longer in the Job List; the Posting may have closed.`
+    );
+  }
   if (summary.top.length > 0) {
     lines.push("Top Postings:");
-    summary.top.forEach((posting2, i) => {
+    summary.top.forEach((posting, i) => {
       lines.push(
-        `${String(i + 1)}. ${posting2.company}: ${posting2.title} (${posting2.locations.slice(0, 3).join("; ")}; Tier ${String(posting2.locationTier)}; score ${String(posting2.score)})`
+        `${String(i + 1)}. ${posting.company}: ${posting.title} (${posting.locations.slice(0, 3).join("; ")}; Tier ${String(posting.locationTier)}; score ${String(posting.score)})`
       );
     });
   }
@@ -4262,7 +4427,8 @@ ${settings2.issues.map((i) => `- ${i}`).join("\n")}`
     }
     const now = io.now();
     const feed = await readFeed(io, now, options.feed);
-    const base = { now, settings: settings2.value, sources: [feed], current };
+    const queue = await readQueue(io, dir);
+    const base = { now, settings: settings2.value, sources: [feed], current, queue };
     const cachePath = join(dir, "short-links.json");
     const cacheJson = await readJson(io, cachePath);
     const cache = typeof cacheJson === "object" && cacheJson !== null ? cacheJson : {};
@@ -4275,8 +4441,10 @@ ${settings2.issues.map((i) => `- ${i}`).join("\n")}`
     const { changeSet, summary } = runRefresh({ ...base, resolvedLinks: resolved });
     const out = join(dir, "out");
     await io.removeDir(out);
-    await io.makeDir(join(out, POSTINGS_COLLECTION));
-    const versionOf = (docId) => versions[`${POSTINGS_COLLECTION}/${docId}`];
+    for (const collection of new Set(changeSet.set.map((w) => w.collection))) {
+      await io.makeDir(join(out, collection));
+    }
+    const versionOf = (collection, docId) => versions[`${collection}/${docId}`];
     const writes = [];
     for (const { collection, docId, data } of changeSet.set) {
       const check = validateDocument(collection, docId, data);
@@ -4291,18 +4459,20 @@ ${check.issues.map((i) => `- ${i}`).join("\n")}`
 `;
       await io.writeFile(filePath, text4);
       const write = { op: "set", collection, doc_id: docId, file_path: filePath };
-      const version2 = versionOf(docId);
+      const version2 = versionOf(collection, docId);
       if (version2 !== void 0) write.if_version = version2;
       writes.push({ write, bytes: Buffer.byteLength(text4) });
     }
-    const written = new Set(changeSet.set.map((w) => w.docId));
+    const written = new Set(
+      changeSet.set.filter((w) => w.collection === POSTINGS_COLLECTION).map((w) => w.docId)
+    );
     const removals = /* @__PURE__ */ new Set([
       ...changeSet.delete.map((d) => d.docId),
       ...existing.filter((id) => !written.has(id))
     ]);
     for (const docId of [...removals].sort()) {
       const write = { op: "delete", collection: POSTINGS_COLLECTION, doc_id: docId };
-      const version2 = versionOf(docId);
+      const version2 = versionOf(POSTINGS_COLLECTION, docId);
       if (version2 !== void 0) write.if_version = version2;
       writes.push({ write, bytes: 0 });
     }

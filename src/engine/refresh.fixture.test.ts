@@ -6,6 +6,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import type { Settings } from "../contract/index.ts";
 import { parseJobFeed } from "../refresh/job-feed.ts";
+import { EMPTY_QUEUE } from "./queue.ts";
 import { runRefresh } from "./refresh.ts";
 
 const fixture = JSON.parse(
@@ -38,6 +39,7 @@ function run() {
     settings,
     sources: [parseJobFeed(fixture, NOW)],
     current: { pages: [] },
+    queue: EMPTY_QUEUE,
     resolvedLinks: fixture.resolvedLinks,
   });
 }

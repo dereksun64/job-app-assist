@@ -14,6 +14,7 @@ import {
   type CurrentJobList,
   type RefreshInput,
 } from "./refresh.ts";
+import { EMPTY_QUEUE } from "./queue.ts";
 import type { SourcePosting, SourceResult } from "./source.ts";
 
 const NOW = "2026-11-10T15:00:00.000Z";
@@ -64,6 +65,7 @@ function refresh(postings: SourcePosting[], overrides: Partial<RefreshInput> = {
     settings,
     sources: [feed(postings)],
     current: empty,
+    queue: EMPTY_QUEUE,
     ...overrides,
   });
 }
@@ -469,7 +471,8 @@ describe("change set", () => {
   it("writes the Job List as rank-ordered pages and a meta document, all valid", () => {
     const postings = Array.from({ length: POSTINGS_PER_PAGE + 3 }, () => listed());
     const { changeSet, jobList } = refresh(postings);
-    expect(changeSet.set.map((w) => `${w.collection}/${w.docId}`)).toEqual([
+    const jobListWrites = changeSet.set.filter((w) => w.collection === "postings");
+    expect(jobListWrites.map((w) => `${w.collection}/${w.docId}`)).toEqual([
       "postings/page-1",
       "postings/page-2",
       "postings/meta",
@@ -480,7 +483,7 @@ describe("change set", () => {
         ok: true,
       });
     }
-    const [first, second, meta] = changeSet.set.map((w) => w.data);
+    const [first, second, meta] = jobListWrites.map((w) => w.data);
     expect(first).toMatchObject({ page: 1, refreshedAt: NOW });
     expect((first as JobListPage).postings).toEqual(jobList.slice(0, POSTINGS_PER_PAGE));
     expect((second as JobListPage).postings).toEqual(jobList.slice(POSTINGS_PER_PAGE));
@@ -500,12 +503,53 @@ describe("change set", () => {
       meta: metaFor(old.length),
       pages: [page(1, old.slice(0, 200)), page(2, old.slice(200, 400)), page(3, old.slice(400))],
     };
-    const { changeSet } = refresh([listed()], { current });
-    expect(changeSet.set.map((w) => w.docId)).toEqual(["page-1", "meta"]);
+    const { changeSet, jobList } = refresh([listed()], { current });
+    expect(changeSet.set.map((w) => w.docId)).toEqual(["page-1", "meta", jobList[0]?.id]);
     expect(changeSet.delete).toEqual([
       { collection: "postings", docId: "page-2" },
       { collection: "postings", docId: "page-3" },
     ]);
+  });
+
+  it("pre-queues the best Postings after the Job List, as cards up to the daily target", () => {
+    const postings = Array.from({ length: 30 }, (_, i) =>
+      listed({ location: i % 2 === 0 ? "Boston, MA" : "New York, NY" }),
+    );
+    const { changeSet, jobList, preQueued, summary } = refresh(postings, {
+      settings: { ...settings, dailyQueueTarget: 18 },
+    });
+    const cardWrites = changeSet.set.slice(-18);
+    expect(changeSet.set.at(-19)?.docId).toBe("meta");
+    expect(cardWrites.map((w) => `${w.collection}/${w.docId}`)).toEqual(
+      jobList.slice(0, 18).map((p) => `cards/${p.id}`),
+    );
+    expect(cardWrites.map((w) => w.data)).toEqual(preQueued);
+    // The 15 New York Postings are Tier 1, so Boston (Tier 2) fills only the last 3 slots.
+    expect(preQueued.map((c) => c.posting.locationTier)).toEqual([
+      ...Array<number>(15).fill(1),
+      2,
+      2,
+      2,
+    ]);
+    expect(summary.queue).toEqual({
+      target: 18,
+      size: 18,
+      preQueued: 18,
+      carriedOver: 0,
+      possiblyClosed: 0,
+      notListed: 0,
+    });
+  });
+
+  it("never pre-queues a skipped Posting or writes over an existing card", () => {
+    const postings = [listed(), listed(), listed()];
+    const [first, second, third] = refresh(postings).jobList.map((p) => p.id);
+    const { preQueued, summary } = refresh(postings, {
+      settings: { ...settings, dailyQueueTarget: 3 },
+      queue: { cards: [], cardIds: [first ?? ""], skippedIds: [second ?? ""] },
+    });
+    expect(preQueued.map((c) => c.postingId)).toEqual([third]);
+    expect(summary.queue).toMatchObject({ preQueued: 1, size: 1 });
   });
 
   it("writes an empty Job List as a meta document alone", () => {
@@ -558,6 +602,7 @@ describe("failing Sources", () => {
       now: NOW,
       settings,
       current,
+      queue: EMPTY_QUEUE,
       sources: [{ name: "Job Feed", ok: false, error: "The Job Feed answered HTTP 503." }],
     });
     expect(jobList.map((p) => p.company)).toEqual(["Acme", "Beta"]);
@@ -590,6 +635,7 @@ describe("failing Sources", () => {
       now: NOW,
       settings: nycOnly,
       current,
+      queue: EMPTY_QUEUE,
       sources: [{ name: "Job Feed", ok: false, error: "timeout" }],
     });
     expect(jobList.map((p) => p.company)).toEqual(["Acme"]);
