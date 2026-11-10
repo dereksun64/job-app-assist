@@ -22,6 +22,8 @@ export interface MemoryDbOptions {
   silent?: boolean;
   /** End every subscription with this terminal error. */
   failWith?: DbError;
+  /** Reject every write with this error, storing nothing. */
+  failWritesWith?: DbError;
 }
 
 export interface MemoryDb extends DashboardDb {
@@ -111,6 +113,11 @@ export function createMemoryDb(
     for (const listener of listeners) listener();
   };
 
+  // The real store rejects with a plain { code, message } object, not an Error.
+  const refuse = (error: DbError) =>
+    // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors
+    Promise.reject(error);
+
   const doc = (path: string): DocumentReference => {
     if (segments(path).length % 2 !== 0) throw new TypeError(`Not a document path: ${path}`);
     return {
@@ -118,21 +125,21 @@ export function createMemoryDb(
       path,
       get: () => Promise.resolve(snapshotOf(path)),
       set: (data) => {
+        if (options.failWritesWith) return refuse(options.failWritesWith);
         writes.push({ op: "set", path, data: clone(data) });
         docs.set(path, clone(data));
         notify();
         return Promise.resolve();
       },
       update: (data) => {
+        if (options.failWritesWith) return refuse(options.failWritesWith);
         const current = docs.get(path);
         if (current === undefined) {
           const error: DbError = {
             code: "invalid_argument",
             message: `update needs an existing document at ${path}`,
           };
-          // The real store rejects with a plain { code, message } object, not an Error.
-          // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors
-          return Promise.reject(error);
+          return refuse(error);
         }
         writes.push({ op: "update", path, data: clone(data) });
         docs.set(path, mergeDeep(current, clone(data)));
@@ -140,6 +147,7 @@ export function createMemoryDb(
         return Promise.resolve();
       },
       delete: () => {
+        if (options.failWritesWith) return refuse(options.failWritesWith);
         writes.push({ op: "delete", path });
         docs.delete(path);
         notify();

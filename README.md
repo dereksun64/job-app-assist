@@ -4,7 +4,7 @@ A Claude Code plugin that lets your own Claude find, prepare and fill job applic
 Everything lands in a private dashboard in your own claude.ai account, with News, Postings and Progress tabs.
 Your Claude never submits an application, never sends a message as you, and never signs in for you.
 
-This is an early version: Setup and Refresh work today, and the Queue, Fill and the rest are on the way.
+This is an early version: Setup, Refresh and the Queue work today, and Fill and the rest are on the way.
 
 ## What you need
 
@@ -30,6 +30,14 @@ Run `/job-app-assist:refresh`, or just ask Claude to refresh your jobs.
 Claude pulls Postings from the shared Job Feed, keeps the ones that match your Search Profile, merges duplicates listed in several places, and ranks them: Location Tier first, then fit to your role types, company boosts (Fortune 500 companies and the Job Feed's company tiers) and freshness.
 The ranked Job List appears on the Postings tab of your dashboard, with search and filters for role type, Location Tier, Source and how recently a Posting went up.
 Claude ends with a short summary in chat, and says plainly when a Source could not be read.
+
+## Queue
+
+Each Refresh fills your Queue with the best-ranked Postings until it holds your daily Queue target, taking higher Location Tiers first.
+Queued Postings are ticked and highlighted in the Job List; tick or untick any Posting with one click.
+When you untick one, pick a quick reason (wrong role, location, company, too senior, or another reason): Refresh never queues that Posting again, and the Skipped filter lets you see and un-skip it.
+The Queued filter shows just your picks, and the bar at the bottom always shows how many are queued, with a link to the Progress board.
+Postings you haven't applied to stay queued from day to day with a badge saying how long they have waited, and after five days they are flagged as possibly closed.
 
 ## Developing
 

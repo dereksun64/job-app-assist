@@ -2,77 +2,10 @@
 import { act, cleanup, render, screen, within } from "@testing-library/preact";
 import { userEvent } from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { JobListMeta, JobListPage, Posting, Settings } from "../contract/index.ts";
 import { App } from "./App.tsx";
 import { PAGE_SIZE } from "./PostingsTab.tsx";
 import { createMemoryDb } from "./testing/memory-db.ts";
-
-const NOW = Date.parse("2026-11-10T15:00:00.000Z");
-const REFRESHED = "2026-11-10T14:30:00.000Z";
-
-const settings: Settings = {
-  schemaVersion: 1,
-  searchProfile: {
-    roleTypes: [
-      { name: "Software Engineer", priority: "high" },
-      { name: "Machine Learning Engineer", priority: "high" },
-    ],
-    seniority: ["intern", "new_grad"],
-    startWindow: {},
-    locationTiers: [{ locations: ["New York City", "Remote"] }, { locations: ["Boston"] }],
-  },
-  dailyQueueTarget: 20,
-  updatedAt: "2026-11-01T00:00:00.000Z",
-};
-
-let next = 0;
-function posting(overrides: Partial<Posting> = {}): Posting {
-  next += 1;
-  return {
-    id: next.toString(16).padStart(12, "0"),
-    applyUrl: `https://jobs.lever.co/acme/${String(next)}`,
-    company: `Company ${String(next)}`,
-    title: "Software Engineer, New Grad",
-    locations: ["New York, NY"],
-    locationTier: 1,
-    roleType: "Software Engineer",
-    level: "new_grad",
-    postedOn: "2026-11-08",
-    sources: [{ name: "Job Feed", list: "Simplify New Grad" }],
-    score: 80,
-    boosts: [],
-    ...overrides,
-  };
-}
-
-function jobListDocs(
-  postings: Posting[],
-  meta: Partial<JobListMeta> = {},
-  refreshedAt = REFRESHED,
-) {
-  const docs: Record<string, object> = {};
-  const pageCount = Math.ceil(postings.length / 200);
-  for (let page = 1; page <= pageCount; page++) {
-    const data: JobListPage = {
-      schemaVersion: 1,
-      refreshedAt,
-      page,
-      postings: postings.slice((page - 1) * 200, page * 200),
-    };
-    docs[`postings/page-${String(page)}`] = data;
-  }
-  const metaDoc: JobListMeta = {
-    schemaVersion: 1,
-    refreshedAt,
-    pageCount,
-    total: postings.length,
-    matched: postings.length,
-    sources: [{ name: "Job Feed", ok: true, postings: 6407 }],
-    ...meta,
-  };
-  docs["postings/meta"] = metaDoc;
-  return docs;
-}
+import { NOW, REFRESHED, jobListDocs, posting, settings } from "./testing/fixtures.ts";
 
 const standard = [
   posting({

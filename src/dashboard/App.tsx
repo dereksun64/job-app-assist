@@ -1,15 +1,17 @@
 import { useMemo, useRef } from "preact/hooks";
 import {
   ROLE_TYPE_PRIORITIES,
+  STAGES,
   type RoleType,
   type RoleTypePriority,
   type Settings,
 } from "../contract/index.ts";
 import type { DashboardDb } from "./db.ts";
-import { formatSeniority, formatStartWindow } from "./format.ts";
+import { STAGE_LABELS, formatSeniority, formatStartWindow } from "./format.ts";
 import { PostingsTab } from "./PostingsTab.tsx";
 import { useHashTab } from "./useHashTab.ts";
 import { useJobList } from "./useJobList.ts";
+import { queueActions, useQueue } from "./useQueue.ts";
 import { useSettings, type SettingsState } from "./useSettings.ts";
 
 export { LOADING_TIMEOUT_MS } from "./useSettings.ts";
@@ -28,7 +30,6 @@ const PRIORITY_LABELS: Record<RoleTypePriority, string> = {
   low: "Low",
 };
 
-const STAGES = ["Queued", "Ready for Review", "Submitted", "Interviewing", "Offer", "Closed"];
 const SETUP_COMMAND = "/job-app-assist:setup";
 
 export interface AppProps {
@@ -42,6 +43,8 @@ export interface AppProps {
 export function App({ db, pageVersion, now }: AppProps) {
   const settings = useSettings(db);
   const jobList = useJobList(db);
+  const queue = useQueue(db);
+  const actions = useMemo(() => (db ? queueActions(db, () => now ?? Date.now()) : null), [db, now]);
   const roleTypeOrder = useMemo(
     () =>
       settings.kind === "ready" ? settings.settings.searchProfile.roleTypes.map((r) => r.name) : [],
@@ -75,14 +78,23 @@ export function App({ db, pageVersion, now }: AppProps) {
             </EmptyState>
           )}
           {tab === "postings" && (
-            <PostingsTab state={jobList} roleTypeOrder={roleTypeOrder} now={now ?? Date.now()} />
+            <PostingsTab
+              state={jobList}
+              queue={queue}
+              actions={actions}
+              dailyQueueTarget={
+                settings.kind === "ready" ? settings.settings.dailyQueueTarget : undefined
+              }
+              roleTypeOrder={roleTypeOrder}
+              now={now ?? Date.now()}
+            />
           )}
           {tab === "progress" && (
             <EmptyState title="Nothing in progress yet">
               <p>Postings you queue appear here and move through each Stage as you apply.</p>
               <ol class="stages" aria-label="Stages">
                 {STAGES.map((stage) => (
-                  <li key={stage}>{stage}</li>
+                  <li key={stage}>{STAGE_LABELS[stage]}</li>
                 ))}
               </ol>
             </EmptyState>
