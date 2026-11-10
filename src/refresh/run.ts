@@ -5,8 +5,9 @@
  * ready-to-send ArtifactData batches under `<dir>/out`.
  *
  * Layout of `<dir>`:
- * - state/settings/main.json, state/postings/<doc-id>.json, state/cards/<doc-id>.json,
- *   state/skips/<doc-id>.json: the current dashboard documents.
+ * - state/settings/main.json, state/sources/<doc-id>.json, state/postings/<doc-id>.json,
+ *   state/cards/<doc-id>.json, state/skips/<doc-id>.json: the current dashboard documents
+ *   (a missing Source document means that Source has its default).
  * - versions.json: `{ "postings/<doc-id>": <version> }` for every postings document read.
  * - short-links.json: short links resolved on earlier Refreshes (kept between runs).
  * - variant-judgments.json: the Refresh skill's calls on unsure Resume Variant picks, by Posting
@@ -18,10 +19,15 @@
  */
 import { join, resolve } from "node:path";
 import {
+  ADDED_BY_URL_SOURCE,
   CARDS_COLLECTION,
+  JOB_FEED_SOURCE,
   POSSIBLY_CLOSED_DAYS,
   POSTINGS_COLLECTION,
   SKIPS_COLLECTION,
+  SOURCES_COLLECTION,
+  WATCHLIST_SOURCE,
+  readSourceSettings,
   validateCardDocument,
   validateDocument,
   validatePostingsDocument,
@@ -29,6 +35,7 @@ import {
   type Card,
   type JobListMeta,
   type JobListPage,
+  type SourceSettings,
 } from "../contract/index.ts";
 import type { CurrentQueue } from "../engine/queue.ts";
 import {
@@ -40,6 +47,7 @@ import {
   type VariantJudgment,
 } from "../engine/refresh.ts";
 import type { SourceResult } from "../engine/source.ts";
+import { readWatchlist } from "./job-boards.ts";
 import { parseJobFeed, readJobFeed, type Fetch } from "./job-feed.ts";
 import { resolveShortLinks } from "./short-links.ts";
 
@@ -149,6 +157,32 @@ async function readQueue(io: RefreshIo, dir: string): Promise<CurrentQueue> {
   return { cards, cardIds, skippedIds };
 }
 
+async function readSources(
+  io: RefreshIo,
+  dir: string,
+): Promise<{ settings: SourceSettings; issues: string[] }> {
+  const folder = join(dir, "state", SOURCES_COLLECTION);
+  const docs: { id: string; data: unknown }[] = [];
+  for (const id of await savedIds(io, folder)) {
+    docs.push({ id, data: await readJson(io, join(folder, `${id}.json`)) });
+  }
+  return readSourceSettings(docs);
+}
+
+/** Reads every Source that is switched on; Postings added by URL need no reading. */
+async function readEnabledSources(
+  io: RefreshIo,
+  now: string,
+  sources: SourceSettings,
+  feed: string | undefined,
+): Promise<SourceResult[]> {
+  const [jobFeed, watchlist] = await Promise.all([
+    sources.jobFeed.enabled ? readFeed(io, now, feed).then((result) => [result]) : [],
+    sources.watchlist.enabled ? readWatchlist(io.fetch, sources.watchlist.companies, now) : [],
+  ]);
+  return [...jobFeed, ...watchlist];
+}
+
 async function readVersions(io: RefreshIo, dir: string): Promise<Record<string, number>> {
   const json = await readJson(io, join(dir, "versions.json"));
   if (json === undefined) return {};
@@ -174,7 +208,8 @@ async function readFeed(
 ): Promise<SourceResult> {
   if (feed === undefined || /^https?:\/\//.test(feed)) return readJobFeed(io.fetch, now, feed);
   const json = await readJson(io, feed);
-  if (json === undefined) return { name: "Job Feed", ok: false, error: `Could not read ${feed}.` };
+  if (json === undefined)
+    return { name: JOB_FEED_SOURCE, ok: false, error: `Could not read ${feed}.` };
   return parseJobFeed(json, now);
 }
 
@@ -231,10 +266,46 @@ function batchesOf(writes: readonly { write: BatchWrite; bytes: number }[]): Bat
 const number = (n: number) => n.toLocaleString("en-US");
 const count = (n: number, one: string, many = `${one}s`) => `${number(n)} ${n === 1 ? one : many}`;
 
+const LEFT_OUT_REASONS: Record<RefreshSummary["addedLeftOut"][number]["reason"], string> = {
+  location: "outside your Location Tiers",
+  seniority: "asks for more experience",
+  startWindow: "outside your start window",
+  roleType: "not one of your role types",
+};
+
+function formatSources(summary: RefreshSummary): string[] {
+  const lines: string[] = [];
+  const watchlist = summary.sources.filter((source) => source.name === WATCHLIST_SOURCE);
+  const others = summary.sources.filter((source) => source.name !== WATCHLIST_SOURCE);
+  for (const source of others) {
+    if (!source.ok) {
+      lines.push(`- ${source.name}: FAILED. ${source.error ?? "No reason given."}`);
+    } else if (source.name === ADDED_BY_URL_SOURCE) {
+      lines.push(`- ${source.name}: ${number(source.postings)} Postings.`);
+    } else {
+      lines.push(`- ${source.name}: read ${number(source.postings)} Postings.`);
+    }
+  }
+  if (watchlist.length > 0) {
+    const read = watchlist.filter((source) => source.ok);
+    const postings = read.reduce((sum, source) => sum + source.postings, 0);
+    lines.push(
+      `- ${WATCHLIST_SOURCE}: read ${number(postings)} Postings from ${number(read.length)} of ${number(watchlist.length)} companies.`,
+    );
+    for (const source of watchlist.filter((s) => !s.ok)) {
+      lines.push(
+        `- ${WATCHLIST_SOURCE}, ${source.list ?? "a company"}: FAILED. ${source.error ?? "No reason given."}`,
+      );
+    }
+  }
+  return lines;
+}
+
 export function formatSummary(
   summary: RefreshSummary,
   paths: { writes: string; review: string },
   batches: number,
+  sourceIssues: readonly string[] = [],
 ): string {
   const { writes: writesPath, review: reviewPath } = paths;
   const lines: string[] = [];
@@ -250,13 +321,19 @@ export function formatSummary(
       `${number(summary.matched)} Postings matched; the Job List keeps the best ${number(summary.total)}.`,
     );
   }
-  lines.push("Sources:");
-  for (const source of summary.sources) {
+  if (summary.sources.length === 0) {
     lines.push(
-      source.ok
-        ? `- ${source.name}: read ${number(source.postings)} Postings.`
-        : `- ${source.name}: FAILED. ${source.error ?? "No reason given."}`,
+      "Every Source is switched off or empty, so the Job List is empty. Switch a Source on in the dashboard's Sources panel.",
     );
+  } else {
+    lines.push("Sources:");
+    lines.push(...formatSources(summary));
+  }
+  if (sourceIssues.length > 0) {
+    lines.push(
+      "Some Source documents do not match the dashboard contract, so those Sources were skipped:",
+    );
+    lines.push(...sourceIssues.map((issue) => `- ${issue}`));
   }
   if (summary.carriedOver > 0) {
     lines.push(
@@ -268,6 +345,12 @@ export function formatSummary(
     lines.push(
       `Left out: ${number(location)} outside your Location Tiers, ${number(seniority)} at another seniority, ${number(startWindow)} outside your start window, ${number(roleType)} in other roles.`,
     );
+  }
+  if (summary.addedLeftOut.length > 0) {
+    const leftOut = summary.addedLeftOut.map(
+      (posting) => `${posting.company}: ${posting.title} (${LEFT_OUT_REASONS[posting.reason]})`,
+    );
+    lines.push(`Added by URL but left out of the Job List: ${leftOut.join("; ")}.`);
   }
   if (summary.unresolvedLinks > 0) {
     lines.push(
@@ -349,6 +432,7 @@ export async function runRefreshCommand(
       );
     }
 
+    const sourceSettings = await readSources(io, dir);
     const judgments = await readJudgments(io, dir);
     const queue = await readQueue(io, dir);
     const out = join(dir, "out");
@@ -373,8 +457,15 @@ export async function runRefreshCommand(
       sources = saved.sources;
       resolved = cache;
     } else {
-      sources = [await readFeed(io, now, options.feed)];
-      const base = { now, settings: settings.value, sources, current, queue };
+      sources = await readEnabledSources(io, now, sourceSettings.settings, options.feed);
+      const base = {
+        now,
+        settings: settings.value,
+        sourceSettings: sourceSettings.settings,
+        sources,
+        current,
+        queue,
+      };
       resolved = (await resolveShortLinks(shortLinksToResolve(base), { fetch: io.fetch, cache }))
         .resolved;
       await io.writeFile(cachePath, `${JSON.stringify({ ...cache, ...resolved }, null, 2)}\n`);
@@ -383,6 +474,7 @@ export async function runRefreshCommand(
     const { jobList, changeSet, summary } = runRefresh({
       now,
       settings: settings.value,
+      sourceSettings: sourceSettings.settings,
       sources,
       current,
       queue,
@@ -442,7 +534,14 @@ export async function runRefreshCommand(
     const reviewPath = join(out, "variant-review.json");
     const review = { variants: settings.value.resumeVariants, ...summary.variantReview };
     await io.writeFile(reviewPath, `${JSON.stringify(review, null, 2)}\n`);
-    io.stdout(formatSummary(summary, { writes: writesPath, review: reviewPath }, batches.length));
+    io.stdout(
+      formatSummary(
+        summary,
+        { writes: writesPath, review: reviewPath },
+        batches.length,
+        sourceSettings.issues,
+      ),
+    );
     return 0;
   } catch (error) {
     if (error instanceof RefreshError) {

@@ -31,7 +31,7 @@ Your resume files stay in your folder; the dashboard only knows their labels.
 ## Refresh
 
 Run `/job-app-assist:refresh`, or just ask Claude to refresh your jobs.
-Claude pulls Postings from the shared Job Feed, keeps the ones that match your Search Profile, merges duplicates listed in several places, and ranks them: Location Tier first, then fit to your role types, company boosts (Fortune 500 companies and the Job Feed's company tiers) and freshness.
+Claude pulls Postings from the Sources you switched on, keeps the ones that match your Search Profile, merges duplicates listed in several places, and ranks them: Location Tier first, then fit to your role types, company boosts (Fortune 500 companies and the Job Feed's company tiers) and freshness.
 The ranked Job List appears on the Postings tab of your dashboard, with search and filters for role type, Location Tier, Source and how recently a Posting went up.
 Each Posting shows the Resume Variant Claude picked for it.
 Click a Posting to open its details, see why that Resume Variant was picked, and choose a different one if you disagree.
@@ -44,6 +44,19 @@ Queued Postings are ticked and highlighted in the Job List; tick or untick any P
 When you untick one, pick a quick reason (wrong role, location, company, too senior, or another reason): Refresh never queues that Posting again, and the Skipped filter lets you see and un-skip it.
 The Queued filter shows just your picks, and the bar at the bottom always shows how many are queued, with a link to the Progress board.
 Postings you haven't applied to stay queued from day to day with a badge saying how long they have waited, and after five days they are flagged as possibly closed.
+
+## Sources
+
+Open the Sources panel from the button beside the dashboard tabs to choose where Postings come from.
+Each Source has an on/off switch, and Refresh reads only the ones that are on.
+
+- **Job Feed**: the shared list of entry-level Postings every Candidate starts with.
+- **Watchlist**: companies you follow directly.
+  Paste a link to a company's Greenhouse, Lever or Ashby job board, and every Refresh reads its open jobs straight from that board, keeping the ones whose title says they are for interns, new grads or junior engineers.
+- **Add by URL**: paste the link of any Posting you found elsewhere, with its company, title and location, and it joins your Job List on the next Refresh when it matches your Search Profile.
+  This is the only way Postings from Runway or LinkedIn enter, since the Toolkit never opens those sites itself.
+
+A job listed by several Sources appears once, with every Source it came from.
 
 ## Developing
 

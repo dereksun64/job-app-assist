@@ -162,7 +162,19 @@ Write the validated document with `ArtifactData`: `action: "set"`, the dashboard
 When step 2 found an existing settings document, pass its `version` as `if_version`.
 Read it back with `action: "get"`; Setup is done when the stored document matches what the Candidate confirmed.
 
-## 10. Hand over
+## 10. Seed the Sources
+
+List the `sources` collection with `ArtifactData` (`action: "list"`, the dashboard `url`).
+For each of these documents that is missing, write it with `action: "set"`, after checking it with `node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs validate sources <doc-id> -` as in step 7, and with `updatedAt` from the same `date -u` command:
+
+- `job-feed`: `{ "schemaVersion": 1, "enabled": true, "updatedAt": "<now>" }`
+- `watchlist`: `{ "schemaVersion": 1, "enabled": true, "companies": [], "updatedAt": "<now>" }`
+- `added-by-url`: `{ "schemaVersion": 1, "enabled": true, "postings": [], "updatedAt": "<now>" }`
+
+Never overwrite a Source document that exists: the Candidate's switches, watchlist and added Postings live there.
+
+## 11. Hand over
 
 Give the Candidate the dashboard link and a one-line summary of the saved Search Profile and Resume Variants.
 Tell them the Search Profile appears at the top of the dashboard, and that News, Postings and Progress fill in once they refresh.
+Mention the Sources button beside the tabs, where they can switch Sources on or off, follow companies on a watchlist, and add Postings by URL.

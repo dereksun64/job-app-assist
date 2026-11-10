@@ -1,6 +1,6 @@
 ---
 name: refresh
-description: Refresh the Candidate's Job List and Queue. Pulls Postings from the Job Feed, keeps the ones that match the Search Profile, ranks them, picks a Resume Variant for each, pre-queues the best ones up to the daily Queue target, writes them to the dashboard's Postings tab and ends with a short summary in chat. Use when the Candidate asks to refresh, update their jobs, or see today's Postings.
+description: Refresh the Candidate's Job List and Queue. Pulls Postings from the Candidate's enabled Sources (the Job Feed, their watchlist companies' job boards and Postings they added by URL), keeps the ones that match the Search Profile, ranks them, picks a Resume Variant for each, pre-queues the best ones up to the daily Queue target, writes them to the dashboard's Postings tab and ends with a short summary in chat. Use when the Candidate asks to refresh, update their jobs, or see today's Postings.
 allowed-tools: Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs refresh .job-app-assist/refresh) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs refresh .job-app-assist/refresh --rerun) Bash(rm -rf .job-app-assist/refresh/state .job-app-assist/refresh/out) Bash(mkdir -p .job-app-assist/refresh) Bash(cp ${CLAUDE_PLUGIN_ROOT}/dist/dashboard.html .job-app-assist/dashboard.html)
 ---
 
@@ -48,6 +48,8 @@ Read with `ArtifactData`, saving the documents as files: pass `out_dir` as the a
 
 - `action: "get"`, `collection: "settings"`, `doc_id: "main"`.
   If there is no settings document, ask the Candidate to finish `/job-app-assist:setup` and stop.
+- `action: "list"`, `collection: "sources"`.
+  These hold the Candidate's Source switches, their watchlist and the Postings they added by URL; a missing document means that Source is on with nothing added.
 - `action: "list"`, `collection: "postings"`.
   An empty collection is normal before the first Refresh.
 - `action: "list"`, `collection: "cards"`, then `action: "list"`, `collection: "skips"`.
@@ -65,11 +67,14 @@ Do not open the saved files; `jaa refresh` reads them.
 node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs refresh .job-app-assist/refresh
 ```
 
-It fetches the Job Feed, resolves its short links to the real application sites, filters, merges duplicates, ranks, picks a Resume Variant for every Posting, pre-queues the best Postings as new cards, checks every document against the dashboard contract, and writes the documents and the ArtifactData batches to `.job-app-assist/refresh/out/`.
+It reads only the Sources that are switched on: the Job Feed (resolving its short links to the real application sites) and each watchlist company's public Greenhouse, Lever or Ashby job board.
+Postings added by URL are never opened; Refresh uses the company, title and location the Candidate typed, so Runway and LinkedIn links are never visited.
+It then filters, merges duplicates across Sources, ranks, picks a Resume Variant for every Posting, pre-queues the best Postings as new cards, checks every document against the dashboard contract, and writes the documents and the ArtifactData batches to `.job-app-assist/refresh/out/`.
 It prints the summary you will report.
 If it exits with an error, nothing has been written to the dashboard: fix what the message names (usually a missing version in `versions.json`) and run it again.
 If it says the settings document does not match the dashboard contract (for example, it has no `resumeVariants`), ask the Candidate to run `/job-app-assist:setup` again to bring their settings up to date, and stop.
 A Source that fails does not stop it; the summary marks it `FAILED`, and the Postings it gave on the last Refresh are kept.
+The same goes for each watchlist company's board on its own.
 
 ## 6. Review unsure Resume Variant picks
 
@@ -123,7 +128,9 @@ Finish with a short summary built from the `jaa refresh` output, in plain words:
 - Queue items that may have closed (queued five or more days ago, or no longer in the Job List), so the Candidate applies soon or unticks them;
 - how many Postings got each Resume Variant, how many unsure picks you reviewed and how many you changed, and that the Candidate can change any Posting's Resume Variant in its detail drawer;
 - the top three to five Postings, each as company, title, location and a link to its apply URL;
-- every failing Source, said plainly: which Source, what went wrong, and that today's Job List may be incomplete because of it;
+- every failing Source, said plainly: which Source (or which watchlist company), what went wrong, and that today's Job List may be incomplete because of it;
+- Postings the Candidate added by URL that were left out, and why, so they can fix the details in the Sources panel or tune their Search Profile;
+- Source documents the summary says do not match the dashboard contract, with a suggestion to switch that Source off and on again in the Sources panel;
 - Location Tier entries that matched no Posting location, if any, with a suggestion to reword them by rerunning `/job-app-assist:setup`;
 - a link to the dashboard's Postings tab (the dashboard `url` followed by `#postings`).
 

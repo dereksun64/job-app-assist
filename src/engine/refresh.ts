@@ -6,8 +6,12 @@
  * adapter (src/refresh/), which hands this module plain data.
  */
 import {
+  ADDED_BY_URL_SOURCE,
+  JOB_FEED_SOURCE,
   CARDS_COLLECTION,
   JOB_LIST_META_ID,
+  WATCHLIST_SOURCE,
+  defaultSourceSettings,
   MAX_JOB_LIST,
   POSTING_DESCRIPTION_MAX,
   POSTINGS_COLLECTION,
@@ -23,6 +27,7 @@ import {
   type Seniority,
   type Settings,
   type SourceReport,
+  type SourceSettings,
 } from "../contract/index.ts";
 import {
   companyBoost,
@@ -31,7 +36,7 @@ import {
   displayCompany,
   UNKNOWN_COMPANY,
 } from "./companies.ts";
-import { freshness, postedOnFrom } from "./freshness.ts";
+import { freshness, isoDay, postedOnFrom } from "./freshness.ts";
 import { locationTierOf, parseLocations, unmatchedTierLocations, type Place } from "./locations.ts";
 import { planQueue, type CurrentQueue, type QueueSummary } from "./queue.ts";
 import { levelOf, matchRoleType, withinStartWindow } from "./roles.ts";
@@ -49,6 +54,12 @@ export interface RefreshInput {
   /** When this Refresh runs, as an ISO timestamp; it stamps every document written. */
   now: string;
   settings: Settings;
+  /**
+   * The Candidate's Sources: their switches, the watchlist and the Postings added by URL.
+   * Every Source is on with nothing added when this is left out.
+   */
+  sourceSettings?: SourceSettings;
+  /** What the adapter read: the Job Feed and each watchlist company's job board. */
   sources: readonly SourceResult[];
   current: CurrentJobList;
   /** The Queue and skips as the dashboard database holds them now. */
@@ -96,6 +107,14 @@ export interface FilteredOut {
   roleType: number;
 }
 
+/** A Posting the Candidate added by URL that the Job List left out, and why. */
+export interface AddedLeftOut {
+  url: string;
+  company: string;
+  title: string;
+  reason: keyof FilteredOut;
+}
+
 export interface RefreshSummary {
   refreshedAt: string;
   /** Postings in the new Job List. */
@@ -118,6 +137,8 @@ export interface RefreshSummary {
   byVariant: Record<string, number>;
   /** Unsure picks with no judgment yet: how many, and the best-ranked of them to review. */
   variantReview: { unsure: number; postings: VariantReviewItem[] };
+  /** Postings added by URL that do not match the Search Profile. */
+  addedLeftOut: AddedLeftOut[];
   top: Pick<Posting, "company" | "title" | "locations" | "locationTier" | "score" | "applyUrl">[];
   queue: QueueSummary;
 }
@@ -165,7 +186,7 @@ type Evaluation =
 
 function evaluate(
   listing: SourcePosting,
-  sourceName: string,
+  result: { name: string; list?: string; listsEveryLevel?: boolean },
   generatedAt: string,
   settings: Settings,
   places: Place[],
@@ -173,16 +194,19 @@ function evaluate(
   const { searchProfile } = settings;
   const locationTier = locationTierOf(places, searchProfile.locationTiers);
   if (locationTier === undefined) return { reason: "location" };
-  const level = levelOf(listing.title, listing.jobType);
+  const level = levelOf(listing.title, listing.jobType, {
+    stated: result.listsEveryLevel === true,
+  });
   if (level === undefined || !searchProfile.seniority.includes(level))
     return { reason: "seniority" };
   if (!withinStartWindow(listing.title, searchProfile.startWindow))
     return { reason: "startWindow" };
   const roleType = matchRoleType(listing.title, listing.category, searchProfile.roleTypes);
   if (!roleType) return { reason: "roleType" };
-  const source: PostingSource = { name: sourceName };
-  const list = listing.list?.trim();
+  const source: PostingSource = { name: result.name };
+  const list = (listing.list ?? result.list)?.trim();
   if (list) source.list = list;
+  const postedAt = listing.postedAt === undefined ? Number.NaN : Date.parse(listing.postedAt);
   return {
     candidate: {
       listing,
@@ -192,17 +216,74 @@ function evaluate(
       level,
       roleType: roleType.name,
       priority: roleType.priority,
-      postedOn: postedOnFrom(listing.age, generatedAt),
+      postedOn: Number.isNaN(postedAt) ? postedOnFrom(listing.age, generatedAt) : isoDay(postedAt),
     },
   };
+}
+
+/** A Source, or one part of it, that could not be read this time. */
+interface FailedScope {
+  name: string;
+  list?: string;
 }
 
 interface Matching {
   candidates: Candidate[];
   filteredOut: FilteredOut;
+  addedLeftOut: AddedLeftOut[];
   allPlaces: Place[];
   sourceReports: SourceReport[];
-  failedSources: Set<string>;
+  failed: FailedScope[];
+}
+
+/**
+ * The Source reads this Refresh uses: the adapter's reads of Sources that are switched on
+ * (and of companies still on the watchlist), then the Postings added by URL. The engine
+ * checks the switches itself, so a read of a Source the Candidate switched off never counts.
+ */
+function activeSources(
+  sources: readonly SourceResult[],
+  sourceSettings: SourceSettings,
+  now: string,
+): SourceResult[] {
+  const watched = new Set(sourceSettings.watchlist.companies.map((company) => company.name));
+  const active = sources.filter((source) => {
+    if (source.name === JOB_FEED_SOURCE) return sourceSettings.jobFeed.enabled;
+    if (source.name === WATCHLIST_SOURCE) {
+      return (
+        sourceSettings.watchlist.enabled && source.list !== undefined && watched.has(source.list)
+      );
+    }
+    return source.name !== ADDED_BY_URL_SOURCE;
+  });
+  const { addedByUrl } = sourceSettings;
+  if (addedByUrl.enabled && addedByUrl.postings.length > 0) {
+    active.push({
+      name: ADDED_BY_URL_SOURCE,
+      ok: true,
+      fetchedAt: now,
+      postings: addedByUrl.postings.map((posting) => ({
+        applyUrl: posting.url,
+        company: posting.company,
+        title: posting.title,
+        location: posting.location,
+        jobType: "",
+        age: "",
+        postedAt: posting.addedAt,
+        category: "",
+        companyTier: "",
+      })),
+    });
+  }
+  return active;
+}
+
+function reportOf(source: SourceResult): SourceReport {
+  const report: Pick<SourceReport, "name" | "list"> = { name: source.name };
+  if (source.list !== undefined) report.list = source.list;
+  return source.ok
+    ? { ...report, ok: true, postings: source.postings.length }
+    : { ...report, ok: false, postings: 0, error: source.error };
 }
 
 function match(
@@ -210,27 +291,40 @@ function match(
   resolvedLinks: Readonly<Record<string, string>>,
 ): Matching {
   const filteredOut: FilteredOut = { location: 0, seniority: 0, startWindow: 0, roleType: 0 };
+  const addedLeftOut: AddedLeftOut[] = [];
   const candidates: Candidate[] = [];
   const placesByText = new Map<string, Place[]>();
   const sourceReports: SourceReport[] = [];
-  const failedSources = new Set<string>();
+  const failed: FailedScope[] = [];
+  const sources = activeSources(
+    input.sources,
+    input.sourceSettings ?? defaultSourceSettings(),
+    input.now,
+  );
   let order = 0;
-  for (const source of input.sources) {
+  for (const source of sources) {
+    sourceReports.push(reportOf(source));
     if (!source.ok) {
-      failedSources.add(source.name);
-      sourceReports.push({ name: source.name, ok: false, postings: 0, error: source.error });
+      failed.push(
+        source.list === undefined
+          ? { name: source.name }
+          : { name: source.name, list: source.list },
+      );
       continue;
     }
-    sourceReports.push({ name: source.name, ok: true, postings: source.postings.length });
     for (const listing of source.postings) {
       let places = placesByText.get(listing.location);
       if (!places) {
         places = parseLocations(listing.location);
         placesByText.set(listing.location, places);
       }
-      const result = evaluate(listing, source.name, source.fetchedAt, input.settings, places);
+      const result = evaluate(listing, source, source.fetchedAt, input.settings, places);
       if ("reason" in result) {
         filteredOut[result.reason] += 1;
+        if (source.name === ADDED_BY_URL_SOURCE) {
+          const { applyUrl: url, company, title } = listing;
+          addedLeftOut.push({ url, company, title, reason: result.reason });
+        }
         continue;
       }
       const rawUrl = listing.applyUrl.trim();
@@ -248,9 +342,10 @@ function match(
   return {
     candidates,
     filteredOut,
+    addedLeftOut,
     allPlaces: [...placesByText.values()].flat(),
     sourceReports,
-    failedSources,
+    failed,
   };
 }
 
@@ -426,18 +521,28 @@ function merge(
   return { posting, evidence };
 }
 
-/** Postings from the current Job List whose Source failed, re-checked against the settings. */
+/**
+ * Postings from the current Job List found in a Source (or part of one) that failed this time,
+ * re-checked against the settings. They keep only the failed Sources: any other Source was
+ * read fresh, and would have listed the Posting again if it still had it.
+ */
 function carryOver(
   current: CurrentJobList,
-  failed: ReadonlySet<string>,
+  failed: readonly FailedScope[],
   settings: Settings,
   now: string,
 ): { posting: Unpicked; evidence: VariantEvidence }[] {
-  if (failed.size === 0) return [];
+  if (failed.length === 0) return [];
   const { roleTypes, seniority, locationTiers } = settings.searchProfile;
+  const isFailed = (source: PostingSource) =>
+    failed.some(
+      (scope) =>
+        scope.name === source.name && (scope.list === undefined || scope.list === source.list),
+    );
   return current.pages
     .flatMap((page) => page.postings)
-    .filter((posting) => posting.sources.some((source) => failed.has(source.name)))
+    .map((posting) => ({ ...posting, sources: posting.sources.filter(isFailed) }))
+    .filter((posting) => posting.sources.length > 0)
     .flatMap((posting) => {
       const locationTier = locationTierOf(posting.locations.flatMap(parseLocations), locationTiers);
       const roleType = matchRoleType(posting.title, "", roleTypes);
@@ -489,7 +594,7 @@ export function runRefresh(input: RefreshInput): RefreshResult {
   );
   const freshIds = new Set(fresh.map((p) => p.posting.id));
   const freshUrls = new Set(fresh.map((p) => p.posting.applyUrl));
-  const carriedPicks = carryOver(current, matching.failedSources, settings, now)
+  const carriedPicks = carryOver(current, matching.failed, settings, now)
     .filter(({ posting: p }) => !freshIds.has(p.id) && !freshUrls.has(p.applyUrl))
     .map(pick);
   const carried = carriedPicks.map((p) => p.posting);
@@ -583,6 +688,7 @@ export function runRefresh(input: RefreshInput): RefreshResult {
         reason: p.resumeVariant.reason,
       })),
     },
+    addedLeftOut: matching.addedLeftOut,
     top: jobList
       .slice(0, 5)
       .map(({ company, title, locations, locationTier, score: s, applyUrl }) => ({

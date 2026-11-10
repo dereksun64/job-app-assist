@@ -5,8 +5,11 @@ import {
   validateDocument,
   type JobListMeta,
   type JobListPage,
+  type AddedPosting,
   type Posting,
   type Settings,
+  type SourceSettings,
+  type WatchedCompany,
 } from "../contract/index.ts";
 import {
   MAX_VARIANT_REVIEW,
@@ -811,5 +814,320 @@ describe("Resume Variants", () => {
       name: "Only resume",
       reason: "Your only Resume Variant.",
     });
+  });
+});
+
+describe("Sources", () => {
+  const stripe: WatchedCompany = { name: "Stripe", board: "greenhouse", slug: "stripe" };
+  const ramp: WatchedCompany = { name: "Ramp", board: "ashby", slug: "ramp" };
+
+  function sourceSettings(overrides: Partial<SourceSettings> = {}): SourceSettings {
+    return {
+      jobFeed: { enabled: true },
+      watchlist: { enabled: true, companies: [stripe, ramp] },
+      addedByUrl: { enabled: true, postings: [] },
+      ...overrides,
+    };
+  }
+
+  function board(
+    company: WatchedCompany,
+    postings: SourcePosting[],
+    { listsEveryLevel = false } = {},
+  ): SourceResult {
+    return {
+      name: "Watchlist",
+      list: company.name,
+      ok: true,
+      listsEveryLevel,
+      fetchedAt: NOW,
+      postings: postings.map((p) => ({ ...p, company: company.name, list: company.name })),
+    };
+  }
+
+  function addedPosting(overrides: Partial<AddedPosting> = {}): AddedPosting {
+    return {
+      url: "https://runway.example.com/jobs/42",
+      company: "Tiny Startup",
+      title: "Software Engineer",
+      location: "New York, NY",
+      addedAt: "2026-11-07T09:30:00.000Z",
+      ...overrides,
+    };
+  }
+
+  it("reads only the Sources that are switched on", () => {
+    const sources = [
+      feed([listed({ company: "From the feed" })]),
+      board(stripe, [listed({ title: "Software Engineer, New Grad" })]),
+    ];
+    const feedOff = runRefresh({
+      now: NOW,
+      queue: EMPTY_QUEUE,
+      settings,
+      current: empty,
+      sources,
+      sourceSettings: sourceSettings({ jobFeed: { enabled: false } }),
+    });
+    expect(feedOff.jobList.map((p) => p.company)).toEqual(["Stripe"]);
+    expect(feedOff.meta.sources).toEqual([
+      { name: "Watchlist", list: "Stripe", ok: true, postings: 1 },
+    ]);
+
+    const watchlistOff = runRefresh({
+      now: NOW,
+      queue: EMPTY_QUEUE,
+      settings,
+      current: empty,
+      sources,
+      sourceSettings: sourceSettings({ watchlist: { enabled: false, companies: [stripe] } }),
+    });
+    expect(watchlistOff.jobList.map((p) => p.company)).toEqual(["From the feed"]);
+    expect(watchlistOff.meta.sources.map((s) => s.name)).toEqual(["Job Feed"]);
+  });
+
+  it("keeps only watchlist jobs whose title or job type says they are entry level", () => {
+    const stripeBoard = board(
+      stripe,
+      [
+        listed({ title: "Software Engineer, Payments", jobType: "" }),
+        listed({ title: "Software Engineer, New Grad", jobType: "" }),
+        listed({ title: "Software Engineer, Data Connectors", jobType: "Internship" }),
+      ],
+      { listsEveryLevel: true },
+    );
+    const { jobList, summary } = runRefresh({
+      now: NOW,
+      queue: EMPTY_QUEUE,
+      settings,
+      current: empty,
+      sources: [stripeBoard],
+      sourceSettings: sourceSettings(),
+    });
+    expect(jobList.map((p) => [p.title, p.level]).sort()).toEqual([
+      ["Software Engineer, Data Connectors", "intern"],
+      ["Software Engineer, New Grad", "new_grad"],
+    ]);
+    expect(summary.filteredOut.seniority).toBe(1);
+  });
+
+  it("ignores job boards of companies no longer on the watchlist", () => {
+    const { jobList } = runRefresh({
+      now: NOW,
+      queue: EMPTY_QUEUE,
+      settings,
+      current: empty,
+      sources: [board(stripe, [listed()]), board(ramp, [listed()])],
+      sourceSettings: sourceSettings({ watchlist: { enabled: true, companies: [ramp] } }),
+    });
+    expect(jobList.map((p) => p.company)).toEqual(["Ramp"]);
+  });
+
+  it("lists watchlist Postings under the Watchlist Source, by company", () => {
+    const { jobList } = runRefresh({
+      now: NOW,
+      queue: EMPTY_QUEUE,
+      settings,
+      current: empty,
+      sources: [
+        board(stripe, [
+          listed({
+            applyUrl: "https://stripe.com/jobs/search?gh_jid=8172487",
+            title: "Software Engineer, New Grad",
+            location: "New York, NY; Dublin",
+            postedAt: "2026-11-03T13:30:34-04:00",
+            age: "",
+          }),
+        ]),
+      ],
+      sourceSettings: sourceSettings(),
+    });
+    expect(jobList).toEqual([
+      expect.objectContaining({
+        company: "Stripe",
+        applyUrl: "https://stripe.com/jobs/search?gh_jid=8172487",
+        postedOn: "2026-11-03",
+        sources: [{ name: "Watchlist", list: "Stripe" }],
+      }),
+    ]);
+  });
+
+  it("turns each Posting added by URL into a Posting on the next Refresh", () => {
+    const { jobList, meta } = runRefresh({
+      now: NOW,
+      queue: EMPTY_QUEUE,
+      settings,
+      current: empty,
+      sources: [],
+      sourceSettings: sourceSettings({
+        jobFeed: { enabled: false },
+        watchlist: { enabled: true, companies: [] },
+        addedByUrl: {
+          enabled: true,
+          postings: [addedPosting({ url: "https://runway.example.com/jobs/42?utm_source=x" })],
+        },
+      }),
+    });
+    expect(jobList).toEqual([
+      expect.objectContaining({
+        applyUrl: "https://runway.example.com/jobs/42",
+        company: "Tiny Startup",
+        title: "Software Engineer",
+        locations: ["New York, NY"],
+        locationTier: 1,
+        level: "new_grad",
+        postedOn: "2026-11-07",
+        sources: [{ name: "Added by URL" }],
+      }),
+    ]);
+    expect(meta.sources).toEqual([{ name: "Added by URL", ok: true, postings: 1 }]);
+  });
+
+  it("names added Postings that do not match the Search Profile, and why", () => {
+    const { jobList, summary } = runRefresh({
+      now: NOW,
+      queue: EMPTY_QUEUE,
+      settings,
+      current: empty,
+      sources: [],
+      sourceSettings: sourceSettings({
+        jobFeed: { enabled: false },
+        addedByUrl: {
+          enabled: true,
+          postings: [
+            addedPosting({ url: "https://a.example.com/1", location: "Denver, CO" }),
+            addedPosting({ url: "https://a.example.com/2", title: "Staff Software Engineer" }),
+            addedPosting({ url: "https://a.example.com/3" }),
+          ],
+        },
+      }),
+    });
+    expect(jobList.map((p) => p.applyUrl)).toEqual(["https://a.example.com/3"]);
+    expect(summary.addedLeftOut).toEqual([
+      {
+        url: "https://a.example.com/1",
+        company: "Tiny Startup",
+        title: "Software Engineer",
+        reason: "location",
+      },
+      {
+        url: "https://a.example.com/2",
+        company: "Tiny Startup",
+        title: "Staff Software Engineer",
+        reason: "seniority",
+      },
+    ]);
+  });
+
+  it("leaves added Postings out while Add by URL is switched off", () => {
+    const { jobList, meta } = runRefresh({
+      now: NOW,
+      queue: EMPTY_QUEUE,
+      settings,
+      current: empty,
+      sources: [feed([listed({ company: "Feed" })])],
+      sourceSettings: sourceSettings({
+        addedByUrl: { enabled: false, postings: [addedPosting()] },
+      }),
+    });
+    expect(jobList.map((p) => p.company)).toEqual(["Feed"]);
+    expect(meta.sources.map((s) => s.name)).toEqual(["Job Feed"]);
+  });
+
+  it("merges one job found in several Sources into one Posting", () => {
+    const url = "https://job-boards.greenhouse.io/stripe/jobs/8172487";
+    const { jobList } = runRefresh({
+      now: NOW,
+      queue: EMPTY_QUEUE,
+      settings,
+      current: empty,
+      sources: [
+        feed([listed({ company: "Stripe", applyUrl: `${url}?utm_source=Simplify&ref=Simplify` })]),
+        board(stripe, [listed({ applyUrl: url })]),
+        // The same job on the company's own career site: same company, title and place.
+        board(stripe, [listed({ applyUrl: "https://stripe.com/jobs/search?gh_jid=8172487" })]),
+      ],
+      sourceSettings: sourceSettings({
+        addedByUrl: {
+          enabled: true,
+          postings: [
+            addedPosting({
+              url: `https://boards.greenhouse.io/stripe/jobs/8172487/`,
+              company: "Stripe",
+              title: "Software Engineer, New Grad",
+            }),
+          ],
+        },
+      }),
+    });
+    expect(jobList).toHaveLength(1);
+    expect(jobList[0]).toMatchObject({
+      applyUrl: url,
+      company: "Stripe",
+      sources: [
+        { name: "Added by URL" },
+        { name: "Job Feed", list: "Simplify New Grad" },
+        { name: "Watchlist", list: "Stripe" },
+      ],
+    });
+  });
+
+  it("keeps a failing watchlist company's Postings from the last Refresh, and only those", () => {
+    const sourcesNow = sourceSettings({ jobFeed: { enabled: false } });
+    const before = runRefresh({
+      now: NOW,
+      queue: EMPTY_QUEUE,
+      settings,
+      current: empty,
+      sources: [
+        board(stripe, [listed({ title: "Software Engineer, New Grad" })]),
+        board(ramp, [listed({ title: "Software Engineer, New Grad" })]),
+      ],
+      sourceSettings: sourcesNow,
+    }).jobList;
+    const current: CurrentJobList = { meta: metaFor(2), pages: [page(1, before)] };
+    const { jobList, meta, summary } = runRefresh({
+      now: NOW,
+      queue: EMPTY_QUEUE,
+      settings,
+      current,
+      sources: [
+        {
+          name: "Watchlist",
+          list: "Stripe",
+          ok: false,
+          error: "Stripe's job board answered HTTP 503.",
+        },
+        board(ramp, []),
+      ],
+      sourceSettings: sourcesNow,
+    });
+    expect(jobList.map((p) => p.company)).toEqual(["Stripe"]);
+    expect(summary.carriedOver).toBe(1);
+    expect(meta.sources).toEqual([
+      {
+        name: "Watchlist",
+        list: "Stripe",
+        ok: false,
+        postings: 0,
+        error: "Stripe's job board answered HTTP 503.",
+      },
+      { name: "Watchlist", list: "Ramp", ok: true, postings: 0 },
+    ]);
+    expect(validateDocument("postings", "meta", meta)).toMatchObject({ ok: true });
+  });
+
+  it("does not keep Postings from a Source that was switched off", () => {
+    const before = refresh([listed({ company: "Acme" })]).jobList;
+    const current: CurrentJobList = { meta: metaFor(1), pages: [page(1, before)] };
+    const { jobList } = runRefresh({
+      now: NOW,
+      queue: EMPTY_QUEUE,
+      settings,
+      current,
+      sources: [],
+      sourceSettings: sourceSettings({ jobFeed: { enabled: false } }),
+    });
+    expect(jobList).toEqual([]);
   });
 });

@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef } from "preact/hooks";
+import { useCallback, useMemo, useRef, useState } from "preact/hooks";
 import {
   ROLE_TYPE_PRIORITIES,
   STAGES,
@@ -9,11 +9,13 @@ import {
 import type { DashboardDb } from "./db.ts";
 import { STAGE_LABELS, formatSeniority, formatStartWindow } from "./format.ts";
 import { PostingsTab } from "./PostingsTab.tsx";
+import { SourcesPanel } from "./SourcesPanel.tsx";
 import { useHashTab } from "./useHashTab.ts";
 import { useJobList } from "./useJobList.ts";
 import { queueActions, useQueue } from "./useQueue.ts";
 import { useSettings, type SettingsState } from "./useSettings.ts";
 import { useVariantOverrides } from "./useVariantOverrides.ts";
+import { useSources } from "./useSources.ts";
 
 export { LOADING_TIMEOUT_MS } from "./useSettings.ts";
 
@@ -46,6 +48,8 @@ export function App({ db, pageVersion, now }: AppProps) {
   const jobList = useJobList(db);
   const queue = useQueue(db);
   const actions = useMemo(() => (db ? queueActions(db, () => now ?? Date.now()) : null), [db, now]);
+  const sources = useSources(db);
+  const [sourcesOpen, setSourcesOpen] = useState(false);
   const roleTypeOrder = useMemo(
     () =>
       settings.kind === "ready" ? settings.settings.searchProfile.roleTypes.map((r) => r.name) : [],
@@ -67,7 +71,51 @@ export function App({ db, pageVersion, now }: AppProps) {
       </header>
       <Notice state={settings} />
       <main class="workspace">
-        <Tabs tab={tab} onSelect={selectTab} />
+        <div class="workspace-bar">
+          <Tabs tab={tab} onSelect={selectTab} />
+          <button
+            type="button"
+            class="bar-button"
+            aria-haspopup="dialog"
+            onClick={() => {
+              setSourcesOpen(true);
+            }}
+          >
+            <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+              <path
+                d="M2 4h12M2 8h12M2 12h12"
+                stroke="currentColor"
+                stroke-width="1.5"
+                stroke-linecap="round"
+              />
+              <circle
+                cx="5"
+                cy="4"
+                r="1.75"
+                fill="var(--surface)"
+                stroke="currentColor"
+                stroke-width="1.5"
+              />
+              <circle
+                cx="11"
+                cy="8"
+                r="1.75"
+                fill="var(--surface)"
+                stroke="currentColor"
+                stroke-width="1.5"
+              />
+              <circle
+                cx="7"
+                cy="12"
+                r="1.75"
+                fill="var(--surface)"
+                stroke="currentColor"
+                stroke-width="1.5"
+              />
+            </svg>
+            <span class="bar-button-label">Sources</span>
+          </button>
+        </div>
         <section
           class="panel"
           role="tabpanel"
@@ -112,6 +160,17 @@ export function App({ db, pageVersion, now }: AppProps) {
         </section>
       </main>
       <footer class="colophon">Toolkit page {pageVersion}</footer>
+      {sourcesOpen && (
+        <SourcesPanel
+          db={db}
+          state={sources}
+          jobList={jobList}
+          now={now ?? Date.now()}
+          onClose={() => {
+            setSourcesOpen(false);
+          }}
+        />
+      )}
     </div>
   );
 }

@@ -14,6 +14,8 @@ export interface SourcePosting {
   jobType: string;
   /** How long ago the Source says it was posted, for example "3d", "1mo" or "Aug 12". */
   age: string;
+  /** When it was posted, as an ISO timestamp, for Sources that say exactly; wins over `age`. */
+  postedAt?: string;
   /** The Source's own section or category, for example "AI/ML". */
   category: string;
   /** The Source's company tier, for example "Tier 1" or "Unlisted". */
@@ -24,15 +26,25 @@ export interface SourcePosting {
   description?: string;
 }
 
+/**
+ * What one read of a Source gave. `list` narrows a read to part of a Source, such as one
+ * watchlist company's job board, so a failure there keeps only that part's Postings.
+ */
 export type SourceResult =
   | {
       name: string;
+      list?: string;
       ok: true;
+      /**
+       * The Source lists jobs at every level, like a company's own job board, so a Posting
+       * counts only when its title or job type says it is intern, new grad or junior.
+       */
+      listsEveryLevel?: boolean;
       /** When the Source's data was generated; Posting ages count back from here. */
       fetchedAt: string;
       postings: readonly SourcePosting[];
     }
-  | { name: string; ok: false; error: string };
+  | { name: string; list?: string; ok: false; error: string };
 
 /** The name of the shared Source every Candidate starts with. */
 export { JOB_FEED_SOURCE as JOB_FEED } from "../contract/index.ts";

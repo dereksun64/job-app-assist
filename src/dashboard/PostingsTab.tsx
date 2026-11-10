@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import {
   JOB_FEED_SOURCE,
+  WATCHLIST_SOURCE,
   POSSIBLY_CLOSED_DAYS,
   SKIP_REASONS,
   queueAgeDays,
@@ -152,9 +153,10 @@ export function PostingsTab({
   }
 }
 
-/** A Source's name as it reads inside a sentence. */
-function sourceLabel(name: string): string {
-  return name === JOB_FEED_SOURCE ? "the Job Feed" : name;
+/** A Source, or the part of one a report covers, as it reads inside a sentence. */
+function sourceLabel({ name, list }: Pick<JobListMeta["sources"][number], "name" | "list">) {
+  if (name === WATCHLIST_SOURCE && list) return `${list}'s job board`;
+  return name === JOB_FEED_SOURCE ? "the Job Feed" : list ? `${list} in ${name}` : name;
 }
 
 function SourceProblems({ meta }: { meta: JobListMeta }) {
@@ -163,8 +165,8 @@ function SourceProblems({ meta }: { meta: JobListMeta }) {
   return (
     <div class="notice notice-problem" role="alert">
       {failing.map((source) => (
-        <p key={source.name}>
-          {`Your Job List may be incomplete. The last Refresh couldn't read ${sourceLabel(source.name)}, so it kept the Postings found there before.`}
+        <p key={`${source.name}\u0000${source.list ?? ""}`}>
+          {`Your Job List may be incomplete. The last Refresh couldn't read ${sourceLabel(source)}, so it kept the Postings found there before.`}
           {source.error ? ` ${source.error}` : ""}
         </p>
       ))}
@@ -631,7 +633,14 @@ function PostingRow({ entry, actions, save, now, variant, onOpen }: PostingRowPr
   const queued = isQueued(entry);
   const skipped = isSkipped(entry);
   const extra = posting.locations.length - SHOWN_LOCATIONS;
-  const lists = posting.sources.map((source) => source.list ?? source.name);
+  // A watchlist Posting's list is its own company, so it reads better as "Watchlist".
+  const lists = [
+    ...new Set(
+      posting.sources.map((source) =>
+        source.name === WATCHLIST_SOURCE ? WATCHLIST_SOURCE : (source.list ?? source.name),
+      ),
+    ),
+  ];
   const age = queued && card ? queueAgeDays(card.queuedAt, now) : 0;
   const disabled = !actions || busy;
 

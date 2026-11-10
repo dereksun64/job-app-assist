@@ -6,6 +6,7 @@ import { CARDS_COLLECTION, validateCardDocument } from "./cards.ts";
 import { POSTINGS_COLLECTION, validatePostingsDocument } from "./postings.ts";
 import { SETTINGS_COLLECTION, SETTINGS_DOC_ID, validateSettings } from "./settings.ts";
 import { SKIPS_COLLECTION, validateSkipDocument } from "./skips.ts";
+import { SOURCES_COLLECTION, validateSourceDocument } from "./sources.ts";
 import type { Validation } from "./validation.ts";
 import {
   VARIANT_OVERRIDES_COLLECTION,
@@ -17,6 +18,8 @@ export * from "./postings.ts";
 export * from "./settings.ts";
 export * from "./skips.ts";
 export * from "./variant-overrides.ts";
+export * from "./sources.ts";
+export { canonicalApplyUrl, isShortLink } from "./apply-urls.ts";
 export type { Validation } from "./validation.ts";
 
 type CollectionRule = (docId: string, input: unknown) => Validation<unknown>;
@@ -33,6 +36,7 @@ const collections: Record<string, CollectionRule> = {
   [CARDS_COLLECTION]: validateCardDocument,
   [SKIPS_COLLECTION]: validateSkipDocument,
   [VARIANT_OVERRIDES_COLLECTION]: validateVariantOverrideDocument,
+  [SOURCES_COLLECTION]: validateSourceDocument,
 };
 
 /** The collections the contract defines so far; later tickets add sources, news and more. */

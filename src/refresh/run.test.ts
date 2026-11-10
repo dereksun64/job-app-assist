@@ -581,3 +581,136 @@ describe("jaa refresh and Resume Variants", () => {
     expect(io.err).toContain("variant-judgments.json");
   });
 });
+
+describe("jaa refresh with the Candidate's Sources", () => {
+  const UPDATED = "2026-11-09T12:00:00.000Z";
+  const stripeBoard = "https://boards-api.greenhouse.io/v1/boards/stripe/jobs";
+  const rampBoard = "https://api.ashbyhq.com/posting-api/job-board/ramp";
+
+  const sourceDocs = (
+    overrides: { jobFeed?: boolean; watchlist?: boolean; added?: boolean } = {},
+  ) => ({
+    [`${dir}/state/sources/job-feed.json`]: JSON.stringify({
+      schemaVersion: 1,
+      enabled: overrides.jobFeed ?? true,
+      updatedAt: UPDATED,
+    }),
+    [`${dir}/state/sources/watchlist.json`]: JSON.stringify({
+      schemaVersion: 1,
+      enabled: overrides.watchlist ?? true,
+      companies: [
+        { name: "Stripe", board: "greenhouse", slug: "stripe" },
+        { name: "Ramp", board: "ashby", slug: "ramp" },
+      ],
+      updatedAt: UPDATED,
+    }),
+    [`${dir}/state/sources/added-by-url.json`]: JSON.stringify({
+      schemaVersion: 1,
+      enabled: overrides.added ?? true,
+      postings: [
+        {
+          url: "https://runway.example.com/jobs/42",
+          company: "Tiny Startup",
+          title: "Software Engineer",
+          location: "New York, NY",
+          addedAt: UPDATED,
+        },
+        {
+          url: "https://runway.example.com/jobs/43",
+          company: "Far Startup",
+          title: "Software Engineer",
+          location: "Denver, CO",
+          addedAt: UPDATED,
+        },
+      ],
+      updatedAt: UPDATED,
+    }),
+  });
+
+  const stripeJobs = json({
+    jobs: [
+      {
+        absolute_url: "https://job-boards.greenhouse.io/acme/jobs/1",
+        title: "Software Engineer, New Grad",
+        location: { name: "New York, NY" },
+        first_published: "2026-11-08T10:00:00-05:00",
+      },
+      {
+        absolute_url: "https://stripe.com/jobs/search?gh_jid=2",
+        title: "Backend Engineer, New Grad",
+        location: { name: "New York City" },
+        first_published: "2026-11-08T10:00:00-05:00",
+      },
+    ],
+  });
+
+  it("reads the Job Feed, every watchlist board and the Postings added by URL", async () => {
+    const fetch = fakeFetch({
+      [JOB_FEED_URL]: json(feedJson([job()])),
+      [stripeBoard]: stripeJobs,
+      [rampBoard]: json({}, 404),
+    });
+    const io = memoryIo(
+      { [`${dir}/state/settings/main.json`]: JSON.stringify(settings), ...sourceDocs() },
+      fetch,
+    );
+    expect(await runRefreshCommand(dir, {}, io)).toBe(0);
+    expect(io.err).toBe("");
+    expect(fetch.calls.sort()).toEqual(
+      [`GET ${JOB_FEED_URL}`, `GET ${rampBoard}`, `GET ${stripeBoard}`].sort(),
+    );
+
+    const page = readOut<JobListPage>(io, "out", "postings", "page-1.json");
+    const found = page.postings.map((p) => [p.company, p.sources.map((s) => s.list ?? s.name)]);
+    expect(found.sort()).toEqual([
+      ["Acme", ["Simplify New Grad", "Stripe"]],
+      ["Stripe", ["Stripe"]],
+      ["Tiny Startup", ["Added by URL"]],
+    ]);
+    expect(io.out).toContain("- Job Feed: read 1 Postings.");
+    expect(io.out).toContain("- Watchlist: read 2 Postings from 1 of 2 companies.");
+    expect(io.out).toContain(
+      "- Watchlist, Ramp: FAILED. Ramp has no public Ashby job board at https://jobs.ashbyhq.com/ramp. Check its link on the watchlist.",
+    );
+    expect(io.out).toContain("- Added by URL: 2 Postings.");
+    expect(io.out).toContain(
+      "Added by URL but left out of the Job List: Far Startup: Software Engineer (outside your Location Tiers).",
+    );
+  });
+
+  it("reads nothing from Sources that are switched off", async () => {
+    const fetch = fakeFetch({});
+    const io = memoryIo(
+      {
+        [`${dir}/state/settings/main.json`]: JSON.stringify(settings),
+        ...sourceDocs({ jobFeed: false, watchlist: false, added: false }),
+      },
+      fetch,
+    );
+    expect(await runRefreshCommand(dir, {}, io)).toBe(0);
+    expect(fetch.calls).toEqual([]);
+    expect(readOut<JobListMeta>(io, "out", "postings", "meta.json")).toMatchObject({
+      total: 0,
+      sources: [],
+    });
+    expect(io.out).toContain("Every Source is switched off");
+  });
+
+  it("leaves a Source off when its document does not match the contract, and says so", async () => {
+    const fetch = fakeFetch({ [stripeBoard]: stripeJobs, [rampBoard]: json({ jobs: [] }) });
+    const io = memoryIo(
+      {
+        [`${dir}/state/settings/main.json`]: JSON.stringify(settings),
+        ...sourceDocs({ added: false }),
+        [`${dir}/state/sources/job-feed.json`]: JSON.stringify({ enabled: "yes" }),
+      },
+      fetch,
+    );
+    expect(await runRefreshCommand(dir, {}, io)).toBe(0);
+    expect(fetch.calls).not.toContain(`GET ${JOB_FEED_URL}`);
+    expect(io.out).toContain(
+      "Some Source documents do not match the dashboard contract, so those Sources were skipped:",
+    );
+    expect(io.out).toContain("- sources/job-feed: schemaVersion:");
+  });
+});

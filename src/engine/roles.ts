@@ -25,14 +25,23 @@ function normalize(text: string): string {
  * The seniority a Posting is pitched at, or undefined when it asks for more experience than
  * intern, new grad or junior. An explicit entry-level word in the title wins over the Source's
  * job type, so new-grad roles a Source lists as internships are read as new grad.
+ *
+ * A title that states no level reads as new grad, which suits Sources that list only
+ * entry-level jobs. With `stated`, for Sources that list jobs at every level (a company's own
+ * job board), only a level the title or job type states counts.
  */
-export function levelOf(title: string, jobType: string): Seniority | undefined {
+export function levelOf(
+  title: string,
+  jobType: string,
+  { stated = false }: { stated?: boolean } = {},
+): Seniority | undefined {
   const text = normalize(title);
   if (INTERN.test(text)) return "intern";
   if (NEW_GRAD.test(text)) return "new_grad";
   if (JUNIOR.test(text)) return "junior";
   if (SENIOR.test(text)) return undefined;
-  return /intern/i.test(jobType) ? "intern" : "new_grad";
+  if (/intern/i.test(jobType)) return "intern";
+  return stated ? undefined : "new_grad";
 }
 
 /** Role families, each recognized by words in a title or in a role type's name. */

@@ -40,6 +40,10 @@ _Avoid_: Feed (for the general concept), scraper, integration
 The shared Source every Candidate starts with: the continuously refreshed `jobs.json` published by yet-another-job-repo.
 _Avoid_: Job board, source list
 
+**Watchlist**:
+A Source made of companies the Candidate follows directly, each read from its own public Greenhouse, Lever or Ashby job board.
+_Avoid_: Company list, favorites, followed companies
+
 **Posting**:
 One open job at one company, as listed by a Source, identified by its apply URL.
 _Avoid_: Job, listing, opening
