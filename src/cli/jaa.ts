@@ -7,10 +7,11 @@
 import { validateDocument } from "../contract/index.ts";
 import { runNewsCommand, type NewsIo } from "../refresh/news.ts";
 import { runRefreshCommand } from "../refresh/run.ts";
+import { runImportConnections, type ConnectionsIo } from "./connections.ts";
 import { runCheckResumes, type ResumeIo } from "./resumes.ts";
 import { runSettingsDiff, runTuneReport } from "../tune/run.ts";
 
-export interface CliIo extends NewsIo, ResumeIo {}
+export interface CliIo extends NewsIo, ResumeIo, ConnectionsIo {}
 
 const USAGE = `Usage: jaa validate <collection> <doc-id> <file|->
        jaa refresh <dir> [--feed <url|file> | --rerun]
@@ -19,13 +20,15 @@ const USAGE = `Usage: jaa validate <collection> <doc-id> <file|->
        jaa check-resumes <manifest> [--settings <file|->]
        jaa tune-report <dir>
        jaa settings-diff <current-file> <proposed-file|->
+       jaa import-connections <export.csv> <out.json>
 
 validate       Checks one dashboard document (JSON, from a file or from stdin with -)
                against the dashboard contract. Exits 0 when it matches, 1 when it does not.
 refresh        Builds the Job List from the dashboard state saved in <dir>/state and the
                Job Feed, and writes the documents and ArtifactData batches to <dir>/out.
                --rerun rebuilds from the Sources the last run read, without the network,
-               applying the Resume Variant judgments in <dir>/variant-judgments.json.
+               applying the Resume Variant judgments in <dir>/variant-judgments.json
+               and the Referral Drafts in <dir>/referral-drafts.json.
 news           After refresh, in the same <dir>: plan computes the hiring signals, lists
                the companies in the Queue and reads the forums (<dir>/out/news-plan.json);
                build joins them with the news gathered in <dir>/out/news-gathered.json into
@@ -38,6 +41,10 @@ tune-report    Prints the settings, patterns in skip reasons with the changes th
                <dir>/state.
 settings-diff  Checks a proposed settings document against the dashboard contract and
                prints every change from the current one. Writes nothing.
+import-connections
+               Reads a LinkedIn connections export (Connections.csv) and saves each
+               connection's name, company and position to <out.json>, for Referral Drafts.
+               Email addresses and profile links are not kept.
 `;
 
 /** Runs the CLI and resolves its exit code. */
@@ -90,6 +97,14 @@ export async function runCli(argv: readonly string[], io: CliIo): Promise<number
       return 2;
     }
     return runSettingsDiff(current, proposed, io);
+  }
+  if (argv[0] === "import-connections") {
+    const [, exportPath, outPath, ...rest] = argv;
+    if (!exportPath || !outPath || rest.length > 0) {
+      io.stderr(USAGE);
+      return 2;
+    }
+    return runImportConnections(exportPath, outPath, io);
   }
   const [command, collection, docId, file, ...rest] = argv;
   if (command !== "validate" || !collection || !docId || !file || rest.length > 0) {

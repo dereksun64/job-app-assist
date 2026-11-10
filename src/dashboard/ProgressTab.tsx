@@ -44,6 +44,7 @@ export function ProgressTab({
   resumeVariants,
   overrides,
   onChooseVariant,
+  referrals,
 }: ProgressTabProps) {
   const [openId, setOpenId] = useState<string | null>(null);
   const [closing, setClosing] = useState<Card | null>(null);
@@ -197,6 +198,7 @@ export function ProgressTab({
           resumeVariants={resumeVariants}
           override={overrides.get(open.postingId)}
           onChooseVariant={(variant) => onChooseVariant(postingOf(open), variant)}
+          referrals={referrals.get(open.postingId)}
           onClose={() => {
             setOpenId(null);
           }}

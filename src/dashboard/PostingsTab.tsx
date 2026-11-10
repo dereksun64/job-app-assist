@@ -10,6 +10,7 @@ import {
   type Posting,
   type Skip,
   type SkipReason,
+  type Referrals,
   type VariantOverride,
 } from "../contract/index.ts";
 import {
@@ -72,6 +73,8 @@ export interface ResumeVariantProps {
   /** The Candidate's own choices, by Posting id. */
   overrides: ReadonlyMap<string, VariantOverride>;
   onChooseVariant: (posting: Posting, variant: string) => Promise<void>;
+  /** The Referral Drafts Refresh wrote, by Posting id. */
+  referrals: ReadonlyMap<string, Referrals>;
 }
 
 export interface PostingsTabProps extends ResumeVariantProps {
@@ -223,6 +226,7 @@ function JobList({
   resumeVariants,
   overrides,
   onChooseVariant,
+  referrals,
 }: JobListProps) {
   const [filters, setFilters] = useState<Filters>(NO_FILTERS);
   const [openId, setOpenId] = useState<string | null>(null);
@@ -259,7 +263,8 @@ function JobList({
     return [...listed, ...unlisted];
   }, [postings, cards, skips]);
   // A Posting that leaves the list (no longer listed nor queued) closes its drawer.
-  const open = openId === null ? undefined : entries.find((e) => e.posting.id === openId)?.posting;
+  const openEntry = openId === null ? undefined : entries.find((e) => e.posting.id === openId);
+  const open = openEntry?.posting;
   const matches = useMemo(
     () =>
       entries.filter(
@@ -504,6 +509,7 @@ function JobList({
           resumeVariants={resumeVariants}
           override={overrides.get(open.id)}
           onChooseVariant={(variant) => onChooseVariant(open, variant)}
+          referrals={openEntry.card ? referrals.get(open.id) : undefined}
           onClose={() => {
             setOpenId(null);
           }}

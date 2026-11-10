@@ -76,6 +76,15 @@ Tune shows the exact list of changes and saves them only after you approve.
 Ask Tune what your skips suggest, and it proposes changes from the reasons you gave when you unticked Postings, such as blocking a company you keep skipping.
 The next Refresh ranks and queues with the new settings.
 
+## Referral Drafts
+
+If you like, Setup can import your LinkedIn connections, so you can ask people you know for a referral before you apply.
+Download your connections from LinkedIn yourself (Settings & Privacy, then Data privacy, then Get a copy of your data, then Connections) and give Claude the `Connections.csv` file.
+Claude keeps only each connection's name, company and position in your folder; email addresses and profile links are dropped, and the file never goes to your dashboard.
+On each Refresh, Claude matches your connections to the companies in your Queue and writes a short referral ask for each one, at most three people per company.
+Open a queued Posting to see its Referral Drafts, each with a copy button and a LinkedIn search for the person.
+You send every message yourself; the Toolkit never sends anything and never opens LinkedIn.
+
 ## Developing
 
 The plugin lives in `plugin/`, and the TypeScript source for the dashboard page, the dashboard contract and the `jaa` CLI lives in `src/`.

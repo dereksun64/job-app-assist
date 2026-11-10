@@ -755,3 +755,165 @@ describe("jaa refresh with the Candidate's Sources", () => {
     expect(io.out).toContain("- sources/job-feed: schemaVersion:");
   });
 });
+
+describe("jaa refresh and Referral Drafts", () => {
+  const acmeUrl = "https://job-boards.greenhouse.io/acme/jobs/1";
+  const acmeId = postingId(acmeUrl);
+  const feed = feedJson([job()]);
+  const connectionsPath = "candidate/.job-app-assist/connections.json";
+  const connections = {
+    schemaVersion: 1,
+    importedAt: "2026-11-01T00:00:00.000Z",
+    connections: [
+      { name: "Priya Shah", company: "Acme, Inc.", position: "Software Engineer" },
+      { name: "Sam Lee", company: "Other Co" },
+    ],
+  };
+  const start = (extra: Record<string, string> = {}) =>
+    memoryIo(
+      {
+        [`${dir}/state/settings/main.json`]: JSON.stringify(settings),
+        [connectionsPath]: JSON.stringify(connections),
+        ...extra,
+      },
+      fakeFetch({ [JOB_FEED_URL]: json(feed) }),
+    );
+  interface ReferralReview {
+    toDraft: number;
+    companies: { key: string; company: string; connections: { name: string }[] }[];
+  }
+  const message = "Hi Priya, I'm applying to Acme's new grad SWE role. Would you refer me?";
+
+  it("lists connections at the companies of queued Postings for the Refresh skill to draft", async () => {
+    const io = start();
+    expect(await runRefreshCommand(dir, {}, io)).toBe(0);
+    expect(io.err).toBe("");
+    const review = readOut<ReferralReview>(io, "out", "referral-review.json");
+    expect(review).toEqual({
+      toDraft: 1,
+      companies: [
+        {
+          key: "acme",
+          company: "Acme",
+          roles: [
+            {
+              title: "Software Engineer, New Grad",
+              roleType: "Software Engineer",
+              applyUrl: acmeUrl,
+            },
+          ],
+          connections: [
+            { name: "Priya Shah", company: "Acme, Inc.", position: "Software Engineer" },
+          ],
+        },
+      ],
+    });
+    expect(io.out).toContain(
+      `Referral Drafts: 1 to draft for connections at the companies in your Queue: see ${at("out", "referral-review.json")}.`,
+    );
+    const { batches } = readOut<{ batches: BatchWrite[][] }>(io, "out", "writes.json");
+    expect(batches.flat().filter((w) => w.collection === "referrals")).toEqual([]);
+  });
+
+  it("writes the drafts the Refresh skill recorded on the offline rebuild", async () => {
+    const io = start();
+    expect(await runRefreshCommand(dir, {}, io)).toBe(0);
+    io.disk.set(
+      at("referral-drafts.json"),
+      JSON.stringify({ acme: { "Priya Shah": { message } } }),
+    );
+    io.out = "";
+    expect(await runRefreshCommand(dir, { rerun: true }, io)).toBe(0);
+    expect(io.err).toBe("");
+    const { batches } = readOut<{ batches: BatchWrite[][] }>(io, "out", "writes.json");
+    expect(batches.flat().filter((w) => w.collection === "referrals")).toEqual([
+      {
+        op: "set",
+        collection: "referrals",
+        doc_id: acmeId,
+        file_path: at("out", "referrals", `${acmeId}.json`),
+      },
+    ]);
+    expect(readOut<object>(io, "out", "referrals", `${acmeId}.json`)).toEqual({
+      schemaVersion: 1,
+      postingId: acmeId,
+      drafts: [
+        { name: "Priya Shah", company: "Acme, Inc.", position: "Software Engineer", message },
+      ],
+      updatedAt: NOW,
+    });
+    expect(readOut<ReferralReview>(io, "out", "referral-review.json").toDraft).toBe(0);
+    expect(io.out).toContain("Referral Drafts: 1 for 1 queued Posting at 1 company.");
+  });
+
+  it("pins referral writes to the versions read and removes drafts whose card is gone", async () => {
+    const stale = "fedcba987654";
+    const io = start({
+      [`${dir}/state/referrals/${stale}.json`]: JSON.stringify({
+        schemaVersion: 1,
+        postingId: stale,
+        drafts: [{ name: "X Y", company: "Gone", message: "Hi" }],
+        updatedAt: "2026-11-01T00:00:00.000Z",
+      }),
+      [`${dir}/versions.json`]: JSON.stringify({ [`referrals/${stale}`]: 4 }),
+    });
+    expect(await runRefreshCommand(dir, {}, io)).toBe(0);
+    const { batches } = readOut<{ batches: BatchWrite[][] }>(io, "out", "writes.json");
+    expect(batches.flat().filter((w) => w.collection === "referrals")).toEqual([
+      { op: "delete", collection: "referrals", doc_id: stale, if_version: 4 },
+    ]);
+  });
+
+  it("refuses to run without a version for every referrals document read", async () => {
+    const io = start({ [`${dir}/state/referrals/fedcba987654.json`]: "{}" });
+    expect(await runRefreshCommand(dir, {}, io)).toBe(1);
+    expect(io.err).toContain("versions.json has no version for referrals/fedcba987654.");
+  });
+
+  it("says nothing about Referral Drafts when no connections were imported", async () => {
+    const io = memoryIo(
+      { [`${dir}/state/settings/main.json`]: JSON.stringify(settings) },
+      fakeFetch({ [JOB_FEED_URL]: json(feed) }),
+    );
+    expect(await runRefreshCommand(dir, {}, io)).toBe(0);
+    expect(io.out).not.toContain("Referral");
+    expect(readOut<ReferralReview>(io, "out", "referral-review.json")).toEqual({
+      toDraft: 0,
+      companies: [],
+    });
+  });
+
+  it("says so when no connection works at a queued company", async () => {
+    const io = start({
+      [connectionsPath]: JSON.stringify({
+        ...connections,
+        connections: [connections.connections[1]],
+      }),
+    });
+    expect(await runRefreshCommand(dir, {}, io)).toBe(0);
+    expect(io.out).toContain(
+      "Referral Drafts: none of your connections work at the companies in your Queue.",
+    );
+  });
+
+  it.each([
+    ["an imported connections file in another shape", connectionsPath, "[]", "connections.json"],
+    ["drafts that are not an object", `${dir}/referral-drafts.json`, "[]", "referral-drafts.json"],
+    [
+      "a draft with no message or skip reason",
+      `${dir}/referral-drafts.json`,
+      JSON.stringify({ acme: { "Priya Shah": {} } }),
+      "referral-drafts.json",
+    ],
+    [
+      "a message that is too long",
+      `${dir}/referral-drafts.json`,
+      JSON.stringify({ acme: { "Priya Shah": { message: "x".repeat(601) } } }),
+      "referral-drafts.json",
+    ],
+  ])("refuses %s", async (_label, path, text, named) => {
+    const io = start({ [path]: text });
+    expect(await runRefreshCommand(dir, {}, io)).toBe(1);
+    expect(io.err).toContain(named);
+  });
+});
