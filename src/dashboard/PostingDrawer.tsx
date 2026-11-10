@@ -8,6 +8,7 @@ import type { ComponentChildren } from "preact";
 import { useEffect, useId, useRef, useState } from "preact/hooks";
 import {
   JOB_FEED_SOURCE,
+  chosenVariant,
   type Posting,
   type Referrals,
   type VariantOverride,
@@ -15,7 +16,6 @@ import {
 import type { DbError } from "./db.ts";
 import { formatLevel, formatPostedAge } from "./format.ts";
 import { ReferralDrafts } from "./ReferralDrafts.tsx";
-import { chosenVariant } from "./resume-variants.ts";
 
 export interface PostingDrawerProps {
   posting: Posting;

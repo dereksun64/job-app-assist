@@ -1,19 +1,6 @@
-import type {
-  ClosedReason,
-  SearchProfile,
-  Seniority,
-  SkipReason,
-  Stage,
-} from "../contract/index.ts";
+import type { ClosedReason, SearchProfile, Seniority, SkipReason } from "../contract/index.ts";
 
-export const STAGE_LABELS: Record<Stage, string> = {
-  queued: "Queued",
-  ready_for_review: "Ready for Review",
-  submitted: "Submitted",
-  interviewing: "Interviewing",
-  offer: "Offer",
-  closed: "Closed",
-};
+export { STAGE_LABELS } from "../contract/index.ts";
 
 /** How a Closed card names its reason, from the Candidate's side. */
 export const CLOSED_REASON_LABELS: Record<ClosedReason, string> = {

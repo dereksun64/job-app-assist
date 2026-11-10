@@ -2,7 +2,7 @@
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/preact";
 import { userEvent } from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { Posting } from "../contract/index.ts";
+import type { FillRecord, Posting } from "../contract/index.ts";
 import { App } from "./App.tsx";
 import {
   NOW,
@@ -190,6 +190,64 @@ describe("the filling marker", () => {
     expect(cardOf("Brainy")).not.toHaveAttribute("aria-busy");
     // Filling is not a Stage: the card stays in the Queued column.
     expect(cardsIn("Queued")).toEqual(["Acme", "Brainy"]);
+  });
+});
+
+const FILLED: FillRecord = {
+  at: daysAgo(0),
+  outcome: "filled",
+  simplify: "filled",
+  resumeVariant: "Generalist SWE",
+  flags: [
+    {
+      field: "Do you meet the basic qualifications?",
+      kind: "legal_claim",
+      note: "A claim about you; answer it yourself.",
+    },
+    { field: "Why Acme?", kind: "free_text", note: "Write this answer in your own words." },
+    { field: "Desired salary", kind: "missing_answer", note: "Not in your private file." },
+  ],
+};
+
+const NEEDS_SIGN_IN: FillRecord = {
+  at: daysAgo(0),
+  outcome: "needs_sign_in",
+  simplify: "not_tried",
+  flags: [
+    {
+      field: "Workday account",
+      kind: "sign_in",
+      note: "Sign in to Brainy's Workday in Helium, then ask your Claude to fill this Posting again.",
+    },
+  ],
+};
+
+describe("what Fill flagged", () => {
+  it("shows how many fields to check on a Ready for Review card", async () => {
+    await renderBoard({
+      ...cardDoc(acme, { stage: "ready_for_review", fill: FILLED }),
+      ...cardDoc(charlie, { stage: "ready_for_review", fill: { ...FILLED, flags: [] } }),
+    });
+    const flagged = within(cardOf("Acme")).getByText("3 to check");
+    expect(flagged).toHaveClass("flag-warning");
+    expect(within(cardOf("Charlie")).getByText("Nothing flagged")).not.toHaveClass("flag-warning");
+  });
+
+  it("shows when a Queued card needs the Candidate to sign in", async () => {
+    await renderBoard({ ...cardDoc(brainy, { fill: NEEDS_SIGN_IN }) });
+    expect(within(cardOf("Brainy")).getByText("Sign-in needed")).toHaveClass("flag-warning");
+    expect(cardsIn("Queued")).toEqual(["Brainy"]);
+  });
+
+  it("drops the sign-in flag while the card is filling again", async () => {
+    await renderBoard({ ...cardDoc(brainy, { fill: NEEDS_SIGN_IN, fillingSince: NOW_ISO }) });
+    expect(within(cardOf("Brainy")).queryByText("Sign-in needed")).not.toBeInTheDocument();
+    expect(within(cardOf("Brainy")).getByText("Filling")).toBeInTheDocument();
+  });
+
+  it("keeps flags off cards past review", async () => {
+    await renderBoard({ ...cardDoc(acme, { stage: "submitted", fill: FILLED }) });
+    expect(within(cardOf("Acme")).queryByText("3 to check")).not.toBeInTheDocument();
   });
 });
 
@@ -385,6 +443,78 @@ describe("opening a card", () => {
       data: { stage: "closed", closedReason: "withdrawn" },
     });
     expect(within(drawer).getByText("You withdrew.")).toBeInTheDocument();
+  });
+
+  it("lists every flagged field in the drawer, with what to do", async () => {
+    await renderBoard({ ...cardDoc(acme, { stage: "ready_for_review", fill: FILLED }) });
+    const { drawer } = await openCard("Acme");
+    const section = within(drawer).getByRole("region", { name: "Flagged by Fill" });
+    expect(within(section).getByText(/Simplify filled the standard fields first/)).toBeVisible();
+    expect(within(section).getByText(/Uploaded Generalist SWE/)).toBeVisible();
+    const items = within(section).getAllByRole("listitem");
+    expect(items.map((item) => item.querySelector(".fill-flag-field")?.textContent)).toEqual([
+      "Do you meet the basic qualifications?",
+      "Why Acme?",
+      "Desired salary",
+    ]);
+    expect(within(items[0] as HTMLElement).getByText("Claim about you")).toBeVisible();
+    expect(within(items[1] as HTMLElement).getByText("Write it yourself")).toBeVisible();
+    expect(within(items[2] as HTMLElement).getByText("Not in your private file")).toBeVisible();
+    expect(
+      within(items[1] as HTMLElement).getByText("Write this answer in your own words."),
+    ).toBeVisible();
+    expect(
+      within(section).getByText(/Check these in the application's tab in Helium/),
+    ).toBeVisible();
+  });
+
+  it("says in the drawer when Fill flagged nothing", async () => {
+    await renderBoard({
+      ...cardDoc(acme, {
+        stage: "ready_for_review",
+        fill: { ...FILLED, simplify: "absent", flags: [] },
+      }),
+    });
+    const { drawer } = await openCard("Acme");
+    const section = within(drawer).getByRole("region", { name: "Flagged by Fill" });
+    expect(
+      within(section).getByText(/Simplify did not appear, so your Claude filled every field/),
+    ).toBeVisible();
+    expect(within(section).getByText(/Nothing was flagged/)).toBeVisible();
+  });
+
+  it("tells the Candidate what to do when a Posting needs a sign-in", async () => {
+    await renderBoard({ ...cardDoc(brainy, { fill: NEEDS_SIGN_IN }) });
+    const { drawer } = await openCard("Brainy");
+    const section = within(drawer).getByRole("region", { name: "Flagged by Fill" });
+    expect(within(section).getByText(/This site needs you to sign in/)).toBeVisible();
+    expect(within(section).getByText(/Sign in to Brainy's Workday in Helium/)).toBeVisible();
+  });
+
+  it("says why Fill stopped on a Queued card", async () => {
+    await renderBoard({
+      ...cardDoc(charlie, {
+        fill: {
+          at: daysAgo(0),
+          outcome: "stopped",
+          simplify: "not_tried",
+          flags: [{ field: "Posting", kind: "problem", note: "The page says this job is closed." }],
+        },
+      }),
+    });
+    expect(within(cardOf("Charlie")).getByText("Fill stopped")).toHaveClass("flag-warning");
+    const { drawer } = await openCard("Charlie");
+    const section = within(drawer).getByRole("region", { name: "Flagged by Fill" });
+    expect(within(section).getByText(/Your Claude could not fill this form/)).toBeVisible();
+    expect(within(section).getByText("The page says this job is closed.")).toBeVisible();
+  });
+
+  it("has no Fill section before Fill has run", async () => {
+    await renderBoard({ ...cardDoc(acme) });
+    const { drawer } = await openCard("Acme");
+    expect(
+      within(drawer).queryByRole("region", { name: "Flagged by Fill" }),
+    ).not.toBeInTheDocument();
   });
 
   it("says in the drawer when a card is being filled", async () => {

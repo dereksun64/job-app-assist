@@ -3,11 +3,14 @@ import {
   CARDS_COLLECTION,
   POSSIBLY_CLOSED_DAYS,
   compareQueueOrder,
+  finishFill,
   moveCard,
   queueAgeDays,
   stageSince,
+  startFill,
   validateCard,
   type Card,
+  type FillRecord,
 } from "./cards.ts";
 import { validateDocument } from "./index.ts";
 import { samplePosting } from "./testing/fixtures.ts";
@@ -191,5 +194,134 @@ describe("queueAgeDays", () => {
     expect(queueAgeDays("2026-11-10T15:00:00.000Z", Date.parse("2026-11-09T00:00:00.000Z"))).toBe(
       0,
     );
+  });
+});
+
+const FILLED: FillRecord = {
+  at: "2026-11-12T10:05:00.000Z",
+  outcome: "filled",
+  simplify: "filled",
+  resumeVariant: "Generalist SWE",
+  flags: [
+    {
+      field: "Do you meet the basic qualifications?",
+      kind: "legal_claim",
+      note: "A claim about yourself; answer it before you submit.",
+    },
+    { field: "Why Acme?", kind: "free_text", note: "Write this answer yourself." },
+  ],
+};
+
+const NEEDS_SIGN_IN: FillRecord = {
+  at: "2026-11-12T10:05:00.000Z",
+  outcome: "needs_sign_in",
+  simplify: "not_tried",
+  flags: [
+    {
+      field: "Workday account",
+      kind: "sign_in",
+      note: "Sign in to Acme's Workday in Helium, then ask your Claude to fill this Posting again.",
+    },
+  ],
+};
+
+describe("Fill's record on a card", () => {
+  it("accepts a filled card with what Fill flagged", () => {
+    expect(validateCard(card({ stage: "ready_for_review", fill: FILLED })).ok).toBe(true);
+  });
+
+  it("accepts a Queued card Fill could not fill because it needs a sign-in", () => {
+    expect(validateCard(card({ fill: NEEDS_SIGN_IN })).ok).toBe(true);
+  });
+
+  it("says what the Candidate must do when a Posting needs a sign-in", () => {
+    expect(issuesFor(card({ fill: { ...NEEDS_SIGN_IN, flags: [] } }))).toEqual([
+      "fill.flags: a Posting that needs a sign-in has a sign_in flag saying what to do",
+    ]);
+    expect(issuesFor(card({ fill: { ...FILLED, flags: NEEDS_SIGN_IN.flags } }))).toEqual([
+      "fill.flags: only a Posting that needs a sign-in has a sign_in flag",
+    ]);
+  });
+
+  it("accepts a Fill that stopped, and requires it to say why", () => {
+    const stopped: FillRecord = {
+      at: "2026-11-12T10:05:00.000Z",
+      outcome: "stopped",
+      simplify: "not_tried",
+      flags: [{ field: "Posting", kind: "problem", note: "The page says the job is closed." }],
+    };
+    expect(validateCard(card({ fill: stopped })).ok).toBe(true);
+    expect(issuesFor(card({ fill: { ...stopped, flags: [] } }))).toEqual([
+      "fill.flags: a Fill that stopped has a flag saying why",
+    ]);
+    const done = finishFill(startFill(card(), "2026-11-12T10:00:00.000Z"), stopped);
+    expect(done.stage).toBe("queued");
+    expect(done).not.toHaveProperty("fillingSince");
+  });
+
+  it("rejects flags without a field or a note, and unknown kinds", () => {
+    const flag = (over: object) => ({ ...FILLED, flags: [{ ...FILLED.flags[0], ...over }] });
+    expect(issuesFor(card({ fill: flag({ field: " " }) as FillRecord }))).toEqual([
+      "fill.flags.0.field: must not be blank",
+    ]);
+    expect(issuesFor(card({ fill: flag({ note: "" }) as FillRecord }))).toEqual([
+      "fill.flags.0.note: must not be blank",
+    ]);
+    expect(issuesFor(card({ fill: flag({ kind: "guess" }) as FillRecord }))[0]).toMatch(
+      /^fill\.flags\.0\.kind:/,
+    );
+  });
+
+  it("never holds an answer's value, only which field to look at", () => {
+    const withValue = { ...FILLED, flags: [{ ...FILLED.flags[0], value: "Yes" }] };
+    expect(issuesFor(card({ fill: withValue as FillRecord }))[0]).toMatch(/^fill\.flags\.0/);
+  });
+});
+
+describe("startFill and finishFill", () => {
+  const STARTED = "2026-11-12T10:00:00.000Z";
+
+  it("marks a Queued card as filling", () => {
+    const started = startFill(card(), STARTED);
+    expect(started).toEqual({ ...card(), fillingSince: STARTED, updatedAt: STARTED });
+    expect(validateCard(started).ok).toBe(true);
+  });
+
+  it("refuses to start a card that is not Queued", () => {
+    expect(() => startFill(card({ stage: "ready_for_review" }), STARTED)).toThrow(
+      "Fill works only on Queued cards; this one is Ready for Review.",
+    );
+  });
+
+  it("moves a filled card to Ready for Review with its flags", () => {
+    const done = finishFill(startFill(card(), STARTED), FILLED);
+    expect(done.stage).toBe("ready_for_review");
+    expect(done.stageChangedAt).toBe(FILLED.at);
+    expect(done.updatedAt).toBe(FILLED.at);
+    expect(done.fill).toEqual(FILLED);
+    expect(done).not.toHaveProperty("fillingSince");
+    expect(validateCard(done).ok).toBe(true);
+  });
+
+  it("leaves a card that needs a sign-in Queued, flagged, and no longer filling", () => {
+    const done = finishFill(startFill(card(), STARTED), NEEDS_SIGN_IN);
+    expect(done.stage).toBe("queued");
+    expect(done.fill).toEqual(NEEDS_SIGN_IN);
+    expect(done).not.toHaveProperty("fillingSince");
+    expect(done).not.toHaveProperty("stageChangedAt");
+    expect(validateCard(done).ok).toBe(true);
+  });
+
+  it("keeps the Stage the Candidate moved the card to while it was filling", () => {
+    const moved = card({ stage: "submitted", stageChangedAt: "2026-11-12T10:02:00.000Z" });
+    const done = finishFill(moved, FILLED);
+    expect(done.stage).toBe("submitted");
+    expect(done.stageChangedAt).toBe("2026-11-12T10:02:00.000Z");
+    expect(done.fill).toEqual(FILLED);
+  });
+
+  it("replaces the record of an earlier Fill", () => {
+    const done = finishFill(card({ fill: NEEDS_SIGN_IN }), FILLED);
+    expect(done.fill).toEqual(FILLED);
   });
 });

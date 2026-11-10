@@ -4,8 +4,10 @@ import {
   WATCHLIST_SOURCE,
   POSSIBLY_CLOSED_DAYS,
   SKIP_REASONS,
+  chosenVariant,
   queueAgeDays,
   type Card,
+  type ChosenVariant,
   type JobListMeta,
   type Posting,
   type Skip,
@@ -24,7 +26,6 @@ import {
   formatPostedAge,
 } from "./format.ts";
 import { PostingDrawer } from "./PostingDrawer.tsx";
-import { chosenVariant, type ChosenVariant } from "./resume-variants.ts";
 import type { JobListState } from "./useJobList.ts";
 import { saveProblem, type QueueActions, type QueueState } from "./useQueue.ts";
 

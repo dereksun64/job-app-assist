@@ -16,6 +16,7 @@ import {
 } from "./variant-overrides.ts";
 
 export * from "./cards.ts";
+export * from "./chosen-variant.ts";
 export * from "./news.ts";
 export * from "./postings.ts";
 export * from "./referrals.ts";

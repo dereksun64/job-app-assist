@@ -1396,6 +1396,59 @@ html:has(.drawer[open]) {
   color: var(--accent);
 }
 
+/* What Fill flagged: one row per field, label first, then what to do. */
+.fill-flags {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.fill-flag {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 0.625rem 0.75rem;
+}
+
+.fill-flag + .fill-flag {
+  border-top: 1px solid var(--line);
+}
+
+.fill-flag-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.fill-flag-field {
+  font-weight: 600;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
+.fill-flag-kind {
+  flex: none;
+  border-color: transparent;
+  background: var(--notice-bg);
+  color: var(--notice-ink);
+}
+
+.fill-flag-note {
+  font-size: var(--step--1);
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.fill-stopped {
+  padding: 0.5rem 0.75rem;
+  border-radius: 8px;
+  background: var(--notice-bg);
+  color: var(--notice-ink);
+}
+
 /* Closing a card: a small centered dialog over the board or the drawer. */
 .close-prompt {
   box-sizing: border-box;

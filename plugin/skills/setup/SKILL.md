@@ -1,14 +1,15 @@
 ---
 name: setup
-description: Set up Job App Assist. Drafts the Candidate's Search Profile from a plain-language description, records their labeled Resume Variants, saves both once they confirm, publishes their private dashboard, and optionally imports their LinkedIn connections export for Referral Drafts. Use when the Candidate wants to get started, change their Search Profile, add or change their resumes, create their dashboard, or import their LinkedIn connections.
+description: Set up Job App Assist. Drafts the Candidate's Search Profile from a plain-language description, records their labeled Resume Variants, saves both once they confirm, publishes their private dashboard, optionally imports their LinkedIn connections export for Referral Drafts, and creates the private file of sensitive answers Fill uses. Use when the Candidate wants to get started, change their Search Profile, add or change their resumes, create their dashboard, import their LinkedIn connections, or set up their private answers.
 argument-hint: "[the jobs you want, in your own words]"
-allowed-tools: Bash(node --version) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs validate *) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs check-resumes *) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs import-connections *) Bash(mkdir -p .job-app-assist) Bash(cp ${CLAUDE_PLUGIN_ROOT}/dist/dashboard.html .job-app-assist/dashboard.html) Bash(date -u *)
+allowed-tools: Bash(node --version) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs validate *) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs check-resumes *) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs import-connections *) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs private-answers init private-answers.md) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs private-answers check private-answers.md) Bash(mkdir -p .job-app-assist) Bash(cp ${CLAUDE_PLUGIN_ROOT}/dist/dashboard.html .job-app-assist/dashboard.html) Bash(date -u *)
 ---
 
 # Setup
 
 Setup turns the Candidate's own words into a Search Profile, records their Resume Variants, saves both only after they confirm them, and gives them their private dashboard: a claude.ai Artifact in their own account with News, Postings and Progress tabs.
 It can also import the Candidate's LinkedIn connections, so each Refresh can suggest Referral Drafts.
+Last, it creates the private file of sensitive answers that Fill reads, which stays in the Candidate folder.
 The current working directory is the Candidate folder; Setup's local state lives in `.job-app-assist/` inside it.
 
 ## 1. Load the hard rules
@@ -215,8 +216,31 @@ When it succeeds, tell the Candidate how many connections it imported, that the 
 Do not open `.job-app-assist/connections.json` or repeat its contents in chat; Refresh reads it.
 To stop Referral Drafts later, the Candidate deletes `.job-app-assist/connections.json`.
 
-## 12. Hand over
+## 12. Create the private answers file
+
+Application forms ask for answers that must never sit in the dashboard database (hard rule 7): legal name and address, phone, work authorization and sponsorship, education details, and the voluntary demographic questions.
+They live in `private-answers.md` in the Candidate folder, which Fill reads on this computer while it fills a form.
+
+```bash
+node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs private-answers init private-answers.md
+```
+
+It creates the file from a template with one line per question, and leaves an existing file exactly as it is, so a rerun never loses the Candidate's answers.
+Ask the Candidate to open `private-answers.md` in the Candidate folder and write their answers after the colons in their own editor, and to tell you when they are done.
+Typing the answers into the file keeps them out of the chat; if the Candidate prefers to give an answer in chat, write it into the file with the Edit tool and nowhere else.
+Answers they leave blank are fine: Fill leaves those fields blank on each form and flags them for the Candidate.
+Then check it, which prints only which questions are still blank:
+
+```bash
+node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs private-answers check private-answers.md
+```
+
+Never copy an answer from this file into the dashboard, a settings document or any other file.
+If the Candidate wants to finish the file later, carry on; Fill reminds them when it runs.
+
+## 13. Hand over
 
 Give the Candidate the dashboard link and a one-line summary of the saved Search Profile and Resume Variants, and whether Referral Drafts are on.
 Tell them the Search Profile appears at the top of the dashboard, and that News, Postings and Progress fill in once they refresh.
 Mention the Sources button beside the tabs, where they can switch Sources on or off, follow companies on a watchlist, and add Postings by URL.
+Say how many questions `private-answers.md` still leaves blank, and that `/job-app-assist:fill` fills their queued applications in Helium once they have refreshed and queued some Postings.

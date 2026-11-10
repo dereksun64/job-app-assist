@@ -77,6 +77,8 @@ function cli(files: Record<string, unknown>, stdin = "") {
       ),
     makeDir: () => Promise.resolve(),
     removeDir: () => Promise.resolve(),
+    env: () => undefined,
+    homeDir: () => "/home/candidate",
     fileSize: () => Promise.resolve(undefined),
     fetch: () => Promise.reject(new Error("no network in tests")),
     now: () => NOW,

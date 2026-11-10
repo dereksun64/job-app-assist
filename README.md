@@ -4,13 +4,14 @@ A Claude Code plugin that lets your own Claude find, prepare and fill job applic
 Everything lands in a private dashboard in your own claude.ai account, with News, Postings and Progress tabs.
 Your Claude never submits an application, never sends a message as you, and never signs in for you.
 
-This is an early version: Setup, Refresh, the Queue, Sources, the News Digest, the Progress board, Settings and Tune work today, and Fill is on the way.
+This is an early version: Setup, Refresh, the Queue, Sources, the News Digest, the Progress board, Settings, Tune, Referral Drafts and Fill work today.
 
 ## What you need
 
 - A Claude plan and the Claude desktop app, signed in with your claude.ai account
 - Node.js 20 or newer
 - Your resume as a PDF or Word file, or a few resumes each aimed at a different role type
+- For Fill: the [Helium](https://helium.computer) browser with the Claude extension (Claude in Chrome) signed in, and the Simplify Copilot extension with your Simplify profile filled in
 
 ## Install
 
@@ -27,6 +28,8 @@ Describe the jobs you want in your own words, then point Claude at your resumes 
 One resume is enough to start.
 Confirm the Search Profile and Resume Variants Claude drafts, and Claude publishes your dashboard.
 Your resume files stay in your folder; the dashboard only knows their labels.
+Last, Setup creates `private-answers.md` in your folder: write your sensitive answers there (legal name and address, work authorization, education details, demographic questions) in your own editor.
+That file stays on your computer and never goes to your dashboard; leave blank anything you would rather answer on each form yourself.
 
 ## Refresh
 
@@ -66,6 +69,20 @@ While Claude fills an application, its card shows a spinner.
 Drag a card to another column to record where it stands, or drag it back to undo a move.
 Moving a card to Closed asks whether you were rejected or withdrew, and the card keeps the answer.
 Click a card to open the same details as on the Postings tab, where you can also change its Stage.
+Cards Claude has filled say how many fields to check, and their details list each one.
+
+## Fill
+
+Run `/job-app-assist:fill`, or ask Claude to fill your queue; add a company and title (`/job-app-assist:fill Acme new grad`) to fill just that Posting.
+Claude works through the Queued column of your board in order, and each card shows a spinner while its application fills.
+Each application opens in its own new tab in Helium, in the Claude extension's tab group, apart from your own tabs, so you can keep using your computer.
+Claude clicks Simplify's "Autofill This Page" first, then reads every field, fixes what Simplify got wrong or left empty from your private answers file, and uploads the Resume Variant chosen for that Posting.
+Claude never presses submit: each filled card moves to Ready for Review, and its details list every field Claude flagged for you.
+Claude flags instead of guessing: questions it is unsure of, claims about you (such as "Do you meet the basic qualifications?"), answers missing from your private file, and free-text questions, which you write yourself for now.
+Postings that need a sign-in or a new account (Workday, for example) stay Queued with a flag: sign in yourself in Helium and ask Claude to fill that Posting again.
+You can review and submit the first tabs while the rest are still filling.
+
+Claude logs the tokens each application used in `.job-app-assist/fill/usage.jsonl` in your folder and reports the running average after each one, so you can size your daily Queue target to your Claude plan.
 
 ## Settings and Tune
 

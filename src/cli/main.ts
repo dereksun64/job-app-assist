@@ -1,3 +1,4 @@
+import { homedir } from "node:os";
 import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { text } from "node:stream/consumers";
 import { runCli } from "./jaa.ts";
@@ -20,6 +21,8 @@ process.exitCode = await runCli(process.argv.slice(2), {
       (info) => (info.isFile() ? info.size : undefined),
       () => undefined,
     ),
+  env: (name) => process.env[name],
+  homeDir: () => homedir(),
   stdout: (chunk) => process.stdout.write(chunk),
   stderr: (chunk) => process.stderr.write(chunk),
 });
