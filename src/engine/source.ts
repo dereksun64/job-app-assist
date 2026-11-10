@@ -33,4 +33,4 @@ export type SourceResult =
   | { name: string; ok: false; error: string };
 
 /** The name of the shared Source every Candidate starts with. */
-export const JOB_FEED = "Job Feed";
+export { JOB_FEED_SOURCE as JOB_FEED } from "../contract/index.ts";

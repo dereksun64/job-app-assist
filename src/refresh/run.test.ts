@@ -371,6 +371,8 @@ describe("jaa refresh", () => {
     );
     expect(await runRefreshCommand(dir, {}, io)).toBe(0);
     expect(io.out).toContain("- Job Feed: FAILED. The Job Feed answered HTTP 503.");
+    expect(io.out).not.toContain("Left out:");
+    expect(io.out).not.toContain("Location Tier entries that matched no Posting location");
     expect(readOut<JobListMeta>(io, "out", "postings", "meta.json").sources).toEqual([
       { name: "Job Feed", ok: false, postings: 0, error: "The Job Feed answered HTTP 503." },
     ]);

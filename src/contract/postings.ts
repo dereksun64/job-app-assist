@@ -9,6 +9,8 @@ import { validateWith, type Validation } from "./validation.ts";
  * The page shows a Job List only when every page carries the meta document's `refreshedAt`.
  */
 export const POSTINGS_COLLECTION = "postings";
+/** The name the shared Job Feed goes by as a Source. */
+export const JOB_FEED_SOURCE = "Job Feed";
 export const JOB_LIST_META_ID = "meta";
 export const POSTINGS_PER_PAGE = 200;
 export const MAX_JOB_LIST_PAGES = 5;

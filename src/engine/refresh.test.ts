@@ -564,7 +564,12 @@ describe("failing Sources", () => {
     expect(meta.sources).toEqual([
       { name: "Job Feed", ok: false, postings: 0, error: "The Job Feed answered HTTP 503." },
     ]);
-    expect(summary).toMatchObject({ carriedOver: 2, newPostings: 0, removedPostings: 0 });
+    expect(summary).toMatchObject({
+      carriedOver: 2,
+      newPostings: 0,
+      removedPostings: 0,
+      unmatchedLocations: [],
+    });
     expect(summary.sources[0]).toMatchObject({ ok: false });
   });
 

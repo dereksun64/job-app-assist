@@ -439,10 +439,11 @@ export function runRefresh(input: RefreshInput): RefreshResult {
     unresolvedLinks: new Set(matching.candidates.filter((c) => c.unresolved).map((c) => c.rawUrl))
       .size,
     carriedOver: carried.filter((p) => nextIds.has(p.id)).length,
-    unmatchedLocations: unmatchedTierLocations(
-      matching.allPlaces,
-      settings.searchProfile.locationTiers,
-    ),
+    // With no Source read, nothing can be said about which entries match.
+    unmatchedLocations:
+      matching.allPlaces.length === 0
+        ? []
+        : unmatchedTierLocations(matching.allPlaces, settings.searchProfile.locationTiers),
     top: jobList
       .slice(0, 5)
       .map(({ company, title, locations, locationTier, score: s, applyUrl }) => ({

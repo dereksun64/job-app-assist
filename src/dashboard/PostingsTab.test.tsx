@@ -249,7 +249,7 @@ describe("Postings tab", () => {
       }),
     );
     expect(screen.getByRole("alert")).toHaveTextContent(
-      "Job Feed couldn't be read on the last Refresh, so your Job List may be incomplete. The Job Feed answered HTTP 503.",
+      "Your Job List may be incomplete. The last Refresh couldn't read the Job Feed, so it kept the Postings found there before. The Job Feed answered HTTP 503.",
     );
   });
 

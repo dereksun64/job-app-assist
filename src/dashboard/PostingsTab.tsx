@@ -1,5 +1,5 @@
 import { useMemo, useState } from "preact/hooks";
-import type { JobListMeta, Posting } from "../contract/index.ts";
+import { JOB_FEED_SOURCE, type JobListMeta, type Posting } from "../contract/index.ts";
 import { daysSincePosted, formatLevel, formatMoment, formatPostedAge } from "./format.ts";
 import type { JobListState } from "./useJobList.ts";
 
@@ -90,6 +90,11 @@ export function PostingsTab({ state, roleTypeOrder, now }: PostingsTabProps) {
   }
 }
 
+/** A Source's name as it reads inside a sentence. */
+function sourceLabel(name: string): string {
+  return name === JOB_FEED_SOURCE ? "the Job Feed" : name;
+}
+
 function SourceProblems({ meta }: { meta: JobListMeta }) {
   const failing = meta.sources.filter((source) => !source.ok);
   if (failing.length === 0) return null;
@@ -97,7 +102,7 @@ function SourceProblems({ meta }: { meta: JobListMeta }) {
     <div class="notice notice-problem" role="alert">
       {failing.map((source) => (
         <p key={source.name}>
-          {source.name} couldn't be read on the last Refresh, so your Job List may be incomplete.
+          {`Your Job List may be incomplete. The last Refresh couldn't read ${sourceLabel(source.name)}, so it kept the Postings found there before.`}
           {source.error ? ` ${source.error}` : ""}
         </p>
       ))}

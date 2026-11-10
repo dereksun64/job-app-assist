@@ -1990,6 +1990,7 @@ function validateSettings(input) {
 
 // src/contract/postings.ts
 var POSTINGS_COLLECTION = "postings";
+var JOB_FEED_SOURCE = "Job Feed";
 var JOB_LIST_META_ID = "meta";
 var POSTINGS_PER_PAGE = 200;
 var MAX_JOB_LIST_PAGES = 5;
@@ -3961,10 +3962,8 @@ function runRefresh(input) {
     filteredOut: matching.filteredOut,
     unresolvedLinks: new Set(matching.candidates.filter((c) => c.unresolved).map((c) => c.rawUrl)).size,
     carriedOver: carried.filter((p) => nextIds.has(p.id)).length,
-    unmatchedLocations: unmatchedTierLocations(
-      matching.allPlaces,
-      settings2.searchProfile.locationTiers
-    ),
+    // With no Source read, nothing can be said about which entries match.
+    unmatchedLocations: matching.allPlaces.length === 0 ? [] : unmatchedTierLocations(matching.allPlaces, settings2.searchProfile.locationTiers),
     top: jobList.slice(0, 5).map(({ company, title, locations, locationTier: locationTier2, score: s, applyUrl }) => ({
       company,
       title,
@@ -3977,9 +3976,6 @@ function runRefresh(input) {
   return { jobList, meta: meta3, changeSet, summary };
 }
 
-// src/engine/source.ts
-var JOB_FEED = "Job Feed";
-
 // src/refresh/job-feed.ts
 var JOB_FEED_URL = "https://raw.githubusercontent.com/dereksun64/yet-another-job-repo/main/data/jobs.json";
 var FEED_TIMEOUT_MS = 6e4;
@@ -3990,7 +3986,7 @@ var text2 = (value) => typeof value === "string" ? value : "";
 function parseJobFeed(json, fallbackTime) {
   if (!isRecord(json) || !Array.isArray(json.jobs)) {
     return {
-      name: JOB_FEED,
+      name: JOB_FEED_SOURCE,
       ok: false,
       error: "The Job Feed's data is not in the expected format (no jobs list)."
     };
@@ -4018,7 +4014,7 @@ function parseJobFeed(json, fallbackTime) {
     if (list) posting2.list = list;
     postings.push(posting2);
   }
-  return { name: JOB_FEED, ok: true, fetchedAt, postings };
+  return { name: JOB_FEED_SOURCE, ok: true, fetchedAt, postings };
 }
 function describe2(error2) {
   if (error2 instanceof Error) {
@@ -4034,14 +4030,14 @@ async function readJobFeed(fetch2, now, url = JOB_FEED_URL) {
     response = await fetch2(url, { signal: AbortSignal.timeout(FEED_TIMEOUT_MS) });
   } catch (error2) {
     return {
-      name: JOB_FEED,
+      name: JOB_FEED_SOURCE,
       ok: false,
       error: `The Job Feed could not be reached: ${describe2(error2)}.`
     };
   }
   if (!response.ok) {
     return {
-      name: JOB_FEED,
+      name: JOB_FEED_SOURCE,
       ok: false,
       error: `The Job Feed answered HTTP ${String(response.status)}.`
     };
@@ -4050,7 +4046,7 @@ async function readJobFeed(fetch2, now, url = JOB_FEED_URL) {
   try {
     json = await response.json();
   } catch {
-    return { name: JOB_FEED, ok: false, error: "The Job Feed's data is not valid JSON." };
+    return { name: JOB_FEED_SOURCE, ok: false, error: "The Job Feed's data is not valid JSON." };
   }
   return parseJobFeed(json, now);
 }
@@ -4208,9 +4204,11 @@ function formatSummary(summary, writesPath, batches) {
     );
   }
   const { location, seniority, startWindow: startWindow2, roleType: roleType2 } = summary.filteredOut;
-  lines.push(
-    `Left out: ${number2(location)} outside your Location Tiers, ${number2(seniority)} at another seniority, ${number2(startWindow2)} outside your start window, ${number2(roleType2)} in other roles.`
-  );
+  if (summary.sources.some((source) => source.ok)) {
+    lines.push(
+      `Left out: ${number2(location)} outside your Location Tiers, ${number2(seniority)} at another seniority, ${number2(startWindow2)} outside your start window, ${number2(roleType2)} in other roles.`
+    );
+  }
   if (summary.unresolvedLinks > 0) {
     lines.push(
       `${number2(summary.unresolvedLinks)} short links could not be resolved and keep their short link.`

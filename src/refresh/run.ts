@@ -183,9 +183,11 @@ export function formatSummary(
     );
   }
   const { location, seniority, startWindow, roleType } = summary.filteredOut;
-  lines.push(
-    `Left out: ${number(location)} outside your Location Tiers, ${number(seniority)} at another seniority, ${number(startWindow)} outside your start window, ${number(roleType)} in other roles.`,
-  );
+  if (summary.sources.some((source) => source.ok)) {
+    lines.push(
+      `Left out: ${number(location)} outside your Location Tiers, ${number(seniority)} at another seniority, ${number(startWindow)} outside your start window, ${number(roleType)} in other roles.`,
+    );
+  }
   if (summary.unresolvedLinks > 0) {
     lines.push(
       `${number(summary.unresolvedLinks)} short links could not be resolved and keep their short link.`,
