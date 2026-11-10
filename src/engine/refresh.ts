@@ -16,12 +16,14 @@ import {
   POSTING_DESCRIPTION_MAX,
   POSTINGS_COLLECTION,
   POSTINGS_PER_PAGE,
+  REFERRALS_COLLECTION,
   jobListPageId,
   type Card,
   type JobListMeta,
   type JobListPage,
   type Posting,
   type PostingSource,
+  type Referrals,
   type RoleTypePriority,
   type Seniority,
   type Settings,
@@ -40,6 +42,14 @@ import {
 import { freshness, isoDay, postedOnFrom } from "./freshness.ts";
 import { locationTierOf, parseLocations, unmatchedTierLocations, type Place } from "./locations.ts";
 import { planQueue, type CurrentQueue, type QueueSummary } from "./queue.ts";
+import {
+  planReferrals,
+  type Connection,
+  type ReferralCall,
+  type ReferralCalls,
+  type ReferralReviewCompany,
+  type ReferralSummary,
+} from "./referrals.ts";
 import { levelOf, matchRoleType, withinStartWindow } from "./roles.ts";
 import type { SourcePosting, SourceResult } from "./source.ts";
 import { canonicalApplyUrl, isShortLink, postingId } from "./urls.ts";
@@ -69,6 +79,20 @@ export interface RefreshInput {
   resolvedLinks?: Readonly<Record<string, string>>;
   /** The Refresh skill's calls on unsure Resume Variant picks, by Posting id. */
   variantJudgments?: Readonly<Record<string, VariantJudgment>>;
+  /** The Candidate's imported connections; undefined when they have not imported any. */
+  connections?: readonly Connection[];
+  /** The Referral Drafts as the dashboard database holds them now. */
+  referrals?: CurrentReferrals;
+  /** The Refresh skill's drafted messages and skipped matches, by Posting id. */
+  referralCalls?: ReferralCalls;
+}
+
+/** The referrals documents the dashboard database holds now. */
+export interface CurrentReferrals {
+  /** The readable documents, by Posting id. */
+  docs: ReadonlyMap<string, Referrals>;
+  /** Every document id, readable or not. */
+  ids: readonly string[];
 }
 
 /** The Refresh skill's call on one unsure Resume Variant pick. */
@@ -95,8 +119,11 @@ export interface VariantReviewItem {
 }
 
 export interface ChangeSet {
-  /** Documents to write whole: Job List pages, then the meta document, then new Queue cards. */
-  set: { collection: string; docId: string; data: JobListPage | JobListMeta | Card }[];
+  /**
+   * Documents to write whole: Job List pages, then the meta document, then new Queue cards,
+   * then Referral Drafts.
+   */
+  set: { collection: string; docId: string; data: JobListPage | JobListMeta | Card | Referrals }[];
   /** Documents to remove. */
   delete: { collection: string; docId: string }[];
 }
@@ -147,6 +174,7 @@ export interface RefreshSummary {
   addedLeftOut: AddedLeftOut[];
   top: Pick<Posting, "company" | "title" | "locations" | "locationTier" | "score" | "applyUrl">[];
   queue: QueueSummary;
+  referrals: ReferralSummary;
 }
 
 export interface RefreshResult {
@@ -156,6 +184,10 @@ export interface RefreshResult {
   preQueued: Card[];
   changeSet: ChangeSet;
   summary: RefreshSummary;
+  /** Matches with no Referral Draft yet, by company, best-ranked first, for the Refresh skill. */
+  referralReview: ReferralReviewCompany[];
+  /** The Refresh skill's referral calls that still apply, to keep for the next Refresh. */
+  referralCalls: Record<string, Record<string, ReferralCall>>;
 }
 
 /** A Source Posting that matched the Search Profile, before dedupe. */
@@ -678,6 +710,15 @@ export function runRefresh(input: RefreshInput): RefreshResult {
     jobList,
     queue: input.queue,
   });
+  const referrals = planReferrals({
+    now,
+    connections: input.connections,
+    cards: [...input.queue.cards, ...queue.cards],
+    cardIds: [...input.queue.cardIds, ...queue.cards.map((c) => c.postingId)],
+    current: input.referrals?.docs ?? new Map(),
+    currentIds: input.referrals?.ids ?? [],
+    calls: input.referralCalls ?? {},
+  });
   const keptPages = new Set(pages.map((p) => jobListPageId(p.page)));
   const changeSet: ChangeSet = {
     set: [
@@ -692,12 +733,20 @@ export function runRefresh(input: RefreshInput): RefreshResult {
         docId: data.postingId,
         data,
       })),
+      ...referrals.set.map((data) => ({
+        collection: REFERRALS_COLLECTION,
+        docId: data.postingId,
+        data,
+      })),
     ],
-    delete: current.pages
-      .map((page) => jobListPageId(page.page))
-      .filter((docId) => !keptPages.has(docId))
-      .sort()
-      .map((docId) => ({ collection: POSTINGS_COLLECTION, docId })),
+    delete: [
+      ...current.pages
+        .map((page) => jobListPageId(page.page))
+        .filter((docId) => !keptPages.has(docId))
+        .sort()
+        .map((docId) => ({ collection: POSTINGS_COLLECTION, docId })),
+      ...referrals.delete.map((docId) => ({ collection: REFERRALS_COLLECTION, docId })),
+    ],
   };
 
   const previousIds = new Set(current.pages.flatMap((page) => page.postings.map((p) => p.id)));
@@ -752,6 +801,15 @@ export function runRefresh(input: RefreshInput): RefreshResult {
         applyUrl,
       })),
     queue: queue.summary,
+    referrals: referrals.summary,
   };
-  return { jobList, meta, preQueued: queue.cards, changeSet, summary };
+  return {
+    jobList,
+    meta,
+    preQueued: queue.cards,
+    changeSet,
+    summary,
+    referralReview: referrals.review,
+    referralCalls: referrals.calls,
+  };
 }

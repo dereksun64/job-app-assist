@@ -1,6 +1,6 @@
 ---
 name: refresh
-description: Refresh the Candidate's Job List, Queue and News Digest. Pulls Postings from the Candidate's enabled Sources (the Job Feed, their watchlist companies' job boards and Postings they added by URL), keeps the ones that match the Search Profile, ranks them, picks a Resume Variant for each, pre-queues the best ones up to the daily Queue target, writes them to the dashboard's Postings tab, builds the day's News Digest for the News tab and ends with a short summary in chat. Use when the Candidate asks to refresh, update their jobs, see today's Postings or catch up on the news.
+description: Refresh the Candidate's Job List, Queue and News Digest. Pulls Postings from the Candidate's enabled Sources (the Job Feed, their watchlist companies' job boards and Postings they added by URL), keeps the ones that match the Search Profile, ranks them, picks a Resume Variant for each, pre-queues the best ones up to the daily Queue target, drafts referral asks for the Candidate's connections at queued companies, writes them to the dashboard's Postings tab, builds the day's News Digest for the News tab and ends with a short summary in chat. Use when the Candidate asks to refresh, update their jobs, see today's Postings or catch up on the news.
 allowed-tools: Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs refresh .job-app-assist/refresh) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs refresh .job-app-assist/refresh --rerun) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs news plan .job-app-assist/refresh) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs news build .job-app-assist/refresh) WebSearch WebFetch(domain:news.ycombinator.com) Bash(rm -rf .job-app-assist/refresh/state .job-app-assist/refresh/out) Bash(mkdir -p .job-app-assist/refresh) Bash(cp ${CLAUDE_PLUGIN_ROOT}/dist/dashboard.html .job-app-assist/dashboard.html)
 ---
 
@@ -10,7 +10,8 @@ Refresh rebuilds the Candidate's Job List: every Posting from their Sources that
 It then tops up the Queue: the best-ranked Postings are pre-queued until the Queue holds the daily Queue target, higher Location Tiers first.
 Unsubmitted Queue items carry over and count toward the target, and a Posting the Candidate skipped is never pre-queued again.
 Last, it builds the day's News Digest on the News tab: hiring signals from the Job List, forum highlights, news about companies in the Queue, and 5 to 8 industry stories.
-The ranking, filtering, dedupe, Resume Variant picks and pre-queueing happen in `jaa refresh`, a deterministic program, and `jaa news` computes the hiring signals; your part is to hand them the dashboard state, review the picks `jaa refresh` is unsure about, gather the news in chat, apply what they produce, and tell the Candidate what changed.
+When the Candidate imported their LinkedIn connections, queued Postings also get Referral Drafts: a short message asking a connection at the Posting's company for a referral, which the Candidate copies from the drawer and sends themselves.
+The ranking, filtering, dedupe, Resume Variant picks, pre-queueing and connection matching happen in `jaa refresh`, a deterministic program, and `jaa news` computes the hiring signals; your part is to hand them the dashboard state, review the picks `jaa refresh` is unsure about, write the Referral Drafts, gather the news in chat, apply what they produce, and tell the Candidate what changed.
 The current working directory is the Candidate folder.
 
 ## 1. Load the hard rules
@@ -58,9 +59,11 @@ Read with `ArtifactData`, saving the documents as files: pass `out_dir` as the a
   Read every page of each listing, so no queued or skipped Posting is missed.
 - `action: "list"`, `collection: "news"`.
   It holds one News Digest per day; it is empty before the first digest.
+- `action: "list"`, `collection: "referrals"`, every page.
+  It holds the Referral Drafts earlier Refreshes wrote, and is empty until then.
 
 Each read reports a `version` for every document.
-Use the Write tool to save `.job-app-assist/refresh/versions.json` mapping each postings and news document you read to its version, for example `{ "postings/meta": 4, "postings/page-1": 4, "news/2026-11-09": 1 }`, or `{}` when there were none.
+Use the Write tool to save `.job-app-assist/refresh/versions.json` mapping each postings, news and referrals document you read to its version, for example `{ "postings/meta": 4, "postings/page-1": 4, "news/2026-11-09": 1, "referrals/0a1b2c3d4e5f": 2 }`, or `{}` when there were none.
 Cards and skips need no versions: Refresh only creates new cards and never changes a card or skip that exists.
 Do not open the saved files; `jaa refresh` reads them.
 
@@ -102,27 +105,70 @@ Read `.job-app-assist/refresh/variant-judgments.json` if it exists, add one entr
 ```
 
 Write the reason for the Candidate, who sees it in the dashboard's detail drawer after "Reviewed:", for example "The role is on the search ranking team, which fits the AI/ML resume." (280 characters at most).
-Then rebuild without the network, which applies the decisions:
+Unsure picks beyond the listed ones keep their pick and come up again on a later Refresh.
+
+## 7. Write Referral Drafts
+
+`jaa refresh` reads the Candidate's connections from `.job-app-assist/connections.json` when Setup imported them, and matches them to the companies of queued Postings.
+When the summary has no "Referral Drafts" line, the Candidate has not imported connections: skip this step.
+When it says there are drafts to write, read `.job-app-assist/refresh/out/referral-review.json`.
+It holds `toDraft` (how many matches have no draft yet) and `companies`, best-ranked first, each with:
+
+- `key`: the name to record your calls under, exactly as given;
+- `company` and `roles`: the company's best-ranked queued Postings (title, role type, apply URL);
+- `connections`: the people there to write to (name, company, position).
+
+Each connection gets one message per company, which every queued Posting at that company shows in its drawer, so the Candidate never sends one person several near-identical asks.
+
+For each connection, first check that they really work at the company.
+The match is by name, so it can be wrong: "Amazon" and "Amazon Web Services" are one employer, but a "Delta Dental" connection is not at "Delta Air Lines".
+When it is clearly another employer, skip the connection with a short reason.
+
+Otherwise write a short message from the Candidate to the connection, asking for a referral:
+
+- Greet the connection by first name and say the Candidate is applying to the company, naming the first role (or two, when several are listed).
+- Ask whether they would be comfortable referring the Candidate, or sharing a word on the team; for a recruiter, ask whether they are the right person or could point the Candidate to the hiring team.
+- Include the first role's apply URL, so they can find it, and end with thanks.
+- Keep it to three or four plain, warm sentences, 600 characters at most.
+- Write only what you know: never invent shared history, mutual friends, or facts about the Candidate or the connection, and leave no placeholders such as "[your name]"; the Candidate sends it from their own account, so it needs no signature.
+
+Record every call, so the next Refresh does not ask again.
+Read `.job-app-assist/refresh/referral-drafts.json` if it exists, add an entry per connection under the company's `key` and the connection's name exactly as listed, and save the whole file with the Write tool:
+
+```json
+{
+  "<company key>": {
+    "<connection name>": { "message": "<the Referral Draft>" },
+    "<another connection name>": { "skip": "<why this connection is not at the company>" }
+  }
+}
+```
+
+Connections beyond the listed ones come up on a later Refresh.
+This step only writes drafts: never send a message, never open LinkedIn, and never look connections up on the web (hard rules 2 and 3).
+
+## 8. Rebuild with your calls
+
+When step 6 or step 7 recorded anything, rebuild without the network, which applies the Resume Variant decisions and turns the recorded messages into Referral Drafts:
 
 ```bash
 node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs refresh .job-app-assist/refresh --rerun
 ```
 
 Use the summary it prints from here on.
-Unsure picks beyond the listed ones keep their pick and come up again on a later Refresh.
 
-## 7. Write the Job List to the dashboard
+## 9. Write the Job List to the dashboard
 
 Read `.job-app-assist/refresh/out/writes.json`.
 It holds `{ "batches": [[...], ...] }`.
 For each batch, in order, call `ArtifactData` with `action: "batch"`, the dashboard `url`, and that batch as `writes`, exactly as listed: every entry already carries its `file_path` and, for documents that exist, its `if_version`.
 
-- If a batch is refused because a document changed since step 4, another Refresh is writing at the same time: go back to step 4 once.
+- If a batch is refused because a document changed since step 4, another Refresh is writing at the same time: go back to step 4 once; the calls you recorded in steps 6 and 7 are kept.
 - If the database reports it is full or over quota, stop and tell the Candidate plainly that their dashboard storage is full.
 
 Then read `postings/meta` with `action: "get"` and check that its `refreshedAt` is the one in `.job-app-assist/refresh/out/summary.json`.
 
-## 8. Build the News Digest
+## 10. Build the News Digest
 
 The digest has four sections.
 Hiring signals come from the Job List and are computed for you; you gather the other three in chat with web search and page reads.
@@ -208,11 +254,11 @@ node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs news build .job-app-assist/refresh
 
 It joins the hiring signals with your news, checks the digest against the dashboard contract, and writes `.job-app-assist/refresh/out/news-writes.json`.
 If it lists problems, fix those entries in `news-gathered.json` and run it again.
-Then send each batch in `news-writes.json` with `ArtifactData`, `action: "batch"`, exactly as listed, the same way as step 7.
+Then send each batch in `news-writes.json` with `ArtifactData`, `action: "batch"`, exactly as listed, the same way as step 9.
 The batch sets the day's digest (a second Refresh on the same day replaces it) and removes digests older than 90 days.
 If the news cannot be written, say so in the summary; the Job List is already saved.
 
-## 9. Summarize in chat
+## 11. Summarize in chat
 
 Finish with a short summary built from the `jaa refresh` output, in plain words:
 
@@ -220,6 +266,7 @@ Finish with a short summary built from the `jaa refresh` output, in plain words:
 - the Queue: how many Postings it holds against the daily target, how many were pre-queued now and how many carried over;
 - Queue items that may have closed (queued five or more days ago, or no longer in the Job List), so the Candidate applies soon or unticks them;
 - how many Postings got each Resume Variant, how many unsure picks you reviewed and how many you changed, and that the Candidate can change any Posting's Resume Variant in its detail drawer;
+- when the summary has a "Referral Drafts" line: how many drafts there are and at which companies, that they are in each queued Posting's drawer with a copy button, and that the Candidate sends each one themselves;
 - the top three to five Postings, each as company, title, location and a link to its apply URL;
 - the News Digest: the biggest hiring signal and one or two headlines worth reading, plus any gap `jaa news build` reported;
 - every failing Source, said plainly: which Source (or which watchlist company), what went wrong, and that today's Job List may be incomplete because of it;

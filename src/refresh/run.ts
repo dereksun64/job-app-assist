@@ -6,15 +6,21 @@
  *
  * Layout of `<dir>`:
  * - state/settings/main.json, state/sources/<doc-id>.json, state/postings/<doc-id>.json,
- *   state/cards/<doc-id>.json, state/skips/<doc-id>.json: the current dashboard documents
- *   (a missing Source document means that Source has its default).
- * - versions.json: `{ "postings/<doc-id>": <version> }` for every postings document read.
+ *   state/cards/<doc-id>.json, state/skips/<doc-id>.json, state/referrals/<doc-id>.json: the
+ *   current dashboard documents (a missing Source document means that Source has its default).
+ * - versions.json: `{ "<collection>/<doc-id>": <version> }` for every postings and referrals
+ *   document read.
  * - short-links.json: short links resolved on earlier Refreshes (kept between runs).
  * - variant-judgments.json: the Refresh skill's calls on unsure Resume Variant picks, by Posting
  *   id (kept between runs, so each Posting is reviewed once).
+ * - referral-drafts.json: the Refresh skill's Referral Draft messages and skipped matches, by
+ *   company key and connection name (kept between runs, so each match is drafted once).
+ * - ../connections.json: the Candidate's imported connections, when Setup imported them. It sits
+ *   in `.job-app-assist/`, beside this folder, and never goes to the dashboard.
  * - out/postings/<doc-id>.json, out/cards/<doc-id>.json, out/writes.json, out/summary.json: what
  *   this run produced. Refresh only creates cards, so card writes carry no version.
  * - out/variant-review.json: unsure Resume Variant picks for the Refresh skill to review.
+ * - out/referral-review.json: connections at queued companies with no Referral Draft yet.
  * - out/sources.json: what each Source gave, so `--rerun` can rebuild without the network.
  */
 import { join, resolve } from "node:path";
@@ -24,6 +30,8 @@ import {
   JOB_FEED_SOURCE,
   POSSIBLY_CLOSED_DAYS,
   POSTINGS_COLLECTION,
+  REFERRAL_MESSAGE_MAX,
+  REFERRALS_COLLECTION,
   SKIPS_COLLECTION,
   SOURCES_COLLECTION,
   WATCHLIST_SOURCE,
@@ -31,11 +39,13 @@ import {
   validateCardDocument,
   validateDocument,
   validatePostingsDocument,
+  validateReferralsDocument,
   validateSettings,
   type Card,
   type JobListMeta,
   type JobListPage,
   type SourceSettings,
+  type Referrals,
 } from "../contract/index.ts";
 import type { CurrentQueue } from "../engine/queue.ts";
 import {
@@ -43,10 +53,13 @@ import {
   shortLinksToResolve,
   MAX_JUDGMENT_REASON,
   type CurrentJobList,
+  type CurrentReferrals,
   type RefreshSummary,
   type VariantJudgment,
 } from "../engine/refresh.ts";
+import type { Connection, ReferralCall } from "../engine/referrals.ts";
 import type { SourceResult } from "../engine/source.ts";
+import { CONNECTIONS_FILE, readConnectionsFile } from "./connections.ts";
 import { readWatchlist } from "./job-boards.ts";
 import { parseJobFeed, readJobFeed, type Fetch } from "./job-feed.ts";
 import { resolveShortLinks } from "./short-links.ts";
@@ -184,6 +197,77 @@ async function readEnabledSources(
   return [...jobFeed, ...watchlist];
 }
 
+/** The Referral Drafts the dashboard holds; unreadable documents count, so they get replaced. */
+async function readReferrals(io: RefreshIo, dir: string): Promise<CurrentReferrals> {
+  const folder = join(dir, "state", REFERRALS_COLLECTION);
+  const ids = await savedIds(io, folder);
+  const docs = new Map<string, Referrals>();
+  for (const docId of ids) {
+    const result = validateReferralsDocument(
+      docId,
+      await readJson(io, join(folder, `${docId}.json`)),
+    );
+    if (result.ok) docs.set(docId, result.value);
+  }
+  return { docs, ids };
+}
+
+/** The Candidate's imported connections, or undefined when Setup imported none. */
+async function readConnections(io: RefreshIo, dir: string): Promise<Connection[] | undefined> {
+  const path = join(dir, "..", CONNECTIONS_FILE);
+  const json = await readJson(io, path);
+  if (json === undefined) return undefined;
+  const result = readConnectionsFile(json);
+  if (!result.ok) {
+    throw new RefreshError(
+      `${path} is not a connections file Setup wrote. Ask the Candidate to import their connections export again with /job-app-assist:setup, or delete the file to go without Referral Drafts.`,
+    );
+  }
+  return result.value.connections;
+}
+
+async function readReferralCalls(
+  io: RefreshIo,
+  dir: string,
+): Promise<Record<string, Record<string, ReferralCall>>> {
+  const path = join(dir, "referral-drafts.json");
+  const json = await readJson(io, path);
+  if (json === undefined) return {};
+  const problem = (detail: string) =>
+    new RefreshError(
+      `${path} ${detail}. It maps each company's key, as referral-review.json lists it, to connection names, each to { "message": "<the Referral Draft>" } or { "skip": "<why this match is wrong>" }.`,
+    );
+  const isObject = (value: unknown): value is Record<string, unknown> =>
+    typeof value === "object" && value !== null && !Array.isArray(value);
+  if (!isObject(json)) throw problem("is not a JSON object");
+  const calls: Record<string, Record<string, ReferralCall>> = {};
+  for (const [id, byName] of Object.entries(json)) {
+    if (id.trim() === "") throw problem("has a blank company key");
+    if (!isObject(byName)) throw problem(`gives ${id} no connections`);
+    const forPosting: Record<string, ReferralCall> = {};
+    for (const [name, call] of Object.entries(byName)) {
+      const { message, skip } = (isObject(call) ? call : {}) as {
+        message?: unknown;
+        skip?: unknown;
+      };
+      if (typeof message === "string" && message.trim() !== "") {
+        if (message.trim().length > REFERRAL_MESSAGE_MAX) {
+          throw problem(
+            `gives ${name} at ${id} a message longer than ${String(REFERRAL_MESSAGE_MAX)} characters`,
+          );
+        }
+        forPosting[name] = { message: message.trim() };
+      } else if (typeof skip === "string" && skip.trim() !== "") {
+        forPosting[name] = { skip: skip.trim() };
+      } else {
+        throw problem(`gives ${name} at ${id} neither a message nor a skip reason`);
+      }
+    }
+    calls[id] = forPosting;
+  }
+  return calls;
+}
+
 async function readVersions(io: RefreshIo, dir: string): Promise<Record<string, number>> {
   const json = await readJson(io, join(dir, "versions.json"));
   if (json === undefined) return {};
@@ -306,7 +390,7 @@ function formatSources(summary: RefreshSummary): string[] {
 
 export function formatSummary(
   summary: RefreshSummary,
-  paths: { writes: string; review: string },
+  paths: { writes: string; review: string; referrals: string },
   batches: number,
   sourceIssues: readonly string[] = [],
 ): string {
@@ -393,6 +477,22 @@ export function formatSummary(
       `${number(unsure)} unsure Resume Variant ${unsure === 1 ? "pick" : "picks"} to review: see ${reviewPath}.`,
     );
   }
+  const { referrals } = summary;
+  if (referrals.imported) {
+    if (referrals.matches === 0) {
+      lines.push("Referral Drafts: none of your connections work at the companies in your Queue.");
+    } else {
+      const see = `see ${paths.referrals}.`;
+      const drafted = `Referral Drafts: ${number(referrals.drafts)} for ${count(referrals.postings, "queued Posting")} at ${count(referrals.companies, "company", "companies")}`;
+      lines.push(
+        referrals.toDraft === 0
+          ? `${drafted}.`
+          : referrals.drafts === 0
+            ? `Referral Drafts: ${number(referrals.toDraft)} to draft for connections at the companies in your Queue: ${see}`
+            : `${drafted}; ${number(referrals.toDraft)} more to draft: ${see}`,
+      );
+    }
+  }
   if (summary.top.length > 0) {
     lines.push("Top Postings:");
     summary.top.forEach((posting, i) => {
@@ -429,18 +529,22 @@ export async function runRefreshCommand(
       );
     }
     const { current, existing } = await readState(io, dir);
+    const referrals = await readReferrals(io, dir);
     const versions = await readVersions(io, dir);
-    const missing = existing.filter(
-      (docId) => versions[`${POSTINGS_COLLECTION}/${docId}`] === undefined,
-    );
+    const missing = [
+      ...existing.map((docId) => `${POSTINGS_COLLECTION}/${docId}`),
+      ...referrals.ids.map((docId) => `${REFERRALS_COLLECTION}/${docId}`),
+    ].filter((path) => versions[path] === undefined);
     if (missing.length > 0) {
       throw new RefreshError(
-        `versions.json has no version for ${missing.map((id) => `${POSTINGS_COLLECTION}/${id}`).join(", ")}. Add the version ArtifactData reported for each document read.`,
+        `versions.json has no version for ${missing.join(", ")}. Add the version ArtifactData reported for each document read.`,
       );
     }
 
     const sourceSettings = await readSources(io, dir);
     const judgments = await readJudgments(io, dir);
+    const connections = await readConnections(io, dir);
+    const referralCalls = await readReferralCalls(io, dir);
     const queue = await readQueue(io, dir);
     const out = join(dir, "out");
     const sourcesPath = join(out, "sources.json");
@@ -478,7 +582,13 @@ export async function runRefreshCommand(
       await io.writeFile(cachePath, `${JSON.stringify({ ...cache, ...resolved }, null, 2)}\n`);
     }
 
-    const { jobList, changeSet, summary } = runRefresh({
+    const {
+      jobList,
+      changeSet,
+      summary,
+      referralReview,
+      referralCalls: keptCalls,
+    } = runRefresh({
       now,
       settings: settings.value,
       sourceSettings: sourceSettings.settings,
@@ -487,6 +597,9 @@ export async function runRefreshCommand(
       queue,
       resolvedLinks: resolved,
       variantJudgments: judgments,
+      ...(connections === undefined ? {} : { connections }),
+      referrals,
+      referralCalls,
     });
 
     await io.removeDir(out);
@@ -500,6 +613,12 @@ export async function runRefreshCommand(
         Object.entries(judgments).filter(([id, j]) => listed.has(id) && names.has(j.variant)),
       );
       await io.writeFile(join(dir, "variant-judgments.json"), `${JSON.stringify(kept, null, 2)}\n`);
+    }
+    if (Object.keys(referralCalls).length > 0) {
+      await io.writeFile(
+        join(dir, "referral-drafts.json"),
+        `${JSON.stringify(keptCalls, null, 2)}\n`,
+      );
     }
     for (const collection of new Set(changeSet.set.map((w) => w.collection))) {
       await io.makeDir(join(out, collection));
@@ -524,15 +643,22 @@ export async function runRefreshCommand(
     const written = new Set(
       changeSet.set.filter((w) => w.collection === POSTINGS_COLLECTION).map((w) => w.docId),
     );
-    const removals = new Set([
-      ...changeSet.delete.map((d) => d.docId),
-      ...existing.filter((id) => !written.has(id)),
+    // Postings documents the new Job List does not use go, readable or not.
+    const removals = new Map<string, Set<string>>([
+      [POSTINGS_COLLECTION, new Set(existing.filter((id) => !written.has(id)))],
     ]);
-    for (const docId of [...removals].sort()) {
-      const write: BatchWrite = { op: "delete", collection: POSTINGS_COLLECTION, doc_id: docId };
-      const version = versionOf(POSTINGS_COLLECTION, docId);
-      if (version !== undefined) write.if_version = version;
-      writes.push({ write, bytes: 0 });
+    for (const { collection, docId } of changeSet.delete) {
+      const ids = removals.get(collection) ?? new Set<string>();
+      ids.add(docId);
+      removals.set(collection, ids);
+    }
+    for (const [collection, ids] of removals) {
+      for (const docId of [...ids].sort()) {
+        const write: BatchWrite = { op: "delete", collection, doc_id: docId };
+        const version = versionOf(collection, docId);
+        if (version !== undefined) write.if_version = version;
+        writes.push({ write, bytes: 0 });
+      }
     }
     const batches = batchesOf(writes);
     const writesPath = join(out, "writes.json");
@@ -541,10 +667,13 @@ export async function runRefreshCommand(
     const reviewPath = join(out, "variant-review.json");
     const review = { variants: settings.value.resumeVariants, ...summary.variantReview };
     await io.writeFile(reviewPath, `${JSON.stringify(review, null, 2)}\n`);
+    const referralsPath = join(out, "referral-review.json");
+    const referralReviewFile = { toDraft: summary.referrals.toDraft, companies: referralReview };
+    await io.writeFile(referralsPath, `${JSON.stringify(referralReviewFile, null, 2)}\n`);
     io.stdout(
       formatSummary(
         summary,
-        { writes: writesPath, review: reviewPath },
+        { writes: writesPath, review: reviewPath, referrals: referralsPath },
         batches.length,
         sourceSettings.issues,
       ),

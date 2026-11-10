@@ -216,3 +216,80 @@ describe("jaa check-resumes", () => {
     expect(cli.err).toContain("resumes/generalist.pdf is empty");
   });
 });
+
+describe("jaa import-connections", () => {
+  const EXPORT = [
+    "Notes:",
+    '"Some email addresses may be missing."',
+    "",
+    "First Name,Last Name,URL,Email Address,Company,Position,Connected On",
+    "Priya,Shah,https://www.linkedin.com/in/priya,priya@example.com,Datadog,Software Engineer,08 Nov 2024",
+    "Sam,Lee,https://www.linkedin.com/in/sam,sam@example.com,Datadog,Recruiter,15 Mar 2023",
+    "Jo,Park,https://www.linkedin.com/in/jo,,,Student,02 Feb 2022",
+  ].join("\n");
+
+  function withDisk(files: Record<string, string>) {
+    const cli = io(files);
+    const written: Record<string, string> = {};
+    cli.writeFile = (path, text) => {
+      written[path] = text;
+      return Promise.resolve();
+    };
+    return { cli, written };
+  }
+
+  it("keeps names, companies and positions, and leaves out email addresses and profile links", async () => {
+    const { cli, written } = withDisk({ "Connections.csv": EXPORT });
+    expect(
+      await runCli(
+        ["import-connections", "Connections.csv", ".job-app-assist/connections.json"],
+        cli,
+      ),
+    ).toBe(0);
+    expect(cli.err).toBe("");
+    const file = written[".job-app-assist/connections.json"] ?? "";
+    expect(JSON.parse(file)).toEqual({
+      schemaVersion: 1,
+      importedAt: "2026-11-10T15:00:00.000Z",
+      connections: [
+        {
+          name: "Priya Shah",
+          company: "Datadog",
+          position: "Software Engineer",
+          connectedOn: "2024-11-08",
+        },
+        { name: "Sam Lee", company: "Datadog", position: "Recruiter", connectedOn: "2023-03-15" },
+      ],
+    });
+    expect(file).not.toContain("example.com");
+    expect(file).not.toContain("linkedin.com");
+    expect(cli.out).toBe(
+      "Imported 2 connections at 1 company into .job-app-assist/connections.json. " +
+        "1 connection with no company listed was left out.\n" +
+        "Email addresses and profile links were not kept. The file stays on this computer; " +
+        "the dashboard only ever holds the Referral Drafts made from it.\n",
+    );
+  });
+
+  it("explains a file that is not a connections export, and writes nothing", async () => {
+    const { cli, written } = withDisk({ "jobs.csv": "Name,Email\nPriya,p@example.com\n" });
+    expect(await runCli(["import-connections", "jobs.csv", "out.json"], cli)).toBe(1);
+    expect(cli.err).toContain("This is not a LinkedIn connections export");
+    expect(written).toEqual({});
+  });
+
+  it("explains a file it cannot read", async () => {
+    const { cli } = withDisk({});
+    expect(await runCli(["import-connections", "missing.csv", "out.json"], cli)).toBe(1);
+    expect(cli.err).toBe("Could not read missing.csv: ENOENT: no such file, open 'missing.csv'\n");
+  });
+
+  it.each([[["import-connections"]], [["import-connections", "Connections.csv"]]])(
+    "prints usage for %j",
+    async (argv) => {
+      const cli = io();
+      expect(await runCli(argv, cli)).toBe(2);
+      expect(cli.err).toContain("Usage: jaa validate");
+    },
+  );
+});

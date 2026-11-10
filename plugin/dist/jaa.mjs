@@ -8,7 +8,7 @@ var __export = (target, all) => {
 
 // src/cli/main.ts
 import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
-import { text as text6 } from "node:stream/consumers";
+import { text as text8 } from "node:stream/consumers";
 
 // node_modules/zod/v4/core/util.js
 function getEnumValues(entries) {
@@ -212,14 +212,14 @@ function codePointLength(str) {
   const units = str.length;
   if (!highSurrogate.test(str))
     return units;
-  let count3 = units;
+  let count4 = units;
   for (let i = 0; i < units - 1; i++) {
     if ((str.charCodeAt(i) & 64512) === 55296 && (str.charCodeAt(i + 1) & 64512) === 56320) {
-      count3--;
+      count4--;
       i++;
     }
   }
-  return count3;
+  return count4;
 }
 function getLengthableOrigin(input) {
   if (Array.isArray(input))
@@ -2600,6 +2600,63 @@ function validateNewsDocument(docId, input) {
   return result;
 }
 
+// src/contract/referrals.ts
+var REFERRALS_COLLECTION = "referrals";
+var MAX_REFERRAL_DRAFTS = 3;
+var REFERRAL_MESSAGE_MAX = 600;
+var text3 = (max) => string2().check(
+  _trim(),
+  _minLength(1, "must not be blank"),
+  _maxLength(max, `must be ${String(max)} characters or fewer`)
+);
+var draft = strictObject({
+  /** The connection's name, as in the Candidate's connections export. */
+  name: text3(100),
+  /** The company the connection works at, as in the connections export. */
+  company: text3(100),
+  /** The connection's position at that company, when the export gives one. */
+  position: optional(text3(150)),
+  message: text3(REFERRAL_MESSAGE_MAX)
+});
+var referrals = strictObject({
+  schemaVersion: literal(1),
+  postingId: postingIdSchema,
+  drafts: array(draft).check(
+    _minLength(1, "must hold at least one Referral Draft"),
+    _maxLength(MAX_REFERRAL_DRAFTS, `must hold at most ${String(MAX_REFERRAL_DRAFTS)}`),
+    superRefine((drafts, ctx) => {
+      const seen = /* @__PURE__ */ new Set();
+      for (const { name } of drafts) {
+        const key2 = name.toLowerCase();
+        if (seen.has(key2)) {
+          ctx.addIssue({
+            code: "custom",
+            message: `${name} has more than one Referral Draft`,
+            input: name
+          });
+        }
+        seen.add(key2);
+      }
+    })
+  ),
+  updatedAt: timestampSchema
+});
+function validateReferrals(input) {
+  return validateWith(referrals, input);
+}
+function validateReferralsDocument(docId, input) {
+  const result = validateReferrals(input);
+  if (result.ok && result.value.postingId !== docId) {
+    return {
+      ok: false,
+      issues: [
+        `Referral Drafts are stored under their Posting's id: ${REFERRALS_COLLECTION}/${result.value.postingId}, not ${REFERRALS_COLLECTION}/${docId}.`
+      ]
+    };
+  }
+  return result;
+}
+
 // src/contract/skips.ts
 var SKIPS_COLLECTION = "skips";
 var SKIP_REASONS = [
@@ -2698,7 +2755,7 @@ var JOB_BOARD_NAMES = {
 };
 var MAX_WATCHLIST = 200;
 var MAX_ADDED_POSTINGS = 200;
-var text3 = (max) => string2().check(
+var text4 = (max) => string2().check(
   _trim(),
   _minLength(1, "must not be blank"),
   _maxLength(max, `must be ${String(max)} characters or fewer`)
@@ -2712,7 +2769,7 @@ var timestamp = iso_exports.datetime({ error: "must be an ISO 8601 timestamp" })
 var SLUG = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
 var watchedCompany = strictObject({
   /** The company's name as the Candidate wants it shown. */
-  name: text3(200),
+  name: text4(200),
   board: _enum(JOB_BOARDS),
   /** The company's name in its job board link, for example `stripe`. */
   slug: string2().check(_regex(SLUG, "must be the company's name in its job board link, for example stripe"))
@@ -2720,10 +2777,10 @@ var watchedCompany = strictObject({
 var addedPosting = strictObject({
   /** The URL the Candidate pasted; Refresh uses it as the apply URL. */
   url: webAddress2,
-  company: text3(200),
-  title: text3(300),
+  company: text4(200),
+  title: text4(300),
   /** Where the job is, as the Candidate typed it, for example "New York, NY" or "Remote". */
-  location: text3(200),
+  location: text4(200),
   addedAt: timestamp
 });
 function noRepeats2(key2, message) {
@@ -2991,7 +3048,7 @@ function variantChanges(before, after) {
 function diffSettings(before, after) {
   const changes = [];
   const add = (section, texts2) => {
-    for (const text7 of texts2) changes.push({ section, text: text7 });
+    for (const text9 of texts2) changes.push({ section, text: text9 });
   };
   const a = before.searchProfile;
   const b = after.searchProfile;
@@ -3001,8 +3058,8 @@ function diffSettings(before, after) {
     ]);
   add("roleTypes", roleTypeChanges(a.roleTypes, b.roleTypes));
   if (!same(a.seniority, b.seniority)) {
-    const words = (levels) => levels.map((level) => SENIORITY_WORDS[level]).join(", ");
-    add("seniority", [`Seniority: ${words(a.seniority)} \u2192 ${words(b.seniority)}`]);
+    const words2 = (levels) => levels.map((level) => SENIORITY_WORDS[level]).join(", ");
+    add("seniority", [`Seniority: ${words2(a.seniority)} \u2192 ${words2(b.seniority)}`]);
   }
   if (startWindowText(a.startWindow) !== startWindowText(b.startWindow))
     add("startWindow", [
@@ -3048,7 +3105,8 @@ var collections = {
   [SKIPS_COLLECTION]: validateSkipDocument,
   [VARIANT_OVERRIDES_COLLECTION]: validateVariantOverrideDocument,
   [SOURCES_COLLECTION]: validateSourceDocument,
-  [NEWS_COLLECTION]: validateNewsDocument
+  [NEWS_COLLECTION]: validateNewsDocument,
+  [REFERRALS_COLLECTION]: validateReferralsDocument
 };
 var CONTRACT_COLLECTIONS = Object.keys(collections);
 function validateDocument(collection, docId, input) {
@@ -4032,8 +4090,8 @@ var ENTITIES = {
   apos: "'",
   nbsp: " "
 };
-function decode2(text7) {
-  return text7.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (whole, name) => {
+function decode2(text9) {
+  return text9.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (whole, name) => {
     if (name.startsWith("#x") || name.startsWith("#X")) {
       return String.fromCodePoint(Number.parseInt(name.slice(2), 16));
     }
@@ -4044,9 +4102,9 @@ function decode2(text7) {
 function plain(html) {
   return decode2(html.replace(/<[^>]*>/g, " ")).replace(/\s+/g, " ").trim();
 }
-function excerpt(text7) {
-  if (text7 === "") return void 0;
-  return text7.length <= EXCERPT_CHARS ? text7 : `${text7.slice(0, EXCERPT_CHARS - 1).trimEnd()}\u2026`;
+function excerpt(text9) {
+  if (text9 === "") return void 0;
+  return text9.length <= EXCERPT_CHARS ? text9 : `${text9.slice(0, EXCERPT_CHARS - 1).trimEnd()}\u2026`;
 }
 var tag = (xml, name) => new RegExp(`<${name}[^>]*>([\\s\\S]*?)</${name}>`).exec(xml)?.[1];
 function parseRedditFeed(xml) {
@@ -4064,8 +4122,8 @@ function parseRedditFeed(xml) {
     if (title === "" || url === void 0) continue;
     const body = decode2(tag(entry, "content") ?? "").replace(/<!-- SC_ON -->[\s\S]*$/, "").replace(/submitted by[\s\S]*$/, "");
     const thread = { title, url: decode2(url), postedAt };
-    const text7 = excerpt(plain(body));
-    if (text7 !== void 0) thread.excerpt = text7;
+    const text9 = excerpt(plain(body));
+    if (text9 !== void 0) thread.excerpt = text9;
     threads.push(thread);
   }
   return bySubreddit;
@@ -4084,8 +4142,8 @@ function parseHackerNews(json) {
     if (typeof hit.num_comments === "number") thread.comments = hit.num_comments;
     if (typeof hit.url === "string" && hit.url !== "") thread.links = hit.url;
     if (typeof hit.story_text === "string") {
-      const text7 = excerpt(plain(hit.story_text));
-      if (text7 !== void 0) thread.excerpt = text7;
+      const text9 = excerpt(plain(hit.story_text));
+      if (text9 !== void 0) thread.excerpt = text9;
     }
     return [thread];
   }).sort((a, b) => (b.points ?? 0) - (a.points ?? 0));
@@ -4188,13 +4246,13 @@ function isoDay2(time3) {
 }
 function postedOnFrom(age, generatedAt) {
   const reference = Date.parse(generatedAt);
-  const text7 = age.trim().toLowerCase();
-  const relative = /^(\d+)\s*(h|d|w|mo|y)$/.exec(text7);
+  const text9 = age.trim().toLowerCase();
+  const relative = /^(\d+)\s*(h|d|w|mo|y)$/.exec(text9);
   if (relative) {
     const days = Number(relative[1]) * (UNIT_DAYS[relative[2] ?? "d"] ?? 1);
     return isoDay2(reference - Math.floor(days) * DAY_MS3);
   }
-  const absolute = /^([a-z]{3})[a-z]*\.?\s+(\d{1,2})$/.exec(text7);
+  const absolute = /^([a-z]{3})[a-z]*\.?\s+(\d{1,2})$/.exec(text9);
   const month = absolute ? MONTHS.indexOf(absolute[1] ?? "") : -1;
   if (absolute && month !== -1) {
     const now = new Date(reference);
@@ -4363,7 +4421,7 @@ var CITY_ALIASES = {
   manhattan: "New York",
   "san fransisco": "San Francisco"
 };
-var escape = (text7) => text7.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+var escape = (text9) => text9.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 var longestFirst = (names) => [...names].sort((a, b) => b.length - a.length).map(escape).join("|");
 var COUNTRY_NAMES = longestFirst(
   Object.keys(COUNTRIES).map(
@@ -4466,18 +4524,18 @@ function cityInCountry(city, country) {
   return place;
 }
 function parseLocations(raw) {
-  const text7 = raw.replace(/^\s*\d+\s+locations?/i, "").replace(/\s*\+\d+\s*$/, "").replace(/\bD\.C\./g, "DC").replace(/\s+/g, " ").trim();
+  const text9 = raw.replace(/^\s*\d+\s+locations?/i, "").replace(/\s*\+\d+\s*$/, "").replace(/\bD\.C\./g, "DC").replace(/\s+/g, " ").trim();
   const places = [];
   let at = 0;
-  while (at < text7.length) {
-    if (" ;|/,-()".includes(text7[at] ?? "")) {
+  while (at < text9.length) {
+    if (" ;|/,-()".includes(text9[at] ?? "")) {
       at += 1;
       continue;
     }
     let matched = false;
     for (const { re, read: read2 } of PATTERNS) {
       re.lastIndex = at;
-      const m = re.exec(text7);
+      const m = re.exec(text9);
       if (m && m[0].length > 0) {
         places.push(read2(m));
         at += m[0].length;
@@ -4486,7 +4544,7 @@ function parseLocations(raw) {
       }
     }
     if (!matched) {
-      places.push({ label: text7.slice(at).trim(), remote: false });
+      places.push({ label: text9.slice(at).trim(), remote: false });
       break;
     }
   }
@@ -4816,20 +4874,157 @@ function planQueue({ now, dailyQueueTarget, jobList, queue }) {
   };
 }
 
+// src/engine/referrals.ts
+var MAX_REFERRAL_REVIEW = 30;
+var MAX_ROLES_PER_MESSAGE = 3;
+var BRAND_PARENTS = new Map(
+  Object.entries(FORTUNE_500_BRANDS).map(([brand, parent]) => [
+    companyKey(brand),
+    companyKey(parent)
+  ])
+);
+function sameCompany(a, b) {
+  const ka = companyKey(a);
+  const kb = companyKey(b);
+  if (ka === "" || kb === "") return false;
+  if (ka === kb || BRAND_PARENTS.get(ka) === kb || BRAND_PARENTS.get(kb) === ka) return true;
+  const [short, long] = ka.length < kb.length ? [ka, kb] : [kb, ka];
+  return long.startsWith(`${short} `);
+}
+var RECRUITER = /\b(recruit\w*|talent|sourc\w*|university relations)\b/i;
+var IGNORED_WORDS = /* @__PURE__ */ new Set(["and", "the", "for", "new", "grad", "intern", "junior"]);
+function words(text9) {
+  return new Set(
+    text9.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter((word) => word.length > 1 && !IGNORED_WORDS.has(word))
+  );
+}
+function rankedMatches(posting, connections) {
+  const roleWords = words(posting.roleType);
+  const rank = (connection) => {
+    const position = connection.position ?? "";
+    const overlap = [...words(position)].filter((word) => roleWords.has(word)).length;
+    return { recruiter: RECRUITER.test(position) ? 1 : 0, overlap };
+  };
+  return connections.filter((connection) => sameCompany(connection.company, posting.company)).map((connection) => ({ connection, ...rank(connection) })).sort(
+    (a, b) => b.recruiter - a.recruiter || b.overlap - a.overlap || (b.connection.connectedOn ?? "").localeCompare(a.connection.connectedOn ?? "") || a.connection.name.localeCompare(b.connection.name)
+  ).map(({ connection }) => connection);
+}
+function callFor(calls, key2, name) {
+  const forCompany = Object.hasOwn(calls, key2) ? calls[key2] : void 0;
+  return forCompany && Object.hasOwn(forCompany, name) ? forCompany[name] : void 0;
+}
+function sameDrafts(a, b) {
+  const key2 = (drafts) => JSON.stringify(drafts.map((d) => [d.name, d.company, d.position ?? null, d.message]));
+  return key2(a) === key2(b);
+}
+function planReferrals(input) {
+  const { now, connections, current, calls } = input;
+  const plan2 = {
+    set: [],
+    delete: [],
+    review: [],
+    calls: {},
+    summary: {
+      imported: connections !== void 0,
+      matches: 0,
+      companies: 0,
+      postings: 0,
+      drafts: 0,
+      toDraft: 0
+    }
+  };
+  const withCard = /* @__PURE__ */ new Set([...input.cardIds, ...input.cards.map((c) => c.postingId)]);
+  const removals = new Set(input.currentIds.filter((id) => !withCard.has(id)));
+  for (const id of current.keys()) if (!withCard.has(id)) removals.add(id);
+  if (connections !== void 0) {
+    const queued = input.cards.filter((c) => c.stage === "queued").map((c) => c.posting).sort(
+      (a, b) => a.locationTier - b.locationTier || b.score - a.score || a.id.localeCompare(b.id)
+    );
+    const byCompany = /* @__PURE__ */ new Map();
+    for (const posting of queued) {
+      const key2 = companyKey(posting.company);
+      byCompany.set(key2, [...byCompany.get(key2) ?? [], posting]);
+    }
+    let listed = 0;
+    for (const [key2, postings] of byCompany) {
+      const [best] = postings;
+      if (!best || key2 === "") continue;
+      const record = (name, call) => {
+        (plan2.calls[key2] ??= {})[name] = call;
+      };
+      const asked = rankedMatches(best, connections).filter((connection) => {
+        const call = callFor(calls, key2, connection.name);
+        if (call && "skip" in call) record(connection.name, call);
+        return !(call && "skip" in call);
+      }).slice(0, MAX_REFERRAL_DRAFTS);
+      const drafts = [];
+      const toDraft = [];
+      for (const connection of asked) {
+        const call = callFor(calls, key2, connection.name);
+        if (call && "message" in call) {
+          record(connection.name, call);
+          const { name, company, position } = connection;
+          drafts.push({
+            name,
+            company,
+            ...position === void 0 ? {} : { position },
+            message: call.message
+          });
+        } else {
+          toDraft.push(connection);
+        }
+      }
+      plan2.summary.matches += asked.length;
+      plan2.summary.toDraft += toDraft.length;
+      const room = MAX_REFERRAL_REVIEW - listed;
+      if (toDraft.length > 0 && room > 0) {
+        plan2.review.push({
+          key: key2,
+          company: best.company,
+          roles: postings.slice(0, MAX_ROLES_PER_MESSAGE).map((p) => ({
+            title: p.title,
+            roleType: p.roleType,
+            applyUrl: p.applyUrl
+          })),
+          connections: toDraft.slice(0, room)
+        });
+        listed += Math.min(room, toDraft.length);
+      }
+      if (drafts.length > 0) {
+        plan2.summary.companies += 1;
+        plan2.summary.drafts += drafts.length;
+      }
+      for (const posting of postings) {
+        const existing = current.get(posting.id);
+        if (drafts.length === 0) {
+          if (existing || input.currentIds.includes(posting.id)) removals.add(posting.id);
+          continue;
+        }
+        plan2.summary.postings += 1;
+        if (!existing || !sameDrafts(existing.drafts, drafts)) {
+          plan2.set.push({ schemaVersion: 1, postingId: posting.id, drafts, updatedAt: now });
+        }
+      }
+    }
+  }
+  plan2.delete = [...removals].sort();
+  return plan2;
+}
+
 // src/engine/roles.ts
 var INTERN = /\bintern(ship)?s?\b|\bco-?op\b|\bapprentice(ship)?\b/;
 var NEW_GRAD = /\bnew (college )?grad(uate)?s?\b|\bgraduate\b|\buniversity\b|\bcollege\b|\bcampus\b|\bentry[- ]level\b|\bearly[- ]career\b|\bncg\b|\brotational\b|\bresidency\b/;
 var JUNIOR = /\bjunior\b|\bjr\.?(?=\s|$)|\bassociate\b|\b(engineer|developer|scientist|sde|swe|analyst|programmer)\s+(i|1)\b/;
 var SENIOR = /\bsenior\b|\bsr\.?(?=\s|$)|\bstaff (?!intern)(?=\w)|\bprincipal\b|\blead (engineer|developer|scientist|software|data|machine)|\b(engineer|developer|scientist|sde|swe|programmer),?\s+(ii|iii|iv|2|3|4)\b|\bdirector\b|\bhead of\b|\barchitect\b|\bexperienced\b|\bmid[- ]level\b|\bengineering manager\b|\bmanager,? (software|engineering)\b/;
-function normalize(text7) {
-  return ` ${text7.toLowerCase().replace(/[\u2013\u2014]/g, "-").replace(/\s+/g, " ")} `;
+function normalize(text9) {
+  return ` ${text9.toLowerCase().replace(/[\u2013\u2014]/g, "-").replace(/\s+/g, " ")} `;
 }
 function levelOf(title, jobType, { stated = false } = {}) {
-  const text7 = normalize(title);
-  if (INTERN.test(text7)) return "intern";
-  if (NEW_GRAD.test(text7)) return "new_grad";
-  if (JUNIOR.test(text7)) return "junior";
-  if (SENIOR.test(text7)) return void 0;
+  const text9 = normalize(title);
+  if (INTERN.test(text9)) return "intern";
+  if (NEW_GRAD.test(text9)) return "new_grad";
+  if (JUNIOR.test(text9)) return "junior";
+  if (SENIOR.test(text9)) return void 0;
   if (/intern/i.test(jobType)) return "intern";
   return stated ? void 0 : "new_grad";
 }
@@ -4850,8 +5045,8 @@ var CATEGORY_FAMILIES = [
   [/quant/i, ["quant"]],
   [/hardware/i, ["hardware"]]
 ];
-function familiesOf(text7) {
-  const normalized = normalize(text7);
+function familiesOf(text9) {
+  const normalized = normalize(text9);
   return new Set(
     Object.entries(FAMILIES).filter(([, re]) => re.test(normalized)).map(([family]) => family)
   );
@@ -4900,9 +5095,9 @@ var VAGUE_WORDS = /* @__PURE__ */ new Set([
 function significantWords(name) {
   return normalize(name).replace(/\(.*?\)/g, " ").split(/[^a-z0-9+#]+/).filter((word) => word !== "" && !/^\d+$/.test(word) && !GENERIC_WORDS.has(word));
 }
-function hasWord(text7, word) {
+function hasWord(text9, word) {
   const stem = word.length > 5 ? word.slice(0, -2) : word;
-  return new RegExp(`\\b${stem.replace(/[+#]/g, "\\$&")}`).test(text7);
+  return new RegExp(`\\b${stem.replace(/[+#]/g, "\\$&")}`).test(text9);
 }
 function matchRoleType(title, category, roleTypes) {
   let titleFamilies = familiesOf(title);
@@ -4911,15 +5106,15 @@ function matchRoleType(title, category, roleTypes) {
       CATEGORY_FAMILIES.filter(([re]) => re.test(category)).flatMap(([, families]) => families)
     );
   }
-  const text7 = normalize(title);
+  const text9 = normalize(title);
   const ordered = ROLE_TYPE_PRIORITIES.flatMap(
     (priority) => roleTypes.filter((roleType2) => roleType2.priority === priority)
   );
   return ordered.find((roleType2) => {
     const families = familiesOf(roleType2.name);
     if (families.size > 0) return [...families].some((family) => titleFamilies.has(family));
-    const words = significantWords(roleType2.name);
-    return words.length > 0 && words.every((word) => hasWord(text7, word));
+    const words2 = significantWords(roleType2.name);
+    return words2.length > 0 && words2.every((word) => hasWord(text9, word));
   });
 }
 var SEASONS = {
@@ -4930,13 +5125,13 @@ var SEASONS = {
   autumn: ["08", "12"]
 };
 function startWindowOf(title) {
-  const text7 = title.toLowerCase();
-  const years = [...text7.matchAll(/(?<!\d)(20[2-4]\d)(?![\d])/g)].map((m) => Number(m[1]));
+  const text9 = title.toLowerCase();
+  const years = [...text9.matchAll(/(?<!\d)(20[2-4]\d)(?![\d])/g)].map((m) => Number(m[1]));
   if (years.length === 0) return void 0;
   const first = Math.min(...years);
   const last = Math.max(...years);
   if (first !== last) return { from: `${String(first)}-01`, to: `${String(last)}-12` };
-  const seasons = [...text7.matchAll(/\b(winter|spring|summer|fall|autumn)\b/g)].map((m) => SEASONS[m[1] ?? ""]).filter((months) => months !== void 0);
+  const seasons = [...text9.matchAll(/\b(winter|spring|summer|fall|autumn)\b/g)].map((m) => SEASONS[m[1] ?? ""]).filter((months) => months !== void 0);
   if (seasons.length === 0) return { from: `${String(first)}-01`, to: `${String(first)}-12` };
   const from = seasons.map(([start]) => start).sort()[0] ?? "01";
   const to = seasons.map(([, end]) => end).sort().at(-1) ?? "12";
@@ -4972,16 +5167,16 @@ var FAMILY_LABELS = {
   hardware: "hardware",
   security: "security"
 };
-function escape2(text7) {
-  return text7.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+function escape2(text9) {
+  return text9.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
-function mentions(text7, keyword) {
-  const words = keyword.trim().toLowerCase().split(/[\s-]+/).map(escape2);
-  const phrase = words.join("[\\s-]+");
-  return new RegExp(`(?<![\\p{L}\\p{N}])${phrase}(?![\\p{L}\\p{N}+#])`, "u").test(text7);
+function mentions(text9, keyword) {
+  const words2 = keyword.trim().toLowerCase().split(/[\s-]+/).map(escape2);
+  const phrase = words2.join("[\\s-]+");
+  return new RegExp(`(?<![\\p{L}\\p{N}])${phrase}(?![\\p{L}\\p{N}+#])`, "u").test(text9);
 }
-function quoteList(words) {
-  const quoted = words.slice(0, SHOWN_KEYWORDS).map((word) => `"${word}"`);
+function quoteList(words2) {
+  const quoted = words2.slice(0, SHOWN_KEYWORDS).map((word) => `"${word}"`);
   if (quoted.length <= 1) return quoted.join("");
   return `${quoted.slice(0, -1).join(", ")} and ${quoted.at(-1) ?? ""}`;
 }
@@ -4990,11 +5185,11 @@ function nameList(names) {
   return `${names.slice(0, -1).join(", ")} and ${names.at(-1) ?? ""}`;
 }
 function sentence(parts) {
-  const text7 = parts.join("; ");
-  return `${text7.charAt(0).toUpperCase()}${text7.slice(1)}.`;
+  const text9 = parts.join("; ");
+  return `${text9.charAt(0).toUpperCase()}${text9.slice(1)}.`;
 }
-function fit(text7) {
-  return text7.length <= MAX_REASON ? text7 : `${text7.slice(0, MAX_REASON - 1).trimEnd()}\u2026`;
+function fit(text9) {
+  return text9.length <= MAX_REASON ? text9 : `${text9.slice(0, MAX_REASON - 1).trimEnd()}\u2026`;
 }
 function score(variant, index, posting, title, listing, titleFamilies) {
   const evidence = [];
@@ -5268,15 +5463,15 @@ function mergeSources(sources) {
   return [...unique.values()].sort((a, b) => compareText(sourceKey(a), sourceKey(b)));
 }
 function excerpt2(description) {
-  const text7 = description?.replace(/\s+/g, " ").trim();
-  if (!text7) return void 0;
-  if (text7.length <= POSTING_DESCRIPTION_MAX) return text7;
-  const cut = text7.slice(0, POSTING_DESCRIPTION_MAX);
+  const text9 = description?.replace(/\s+/g, " ").trim();
+  if (!text9) return void 0;
+  if (text9.length <= POSTING_DESCRIPTION_MAX) return text9;
+  const cut = text9.slice(0, POSTING_DESCRIPTION_MAX);
   const atWord = cut.slice(0, cut.lastIndexOf(" ")).replace(/[\s,;:.-]+$/, "");
   return `${atWord}\u2026`;
 }
-function lowerFirst(text7) {
-  return /^[A-Z][a-z]/.test(text7) ? `${text7.charAt(0).toLowerCase()}${text7.slice(1)}` : text7;
+function lowerFirst(text9) {
+  return /^[A-Z][a-z]/.test(text9) ? `${text9.charAt(0).toLowerCase()}${text9.slice(1)}` : text9;
 }
 function withResumeVariant(base, evidence, settings2, judgments) {
   const judgment = Object.hasOwn(judgments, base.id) ? judgments[base.id] : void 0;
@@ -5316,7 +5511,7 @@ function merge2(group, settings2, now) {
   const named = group.find((c) => companyKnown(c.listing.company)) ?? representative;
   const tierOfPlace = (place) => locationTierOf([place], tiers) ?? Number.MAX_SAFE_INTEGER;
   const places = representative.places.map((place, index) => ({ place, index, tier: tierOfPlace(place) })).sort((a, b) => a.tier - b.tier || a.index - b.index).map(({ place }) => place);
-  const description = group.map((c) => c.listing.description).find((text7) => text7?.trim());
+  const description = group.map((c) => c.listing.description).find((text9) => text9?.trim());
   const posting = {
     id: postingId(representative.canonicalUrl),
     applyUrl: representative.canonicalUrl,
@@ -5424,6 +5619,15 @@ function runRefresh(input) {
     jobList,
     queue: input.queue
   });
+  const referrals2 = planReferrals({
+    now,
+    connections: input.connections,
+    cards: [...input.queue.cards, ...queue.cards],
+    cardIds: [...input.queue.cardIds, ...queue.cards.map((c) => c.postingId)],
+    current: input.referrals?.docs ?? /* @__PURE__ */ new Map(),
+    currentIds: input.referrals?.ids ?? [],
+    calls: input.referralCalls ?? {}
+  });
   const keptPages = new Set(pages.map((p) => jobListPageId(p.page)));
   const changeSet = {
     set: [
@@ -5437,9 +5641,17 @@ function runRefresh(input) {
         collection: CARDS_COLLECTION,
         docId: data.postingId,
         data
+      })),
+      ...referrals2.set.map((data) => ({
+        collection: REFERRALS_COLLECTION,
+        docId: data.postingId,
+        data
       }))
     ],
-    delete: current.pages.map((page2) => jobListPageId(page2.page)).filter((docId) => !keptPages.has(docId)).sort().map((docId) => ({ collection: POSTINGS_COLLECTION, docId }))
+    delete: [
+      ...current.pages.map((page2) => jobListPageId(page2.page)).filter((docId) => !keptPages.has(docId)).sort().map((docId) => ({ collection: POSTINGS_COLLECTION, docId })),
+      ...referrals2.delete.map((docId) => ({ collection: REFERRALS_COLLECTION, docId }))
+    ]
   };
   const previousIds = new Set(current.pages.flatMap((page2) => page2.postings.map((p) => p.id)));
   const nextIds = new Set(jobList.map((p) => p.id));
@@ -5486,9 +5698,127 @@ function runRefresh(input) {
       score: s,
       applyUrl
     })),
-    queue: queue.summary
+    queue: queue.summary,
+    referrals: referrals2.summary
   };
-  return { jobList, meta: meta3, preQueued: queue.cards, changeSet, summary };
+  return {
+    jobList,
+    meta: meta3,
+    preQueued: queue.cards,
+    changeSet,
+    summary,
+    referralReview: referrals2.review,
+    referralCalls: referrals2.calls
+  };
+}
+
+// src/refresh/connections.ts
+var CONNECTIONS_FILE = "connections.json";
+var text5 = (max) => string2().check(_trim(), _minLength(1), _maxLength(max));
+var connectionsFile = strictObject({
+  schemaVersion: literal(1),
+  importedAt: iso_exports.datetime(),
+  connections: array(
+    strictObject({
+      name: text5(100),
+      company: text5(100),
+      position: optional(text5(150)),
+      connectedOn: optional(iso_exports.date())
+    })
+  )
+});
+function readConnectionsFile(input) {
+  return validateWith(connectionsFile, input);
+}
+function csvRows(csv) {
+  const rows = [];
+  let row = [];
+  let field = "";
+  let quoted = false;
+  const text9 = csv.replace(/^\uFEFF/, "");
+  for (let i = 0; i < text9.length; i++) {
+    const char = text9.charAt(i);
+    if (quoted) {
+      if (char === '"' && text9.charAt(i + 1) === '"') {
+        field += '"';
+        i++;
+      } else if (char === '"') {
+        quoted = false;
+      } else {
+        field += char;
+      }
+    } else if (char === '"') {
+      quoted = true;
+    } else if (char === ",") {
+      row.push(field);
+      field = "";
+    } else if (char === "\n" || char === "\r") {
+      if (char === "\r" && text9.charAt(i + 1) === "\n") i++;
+      row.push(field);
+      rows.push(row);
+      row = [];
+      field = "";
+    } else {
+      field += char;
+    }
+  }
+  if (field !== "" || row.length > 0) {
+    row.push(field);
+    rows.push(row);
+  }
+  return rows;
+}
+var MONTHS2 = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
+function isoDate(value) {
+  const match2 = /^(\d{1,2}) ([A-Za-z]{3})[a-z]* (\d{4})$/.exec(value.trim());
+  if (!match2) return void 0;
+  const [, day = "", month = "", year = ""] = match2;
+  const index = MONTHS2.indexOf(month.toLowerCase());
+  if (index < 0) return void 0;
+  const date3 = `${year}-${String(index + 1).padStart(2, "0")}-${day.padStart(2, "0")}`;
+  return Number.isNaN(Date.parse(date3)) ? void 0 : date3;
+}
+var clean = (value) => (value ?? "").replace(/\s+/g, " ").trim();
+function parseConnectionsExport(csv) {
+  const rows = csvRows(csv);
+  const headerAt = rows.findIndex((row) => {
+    const names = row.map((cell) => clean(cell).toLowerCase());
+    return ["first name", "last name", "company"].every((name) => names.includes(name));
+  });
+  const header = rows[headerAt];
+  if (!header) {
+    return {
+      ok: false,
+      error: 'This is not a LinkedIn connections export: it has no row of column names with "First Name", "Last Name" and "Company". Use Connections.csv from the LinkedIn data export.'
+    };
+  }
+  const column = (name) => header.findIndex((cell) => clean(cell).toLowerCase() === name);
+  const first = column("first name");
+  const last = column("last name");
+  const company = column("company");
+  const position = column("position");
+  const connectedOn = column("connected on");
+  const connections = [];
+  let leftOut = 0;
+  let listed = 0;
+  for (const row of rows.slice(headerAt + 1)) {
+    if (row.every((cell) => clean(cell) === "")) continue;
+    listed++;
+    const name = clean(`${row[first] ?? ""} ${row[last] ?? ""}`).slice(0, 100);
+    const employer = clean(row[company]).slice(0, 100);
+    if (name === "" || employer === "") {
+      leftOut++;
+      continue;
+    }
+    const connection = { name, company: employer };
+    const role = position < 0 ? "" : clean(row[position]).slice(0, 150);
+    if (role !== "") connection.position = role;
+    const date3 = connectedOn < 0 ? void 0 : isoDate(row[connectedOn] ?? "");
+    if (date3 !== void 0) connection.connectedOn = date3;
+    connections.push(connection);
+  }
+  if (listed === 0) return { ok: false, error: "The connections export lists no connections." };
+  return { ok: true, connections, leftOut };
 }
 
 // src/refresh/job-boards.ts
@@ -5508,16 +5838,16 @@ function jobBoardApiUrl({ board, slug }) {
 function isRecord(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
-var text4 = (value) => typeof value === "string" ? value.trim() : "";
-var texts = (value) => Array.isArray(value) ? value.map(text4).filter((item) => item !== "") : [];
+var text6 = (value) => typeof value === "string" ? value.trim() : "";
+var texts = (value) => Array.isArray(value) ? value.map(text6).filter((item) => item !== "") : [];
 function greenhouseJobs(json) {
   if (!isRecord(json) || !Array.isArray(json.jobs)) return void 0;
   return json.jobs.filter(isRecord).map((job) => ({
-    applyUrl: text4(job.absolute_url),
-    title: text4(job.title),
-    location: isRecord(job.location) ? text4(job.location.name) : "",
+    applyUrl: text6(job.absolute_url),
+    title: text6(job.title),
+    location: isRecord(job.location) ? text6(job.location.name) : "",
     jobType: "",
-    postedAt: text4(job.first_published) || text4(job.updated_at)
+    postedAt: text6(job.first_published) || text6(job.updated_at)
   }));
 }
 function leverJobs(json) {
@@ -5525,13 +5855,13 @@ function leverJobs(json) {
   return json.filter(isRecord).map((job) => {
     const categories = isRecord(job.categories) ? job.categories : {};
     const locations = texts(categories.allLocations);
-    const location = locations.length > 0 ? locations.join("; ") : text4(categories.location);
+    const location = locations.length > 0 ? locations.join("; ") : text6(categories.location);
     const created = typeof job.createdAt === "number" ? new Date(job.createdAt) : void 0;
     return {
-      applyUrl: text4(job.hostedUrl),
-      title: text4(job.text),
-      location: location || (text4(job.workplaceType) === "remote" ? "Remote" : ""),
-      jobType: text4(categories.commitment),
+      applyUrl: text6(job.hostedUrl),
+      title: text6(job.text),
+      location: location || (text6(job.workplaceType) === "remote" ? "Remote" : ""),
+      jobType: text6(categories.commitment),
       postedAt: created && !Number.isNaN(created.getTime()) ? created.toISOString() : ""
     };
   });
@@ -5539,17 +5869,17 @@ function leverJobs(json) {
 function ashbyJobs(json) {
   if (!isRecord(json) || !Array.isArray(json.jobs)) return void 0;
   return json.jobs.filter(isRecord).filter((job) => job.isListed !== false).map((job) => {
-    const secondary = Array.isArray(job.secondaryLocations) ? job.secondaryLocations.map((place) => isRecord(place) ? text4(place.location) : "") : [];
-    let location = [text4(job.location), ...secondary].filter(Boolean).join("; ");
-    if (text4(job.workplaceType) === "Remote" && !/remote/i.test(location)) {
+    const secondary = Array.isArray(job.secondaryLocations) ? job.secondaryLocations.map((place) => isRecord(place) ? text6(place.location) : "") : [];
+    let location = [text6(job.location), ...secondary].filter(Boolean).join("; ");
+    if (text6(job.workplaceType) === "Remote" && !/remote/i.test(location)) {
       location = location ? `Remote in ${location}` : "Remote";
     }
     return {
-      applyUrl: text4(job.jobUrl),
-      title: text4(job.title),
+      applyUrl: text6(job.jobUrl),
+      title: text6(job.title),
       location,
-      jobType: text4(job.employmentType),
-      postedAt: text4(job.publishedAt)
+      jobType: text6(job.employmentType),
+      postedAt: text6(job.publishedAt)
     };
   });
 }
@@ -5623,7 +5953,7 @@ var FEED_TIMEOUT_MS = 6e4;
 function isRecord2(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
-var text5 = (value) => typeof value === "string" ? value : "";
+var text7 = (value) => typeof value === "string" ? value : "";
 function parseJobFeed(json, fallbackTime) {
   if (!isRecord2(json) || !Array.isArray(json.jobs)) {
     return {
@@ -5632,26 +5962,26 @@ function parseJobFeed(json, fallbackTime) {
       error: "The Job Feed's data is not in the expected format (no jobs list)."
     };
   }
-  const generated = text5(json.generatedAt) || text5(json.fetchedAt);
+  const generated = text7(json.generatedAt) || text7(json.fetchedAt);
   const fetchedAt = Number.isNaN(Date.parse(generated)) ? fallbackTime : new Date(generated).toISOString();
   const postings = [];
   for (const job of json.jobs) {
     if (!isRecord2(job)) continue;
-    const applyUrl = text5(job.applyUrl).trim();
-    const company = text5(job.company).trim();
-    const title = text5(job.title).trim();
+    const applyUrl = text7(job.applyUrl).trim();
+    const company = text7(job.company).trim();
+    const title = text7(job.title).trim();
     if (!applyUrl || !company || !title) continue;
     const posting = {
       applyUrl,
       company,
       title,
-      location: text5(job.location),
-      jobType: text5(job.jobType),
-      age: text5(job.age),
-      category: text5(job.category),
-      companyTier: text5(job.companyTier)
+      location: text7(job.location),
+      jobType: text7(job.jobType),
+      age: text7(job.age),
+      category: text7(job.category),
+      companyTier: text7(job.companyTier)
     };
-    const list = text5(job.source).trim();
+    const list = text7(job.source).trim();
     if (list) posting.list = list;
     postings.push(posting);
   }
@@ -5750,14 +6080,14 @@ var BATCH_MAX_BYTES = 900 * 1024;
 var RefreshError = class extends Error {
 };
 async function readJson(io, path) {
-  let text7;
+  let text9;
   try {
-    text7 = await io.readFile(path);
+    text9 = await io.readFile(path);
   } catch {
     return void 0;
   }
   try {
-    return JSON.parse(text7);
+    return JSON.parse(text9);
   } catch {
     throw new RefreshError(`${path} is not valid JSON.`);
   }
@@ -5812,6 +6142,64 @@ async function readEnabledSources(io, now, sources, feed) {
     sources.watchlist.enabled ? readWatchlist(io.fetch, sources.watchlist.companies, now) : []
   ]);
   return [...jobFeed, ...watchlist];
+}
+async function readReferrals(io, dir) {
+  const folder = join(dir, "state", REFERRALS_COLLECTION);
+  const ids = await savedIds(io, folder);
+  const docs = /* @__PURE__ */ new Map();
+  for (const docId of ids) {
+    const result = validateReferralsDocument(
+      docId,
+      await readJson(io, join(folder, `${docId}.json`))
+    );
+    if (result.ok) docs.set(docId, result.value);
+  }
+  return { docs, ids };
+}
+async function readConnections(io, dir) {
+  const path = join(dir, "..", CONNECTIONS_FILE);
+  const json = await readJson(io, path);
+  if (json === void 0) return void 0;
+  const result = readConnectionsFile(json);
+  if (!result.ok) {
+    throw new RefreshError(
+      `${path} is not a connections file Setup wrote. Ask the Candidate to import their connections export again with /job-app-assist:setup, or delete the file to go without Referral Drafts.`
+    );
+  }
+  return result.value.connections;
+}
+async function readReferralCalls(io, dir) {
+  const path = join(dir, "referral-drafts.json");
+  const json = await readJson(io, path);
+  if (json === void 0) return {};
+  const problem = (detail) => new RefreshError(
+    `${path} ${detail}. It maps each company's key, as referral-review.json lists it, to connection names, each to { "message": "<the Referral Draft>" } or { "skip": "<why this match is wrong>" }.`
+  );
+  const isObject2 = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
+  if (!isObject2(json)) throw problem("is not a JSON object");
+  const calls = {};
+  for (const [id, byName] of Object.entries(json)) {
+    if (id.trim() === "") throw problem("has a blank company key");
+    if (!isObject2(byName)) throw problem(`gives ${id} no connections`);
+    const forPosting = {};
+    for (const [name, call] of Object.entries(byName)) {
+      const { message, skip: skip2 } = isObject2(call) ? call : {};
+      if (typeof message === "string" && message.trim() !== "") {
+        if (message.trim().length > REFERRAL_MESSAGE_MAX) {
+          throw problem(
+            `gives ${name} at ${id} a message longer than ${String(REFERRAL_MESSAGE_MAX)} characters`
+          );
+        }
+        forPosting[name] = { message: message.trim() };
+      } else if (typeof skip2 === "string" && skip2.trim() !== "") {
+        forPosting[name] = { skip: skip2.trim() };
+      } else {
+        throw problem(`gives ${name} at ${id} neither a message nor a skip reason`);
+      }
+    }
+    calls[id] = forPosting;
+  }
+  return calls;
 }
 async function readVersions(io, dir) {
   const json = await readJson(io, join(dir, "versions.json"));
@@ -5920,7 +6308,7 @@ function formatSources(summary) {
 function formatSummary(summary, paths, batches, sourceIssues = []) {
   const { writes: writesPath, review: reviewPath } = paths;
   const lines = [];
-  const tiers = summary.byTier.map((count3, i) => `Tier ${String(i + 1)}: ${number2(count3)}`).join(", ");
+  const tiers = summary.byTier.map((count4, i) => `Tier ${String(i + 1)}: ${number2(count4)}`).join(", ");
   lines.push(`Refresh finished at ${summary.refreshedAt.slice(0, 16).replace("T", " ")} UTC.`);
   lines.push(
     `Job List: ${number2(summary.total)} Postings (${tiers}); ${number2(summary.newPostings)} new and ${number2(summary.removedPostings)} gone since the last Refresh.`
@@ -5997,6 +6385,18 @@ function formatSummary(summary, paths, batches, sourceIssues = []) {
       `${number2(unsure)} unsure Resume Variant ${unsure === 1 ? "pick" : "picks"} to review: see ${reviewPath}.`
     );
   }
+  const { referrals: referrals2 } = summary;
+  if (referrals2.imported) {
+    if (referrals2.matches === 0) {
+      lines.push("Referral Drafts: none of your connections work at the companies in your Queue.");
+    } else {
+      const see = `see ${paths.referrals}.`;
+      const drafted = `Referral Drafts: ${number2(referrals2.drafts)} for ${count(referrals2.postings, "queued Posting")} at ${count(referrals2.companies, "company", "companies")}`;
+      lines.push(
+        referrals2.toDraft === 0 ? `${drafted}.` : referrals2.drafts === 0 ? `Referral Drafts: ${number2(referrals2.toDraft)} to draft for connections at the companies in your Queue: ${see}` : `${drafted}; ${number2(referrals2.toDraft)} more to draft: ${see}`
+      );
+    }
+  }
   if (summary.top.length > 0) {
     lines.push("Top Postings:");
     summary.top.forEach((posting, i) => {
@@ -6029,17 +6429,21 @@ ${settings2.issues.map((i) => `- ${i}`).join("\n")}`
       );
     }
     const { current, existing } = await readState(io, dir);
+    const referrals2 = await readReferrals(io, dir);
     const versions = await readVersions(io, dir);
-    const missing = existing.filter(
-      (docId) => versions[`${POSTINGS_COLLECTION}/${docId}`] === void 0
-    );
+    const missing = [
+      ...existing.map((docId) => `${POSTINGS_COLLECTION}/${docId}`),
+      ...referrals2.ids.map((docId) => `${REFERRALS_COLLECTION}/${docId}`)
+    ].filter((path) => versions[path] === void 0);
     if (missing.length > 0) {
       throw new RefreshError(
-        `versions.json has no version for ${missing.map((id) => `${POSTINGS_COLLECTION}/${id}`).join(", ")}. Add the version ArtifactData reported for each document read.`
+        `versions.json has no version for ${missing.join(", ")}. Add the version ArtifactData reported for each document read.`
       );
     }
     const sourceSettings = await readSources(io, dir);
     const judgments = await readJudgments(io, dir);
+    const connections = await readConnections(io, dir);
+    const referralCalls = await readReferralCalls(io, dir);
     const queue = await readQueue(io, dir);
     const out = join(dir, "out");
     const sourcesPath = join(out, "sources.json");
@@ -6072,7 +6476,13 @@ ${settings2.issues.map((i) => `- ${i}`).join("\n")}`
       await io.writeFile(cachePath, `${JSON.stringify({ ...cache, ...resolved }, null, 2)}
 `);
     }
-    const { jobList, changeSet, summary } = runRefresh({
+    const {
+      jobList,
+      changeSet,
+      summary,
+      referralReview,
+      referralCalls: keptCalls
+    } = runRefresh({
       now,
       settings: settings2.value,
       sourceSettings: sourceSettings.settings,
@@ -6080,7 +6490,10 @@ ${settings2.issues.map((i) => `- ${i}`).join("\n")}`
       current,
       queue,
       resolvedLinks: resolved,
-      variantJudgments: judgments
+      variantJudgments: judgments,
+      ...connections === void 0 ? {} : { connections },
+      referrals: referrals2,
+      referralCalls
     });
     await io.removeDir(out);
     await io.makeDir(out);
@@ -6094,6 +6507,13 @@ ${settings2.issues.map((i) => `- ${i}`).join("\n")}`
       );
       await io.writeFile(join(dir, "variant-judgments.json"), `${JSON.stringify(kept, null, 2)}
 `);
+    }
+    if (Object.keys(referralCalls).length > 0) {
+      await io.writeFile(
+        join(dir, "referral-drafts.json"),
+        `${JSON.stringify(keptCalls, null, 2)}
+`
+      );
     }
     for (const collection of new Set(changeSet.set.map((w) => w.collection))) {
       await io.makeDir(join(out, collection));
@@ -6109,26 +6529,32 @@ ${check.issues.map((i) => `- ${i}`).join("\n")}`
         );
       }
       const filePath = join(out, collection, `${docId}.json`);
-      const text7 = `${JSON.stringify(data)}
+      const text9 = `${JSON.stringify(data)}
 `;
-      await io.writeFile(filePath, text7);
+      await io.writeFile(filePath, text9);
       const write = { op: "set", collection, doc_id: docId, file_path: filePath };
       const version2 = versionOf(collection, docId);
       if (version2 !== void 0) write.if_version = version2;
-      writes.push({ write, bytes: Buffer.byteLength(text7) });
+      writes.push({ write, bytes: Buffer.byteLength(text9) });
     }
     const written = new Set(
       changeSet.set.filter((w) => w.collection === POSTINGS_COLLECTION).map((w) => w.docId)
     );
-    const removals = /* @__PURE__ */ new Set([
-      ...changeSet.delete.map((d) => d.docId),
-      ...existing.filter((id) => !written.has(id))
+    const removals = /* @__PURE__ */ new Map([
+      [POSTINGS_COLLECTION, new Set(existing.filter((id) => !written.has(id)))]
     ]);
-    for (const docId of [...removals].sort()) {
-      const write = { op: "delete", collection: POSTINGS_COLLECTION, doc_id: docId };
-      const version2 = versionOf(POSTINGS_COLLECTION, docId);
-      if (version2 !== void 0) write.if_version = version2;
-      writes.push({ write, bytes: 0 });
+    for (const { collection, docId } of changeSet.delete) {
+      const ids = removals.get(collection) ?? /* @__PURE__ */ new Set();
+      ids.add(docId);
+      removals.set(collection, ids);
+    }
+    for (const [collection, ids] of removals) {
+      for (const docId of [...ids].sort()) {
+        const write = { op: "delete", collection, doc_id: docId };
+        const version2 = versionOf(collection, docId);
+        if (version2 !== void 0) write.if_version = version2;
+        writes.push({ write, bytes: 0 });
+      }
     }
     const batches = batchesOf(writes);
     const writesPath = join(out, "writes.json");
@@ -6140,10 +6566,14 @@ ${check.issues.map((i) => `- ${i}`).join("\n")}`
     const review = { variants: settings2.value.resumeVariants, ...summary.variantReview };
     await io.writeFile(reviewPath, `${JSON.stringify(review, null, 2)}
 `);
+    const referralsPath = join(out, "referral-review.json");
+    const referralReviewFile = { toDraft: summary.referrals.toDraft, companies: referralReview };
+    await io.writeFile(referralsPath, `${JSON.stringify(referralReviewFile, null, 2)}
+`);
     io.stdout(
       formatSummary(
         summary,
-        { writes: writesPath, review: reviewPath },
+        { writes: writesPath, review: reviewPath, referrals: referralsPath },
         batches.length,
         sourceSettings.issues
       )
@@ -6273,9 +6703,9 @@ async function build(dir, io) {
   };
   await io.makeDir(join2(out, NEWS_COLLECTION));
   const filePath = join2(out, NEWS_COLLECTION, `${digest2.day}.json`);
-  const text7 = `${JSON.stringify(digest2)}
+  const text9 = `${JSON.stringify(digest2)}
 `;
-  await io.writeFile(filePath, text7);
+  await io.writeFile(filePath, text9);
   const set = {
     op: "set",
     collection: NEWS_COLLECTION,
@@ -6284,7 +6714,7 @@ async function build(dir, io) {
   };
   const setVersion = versionOf(digest2.day);
   if (setVersion !== void 0) set.if_version = setVersion;
-  const writes = [{ write: set, bytes: Buffer.byteLength(text7) }];
+  const writes = [{ write: set, bytes: Buffer.byteLength(text9) }];
   const stale = staleNewsDays(await savedIds(io, join2(dir, "state", NEWS_COLLECTION)), digest2.day);
   for (const day of stale) {
     const remove = { op: "delete", collection: NEWS_COLLECTION, doc_id: day };
@@ -6324,6 +6754,42 @@ async function runNewsCommand(step, dirArg, io) {
     }
     throw error2;
   }
+}
+
+// src/cli/connections.ts
+var count3 = (n, one, many = `${one}s`) => `${n.toLocaleString("en-US")} ${n === 1 ? one : many}`;
+async function runImportConnections(exportPath, outPath, io) {
+  let csv;
+  try {
+    csv = await io.readFile(exportPath);
+  } catch (error2) {
+    io.stderr(
+      `Could not read ${exportPath}: ${error2 instanceof Error ? error2.message : String(error2)}
+`
+    );
+    return 1;
+  }
+  const parsed = parseConnectionsExport(csv);
+  if (!parsed.ok) {
+    io.stderr(`${parsed.error}
+`);
+    return 1;
+  }
+  const file = {
+    schemaVersion: 1,
+    importedAt: io.now(),
+    connections: parsed.connections
+  };
+  await io.writeFile(outPath, `${JSON.stringify(file, null, 2)}
+`);
+  const companies2 = new Set(parsed.connections.map((c) => companyKey(c.company))).size;
+  const leftOut = parsed.leftOut === 0 ? "" : ` ${count3(parsed.leftOut, "connection with no company listed was", "connections with no company listed were")} left out.`;
+  io.stdout(
+    `Imported ${count3(parsed.connections.length, "connection")} at ${count3(companies2, "company", "companies")} into ${outPath}.${leftOut}
+Email addresses and profile links were not kept. The file stays on this computer; the dashboard only ever holds the Referral Drafts made from it.
+`
+  );
+  return 0;
 }
 
 // src/cli/resumes.ts
@@ -6366,8 +6832,8 @@ var manifest = strictObject({
   )
 });
 async function readJson2(io, source) {
-  const text7 = source === "-" ? await io.readStdin() : await io.readFile(source);
-  return JSON.parse(text7);
+  const text9 = source === "-" ? await io.readStdin() : await io.readFile(source);
+  return JSON.parse(text9);
 }
 function fail(io, lines) {
   io.stderr(lines.map((line) => `${line}
@@ -6492,13 +6958,13 @@ function skipPatterns(allSkips, settings2, options = {}) {
     total: skips.length,
     byReason,
     companies: [...companies2.values()].sort((a, b) => b.skips - a.skips).slice(0, LIST_LIMIT),
-    roleTypes: roleTypes.sorted().slice(0, LIST_LIMIT).map(({ value, count: count3 }) => {
+    roleTypes: roleTypes.sorted().slice(0, LIST_LIMIT).map(({ value, count: count4 }) => {
       const priority = priorityOf(value);
-      return priority === void 0 ? { roleType: value, skips: count3 } : { roleType: value, skips: count3, priority };
+      return priority === void 0 ? { roleType: value, skips: count4 } : { roleType: value, skips: count4, priority };
     }),
-    locations: locations.sorted().slice(0, LIST_LIMIT).map(({ value, count: count3 }) => ({ ...value, skips: count3 })),
-    levels: levels.sorted().map(({ value, count: count3 }) => ({ level: value, skips: count3 })),
-    applySites: sites.sorted().slice(0, LIST_LIMIT).map(({ value, count: count3 }) => ({ site: value, skips: count3 })),
+    locations: locations.sorted().slice(0, LIST_LIMIT).map(({ value, count: count4 }) => ({ ...value, skips: count4 })),
+    levels: levels.sorted().map(({ value, count: count4 }) => ({ level: value, skips: count4 })),
+    applySites: sites.sorted().slice(0, LIST_LIMIT).map(({ value, count: count4 }) => ({ site: value, skips: count4 })),
     suggestions: []
   };
   report.suggestions = suggest(report, settings2);
@@ -6571,14 +7037,14 @@ var RULE_WORDS = { boost: "boosted", lower: "lowered", block: "blocked" };
 var TuneError = class extends Error {
 };
 async function readJsonFile(io, path) {
-  let text7;
+  let text9;
   try {
-    text7 = path === "-" ? await io.readStdin() : await io.readFile(path);
+    text9 = path === "-" ? await io.readStdin() : await io.readFile(path);
   } catch {
     throw new TuneError(`Could not read ${path}.`);
   }
   try {
-    return JSON.parse(text7);
+    return JSON.parse(text9);
   } catch {
     throw new TuneError(`${path} is not valid JSON.`);
   }
@@ -6709,9 +7175,9 @@ function formatTuneReport(settings2, skips, jobList, now) {
       `Job List companies (${plural(jobList.length, "Posting")} at ${plural(ranked.length, "company", "companies")}, most Postings first${ranked.length > COMPANY_LIMIT ? `, first ${String(COMPANY_LIMIT)}` : ""}):`
     );
     lines.push(
-      ranked.slice(0, COMPANY_LIMIT).map(({ name, count: count3 }) => {
+      ranked.slice(0, COMPANY_LIMIT).map(({ name, count: count4 }) => {
         const rule = companyRuleOf(name, settings2.companies);
-        return `${name} ${number4(count3)}${rule ? ` (${RULE_WORDS[rule]})` : ""}`;
+        return `${name} ${number4(count4)}${rule ? ` (${RULE_WORDS[rule]})` : ""}`;
       }).join("; ")
     );
     lines.push(
@@ -6767,13 +7233,15 @@ var USAGE = `Usage: jaa validate <collection> <doc-id> <file|->
        jaa check-resumes <manifest> [--settings <file|->]
        jaa tune-report <dir>
        jaa settings-diff <current-file> <proposed-file|->
+       jaa import-connections <export.csv> <out.json>
 
 validate       Checks one dashboard document (JSON, from a file or from stdin with -)
                against the dashboard contract. Exits 0 when it matches, 1 when it does not.
 refresh        Builds the Job List from the dashboard state saved in <dir>/state and the
                Job Feed, and writes the documents and ArtifactData batches to <dir>/out.
                --rerun rebuilds from the Sources the last run read, without the network,
-               applying the Resume Variant judgments in <dir>/variant-judgments.json.
+               applying the Resume Variant judgments in <dir>/variant-judgments.json
+               and the Referral Drafts in <dir>/referral-drafts.json.
 news           After refresh, in the same <dir>: plan computes the hiring signals, lists
                the companies in the Queue and reads the forums (<dir>/out/news-plan.json);
                build joins them with the news gathered in <dir>/out/news-gathered.json into
@@ -6786,6 +7254,10 @@ tune-report    Prints the settings, patterns in skip reasons with the changes th
                <dir>/state.
 settings-diff  Checks a proposed settings document against the dashboard contract and
                prints every change from the current one. Writes nothing.
+import-connections
+               Reads a LinkedIn connections export (Connections.csv) and saves each
+               connection's name, company and position to <out.json>, for Referral Drafts.
+               Email addresses and profile links are not kept.
 `;
 async function runCli(argv, io) {
   if (argv[0] === "--help" || argv[0] === "-h") {
@@ -6837,14 +7309,22 @@ async function runCli(argv, io) {
     }
     return runSettingsDiff(current, proposed, io);
   }
+  if (argv[0] === "import-connections") {
+    const [, exportPath, outPath, ...rest2] = argv;
+    if (!exportPath || !outPath || rest2.length > 0) {
+      io.stderr(USAGE);
+      return 2;
+    }
+    return runImportConnections(exportPath, outPath, io);
+  }
   const [command, collection, docId, file, ...rest] = argv;
   if (command !== "validate" || !collection || !docId || !file || rest.length > 0) {
     io.stderr(USAGE);
     return 2;
   }
-  let text7;
+  let text9;
   try {
-    text7 = file === "-" ? await io.readStdin() : await io.readFile(file);
+    text9 = file === "-" ? await io.readStdin() : await io.readFile(file);
   } catch (error2) {
     io.stderr(`Could not read ${file}: ${messageOf2(error2)}
 `);
@@ -6852,7 +7332,7 @@ async function runCli(argv, io) {
   }
   let document;
   try {
-    document = JSON.parse(text7);
+    document = JSON.parse(text9);
   } catch (error2) {
     io.stderr(`The document is not valid JSON: ${messageOf2(error2)}
 `);
@@ -6888,7 +7368,7 @@ process.exitCode = await runCli(process.argv.slice(2), {
   now: () => (/* @__PURE__ */ new Date()).toISOString(),
   timeZone: () => Intl.DateTimeFormat().resolvedOptions().timeZone,
   sleep: (ms) => new Promise((done) => setTimeout(done, ms)),
-  readStdin: () => text6(process.stdin),
+  readStdin: () => text8(process.stdin),
   fileSize: (path) => stat(path).then(
     (info) => info.isFile() ? info.size : void 0,
     () => void 0

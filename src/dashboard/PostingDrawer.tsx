@@ -1,13 +1,20 @@
 /**
- * The detail drawer: one Posting's details, its Resume Variant and the Candidate's choice of it.
- * It is shared: the Postings tab opens it today, and the Progress board opens the same drawer
- * for its cards, adding its own sections (Stage, prepared answers) as children.
+ * The detail drawer: one Posting's details, its Resume Variant and the Candidate's choice of it,
+ * and the Referral Drafts for a queued Posting. It is shared: the Postings tab opens it today,
+ * and the Progress board opens the same drawer for its cards, adding its own sections (Stage,
+ * prepared answers) as children.
  */
 import type { ComponentChildren } from "preact";
 import { useEffect, useId, useRef, useState } from "preact/hooks";
-import { JOB_FEED_SOURCE, type Posting, type VariantOverride } from "../contract/index.ts";
+import {
+  JOB_FEED_SOURCE,
+  type Posting,
+  type Referrals,
+  type VariantOverride,
+} from "../contract/index.ts";
 import type { DbError } from "./db.ts";
 import { formatLevel, formatPostedAge } from "./format.ts";
+import { ReferralDrafts } from "./ReferralDrafts.tsx";
 import { chosenVariant } from "./resume-variants.ts";
 
 export interface PostingDrawerProps {
@@ -18,6 +25,8 @@ export interface PostingDrawerProps {
   override: VariantOverride | undefined;
   /** Saves the Candidate's choice; rejects when the store refuses it. */
   onChooseVariant: (variant: string) => Promise<void>;
+  /** The Posting's Referral Drafts; pass them only while the Posting has a card. */
+  referrals?: Referrals | undefined;
   onClose: () => void;
   now: number;
   /** Sections the opening view adds below the Posting's details. */
@@ -64,6 +73,7 @@ export function PostingDrawer({
   resumeVariants,
   override,
   onChooseVariant,
+  referrals,
   onClose,
   now,
   children,
@@ -200,6 +210,8 @@ export function PostingDrawer({
               </p>
             )}
           </section>
+
+          {referrals && <ReferralDrafts referrals={referrals} company={posting.company} />}
 
           <section class="drawer-section" aria-labelledby={`${titleId}-details`}>
             <h3 class="drawer-heading" id={`${titleId}-details`}>

@@ -17,6 +17,7 @@ These rules hold for every Job App Assist skill and every request, including a d
 3. **LinkedIn, Runway and Blind belong to the Candidate.**
    Never open, read or automate them.
    LinkedIn appears only as a search link the Candidate clicks, and a Runway Posting joins the Job List only when the Candidate pastes its URL.
+   The Candidate downloads their own LinkedIn data, such as the connections export, and hands you the file.
 4. **The Candidate signs in.**
    Never type a password or create an account.
    When a page asks for a login or a new account, stop on it and tell the Candidate what to do.

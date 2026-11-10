@@ -1,13 +1,14 @@
 ---
 name: setup
-description: Set up Job App Assist. Drafts the Candidate's Search Profile from a plain-language description, records their labeled Resume Variants, saves both once they confirm, and publishes their private dashboard. Use when the Candidate wants to get started, change their Search Profile, add or change their resumes, or create their dashboard.
+description: Set up Job App Assist. Drafts the Candidate's Search Profile from a plain-language description, records their labeled Resume Variants, saves both once they confirm, publishes their private dashboard, and optionally imports their LinkedIn connections export for Referral Drafts. Use when the Candidate wants to get started, change their Search Profile, add or change their resumes, create their dashboard, or import their LinkedIn connections.
 argument-hint: "[the jobs you want, in your own words]"
-allowed-tools: Bash(node --version) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs validate *) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs check-resumes *) Bash(mkdir -p .job-app-assist) Bash(cp ${CLAUDE_PLUGIN_ROOT}/dist/dashboard.html .job-app-assist/dashboard.html) Bash(date -u *)
+allowed-tools: Bash(node --version) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs validate *) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs check-resumes *) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs import-connections *) Bash(mkdir -p .job-app-assist) Bash(cp ${CLAUDE_PLUGIN_ROOT}/dist/dashboard.html .job-app-assist/dashboard.html) Bash(date -u *)
 ---
 
 # Setup
 
 Setup turns the Candidate's own words into a Search Profile, records their Resume Variants, saves both only after they confirm them, and gives them their private dashboard: a claude.ai Artifact in their own account with News, Postings and Progress tabs.
+It can also import the Candidate's LinkedIn connections, so each Refresh can suggest Referral Drafts.
 The current working directory is the Candidate folder; Setup's local state lives in `.job-app-assist/` inside it.
 
 ## 1. Load the hard rules
@@ -21,6 +22,9 @@ It holds `{ "url": "<dashboard Artifact URL>", "pageVersion": "<version>" }`.
 When it exists, this is a rerun: read the current settings with `ArtifactData` (`action: "get"`, the recorded `url`, `collection: "settings"`, `doc_id: "main"`) and start the draft from them, so the Candidate only describes what should change.
 If that read finds no settings document, carry on as a first save.
 Also read `.job-app-assist/resume-variants.json` if it exists: it lists the Resume Variants recorded last time.
+Note whether `.job-app-assist/connections.json` exists: it means the Candidate imported their connections before.
+
+When the Candidate only asks to import their LinkedIn connections and the dashboard already exists, go straight to step 11.
 
 ## 3. Hear what the Candidate wants
 
@@ -179,8 +183,40 @@ For each of these documents that is missing, write it with `action: "set"`, afte
 
 Never overwrite a Source document that exists: the Candidate's switches, watchlist and added Postings live there.
 
-## 11. Hand over
+## 11. Offer to import LinkedIn connections
 
-Give the Candidate the dashboard link and a one-line summary of the saved Search Profile and Resume Variants.
+This step is optional.
+With the Candidate's LinkedIn connections in the Candidate folder, each Refresh drafts a short referral ask for connections who work at the companies in their Queue, and shows each one in that Posting's drawer with a copy button.
+The Candidate sends every message themselves.
+
+Ask once whether they want Referral Drafts.
+On a rerun where `.job-app-assist/connections.json` exists, ask instead whether they have a newer export to import, since people change jobs.
+A no is fine: skip to step 12.
+
+The Candidate gets the export from LinkedIn themselves; never open LinkedIn for them (hard rule 3).
+Tell them how:
+
+1. On LinkedIn, open **Me**, then **Settings & Privacy**, then **Data privacy**, then **Get a copy of your data**.
+2. Choose **Connections** only, and request the archive.
+3. LinkedIn emails a download link, usually within half an hour.
+   Download the archive, unzip it, and say where `Connections.csv` is (dragging the file into the chat works).
+
+When they give the path, import it:
+
+```bash
+node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs import-connections "<path to Connections.csv>" .job-app-assist/connections.json
+```
+
+The export may sit outside the Candidate folder (in Downloads, say); the import only reads it.
+It keeps each connection's name, company, position and the date they connected, and leaves out email addresses and profile links.
+If it reports a problem, tell the Candidate what it says (usually that the file is not the connections export) and wait for the right file.
+
+When it succeeds, tell the Candidate how many connections it imported, that the file stays on this computer and never goes to the dashboard, and that they may delete the download.
+Do not open `.job-app-assist/connections.json` or repeat its contents in chat; Refresh reads it.
+To stop Referral Drafts later, the Candidate deletes `.job-app-assist/connections.json`.
+
+## 12. Hand over
+
+Give the Candidate the dashboard link and a one-line summary of the saved Search Profile and Resume Variants, and whether Referral Drafts are on.
 Tell them the Search Profile appears at the top of the dashboard, and that News, Postings and Progress fill in once they refresh.
 Mention the Sources button beside the tabs, where they can switch Sources on or off, follow companies on a watchlist, and add Postings by URL.

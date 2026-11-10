@@ -5,6 +5,7 @@
 import { CARDS_COLLECTION, validateCardDocument } from "./cards.ts";
 import { NEWS_COLLECTION, validateNewsDocument } from "./news.ts";
 import { POSTINGS_COLLECTION, validatePostingsDocument } from "./postings.ts";
+import { REFERRALS_COLLECTION, validateReferralsDocument } from "./referrals.ts";
 import { SETTINGS_COLLECTION, SETTINGS_DOC_ID, validateSettings } from "./settings.ts";
 import { SKIPS_COLLECTION, validateSkipDocument } from "./skips.ts";
 import { SOURCES_COLLECTION, validateSourceDocument } from "./sources.ts";
@@ -17,6 +18,7 @@ import {
 export * from "./cards.ts";
 export * from "./news.ts";
 export * from "./postings.ts";
+export * from "./referrals.ts";
 export * from "./settings-diff.ts";
 export * from "./settings.ts";
 export * from "./skips.ts";
@@ -41,6 +43,7 @@ const collections: Record<string, CollectionRule> = {
   [VARIANT_OVERRIDES_COLLECTION]: validateVariantOverrideDocument,
   [SOURCES_COLLECTION]: validateSourceDocument,
   [NEWS_COLLECTION]: validateNewsDocument,
+  [REFERRALS_COLLECTION]: validateReferralsDocument,
 };
 
 /** The collections the contract defines so far. */
