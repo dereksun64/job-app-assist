@@ -2,12 +2,16 @@
  * The dashboard contract: the single definition of every document in the dashboard database.
  * Skills write only documents this module accepts, and the dashboard page reads through it.
  */
+import { CARDS_COLLECTION, validateCardDocument } from "./cards.ts";
 import { POSTINGS_COLLECTION, validatePostingsDocument } from "./postings.ts";
 import { SETTINGS_COLLECTION, SETTINGS_DOC_ID, validateSettings } from "./settings.ts";
+import { SKIPS_COLLECTION, validateSkipDocument } from "./skips.ts";
 import type { Validation } from "./validation.ts";
 
+export * from "./cards.ts";
 export * from "./postings.ts";
 export * from "./settings.ts";
+export * from "./skips.ts";
 export type { Validation } from "./validation.ts";
 
 type CollectionRule = (docId: string, input: unknown) => Validation<unknown>;
@@ -21,9 +25,11 @@ const collections: Record<string, CollectionRule> = {
           issues: [`The settings collection holds one document, with the id "${SETTINGS_DOC_ID}".`],
         },
   [POSTINGS_COLLECTION]: validatePostingsDocument,
+  [CARDS_COLLECTION]: validateCardDocument,
+  [SKIPS_COLLECTION]: validateSkipDocument,
 };
 
-/** The collections the contract defines so far; later tickets add sources, cards and more. */
+/** The collections the contract defines so far; later tickets add sources, news and more. */
 export const CONTRACT_COLLECTIONS: readonly string[] = Object.keys(collections);
 
 /** Checks one document, addressed by collection and id, against the contract. */

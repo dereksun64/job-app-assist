@@ -1,4 +1,21 @@
-import type { SearchProfile, Seniority } from "../contract/index.ts";
+import type { SearchProfile, Seniority, SkipReason, Stage } from "../contract/index.ts";
+
+export const STAGE_LABELS: Record<Stage, string> = {
+  queued: "Queued",
+  ready_for_review: "Ready for Review",
+  submitted: "Submitted",
+  interviewing: "Interviewing",
+  offer: "Offer",
+  closed: "Closed",
+};
+
+export const SKIP_REASON_LABELS: Record<SkipReason, string> = {
+  wrong_role: "Wrong role",
+  wrong_location: "Wrong location",
+  wrong_company: "Wrong company",
+  too_senior: "Too senior",
+  other: "Other reason",
+};
 
 const SENIORITY_LABELS: Record<Seniority, string> = {
   intern: "Intern",

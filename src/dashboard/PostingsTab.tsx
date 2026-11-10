@@ -1,7 +1,25 @@
-import { useMemo, useState } from "preact/hooks";
-import { JOB_FEED_SOURCE, type JobListMeta, type Posting } from "../contract/index.ts";
-import { daysSincePosted, formatLevel, formatMoment, formatPostedAge } from "./format.ts";
+import { useEffect, useMemo, useRef, useState } from "preact/hooks";
+import {
+  JOB_FEED_SOURCE,
+  POSSIBLY_CLOSED_DAYS,
+  SKIP_REASONS,
+  queueAgeDays,
+  type Card,
+  type JobListMeta,
+  type Posting,
+  type Skip,
+  type SkipReason,
+} from "../contract/index.ts";
+import {
+  SKIP_REASON_LABELS,
+  STAGE_LABELS,
+  daysSincePosted,
+  formatLevel,
+  formatMoment,
+  formatPostedAge,
+} from "./format.ts";
 import type { JobListState } from "./useJobList.ts";
+import { saveProblem, type QueueActions, type QueueState } from "./useQueue.ts";
 
 /** How many Postings the list shows at first, and adds per "Show more". */
 export const PAGE_SIZE = 100;
@@ -15,7 +33,15 @@ const POSTED_WINDOWS = [
   { value: "30", label: "Past month" },
 ] as const;
 
+const SHOW_OPTIONS = [
+  { value: "all", label: "All" },
+  { value: "queued", label: "Queued" },
+  { value: "skipped", label: "Skipped" },
+] as const;
+type Show = (typeof SHOW_OPTIONS)[number]["value"];
+
 interface Filters {
+  show: Show;
   text: string;
   roleType: string;
   tier: string;
@@ -23,7 +49,14 @@ interface Filters {
   posted: string;
 }
 
-const NO_FILTERS: Filters = { text: "", roleType: "", tier: "", source: "", posted: "" };
+const NO_FILTERS: Filters = {
+  show: "all",
+  text: "",
+  roleType: "",
+  tier: "",
+  source: "",
+  posted: "",
+};
 const LIST_SEPARATOR = "\u0000";
 
 const count = (n: number, one: string, many = `${one}s`) =>
@@ -31,12 +64,24 @@ const count = (n: number, one: string, many = `${one}s`) =>
 
 export interface PostingsTabProps {
   state: JobListState;
+  queue: QueueState;
+  /** Null when this view has no database to save Queue changes to. */
+  actions: QueueActions | null;
+  /** The settings' daily Queue target, once settings have loaded. */
+  dailyQueueTarget: number | undefined;
   /** The Search Profile's role types, in the Candidate's order, for the role type filter. */
   roleTypeOrder: readonly string[];
   now: number;
 }
 
-export function PostingsTab({ state, roleTypeOrder, now }: PostingsTabProps) {
+export function PostingsTab({
+  state,
+  queue,
+  actions,
+  dailyQueueTarget,
+  roleTypeOrder,
+  now,
+}: PostingsTabProps) {
   switch (state.kind) {
     case "loading":
     case "unavailable":
@@ -83,6 +128,9 @@ export function PostingsTab({ state, roleTypeOrder, now }: PostingsTabProps) {
           meta={state.meta}
           postings={state.postings}
           updating={state.updating}
+          queue={queue}
+          actions={actions}
+          dailyQueueTarget={dailyQueueTarget}
           roleTypeOrder={roleTypeOrder}
           now={now}
         />
@@ -114,28 +162,112 @@ interface JobListProps {
   meta: JobListMeta;
   postings: readonly Posting[];
   updating: boolean;
+  queue: QueueState;
+  actions: QueueActions | null;
+  dailyQueueTarget: number | undefined;
   roleTypeOrder: readonly string[];
   now: number;
 }
 
-function JobList({ meta, postings, updating, roleTypeOrder, now }: JobListProps) {
+/** One row of the list: a Posting with its rank, card and skip. */
+interface Entry {
+  posting: Posting;
+  /** Its place in the Job List; absent for a queued Posting that has left the Job List. */
+  rank: number | undefined;
+  card: Card | undefined;
+  skip: Skip | undefined;
+}
+
+const NO_CARDS: ReadonlyMap<string, Card> = new Map();
+const NO_SKIPS: ReadonlyMap<string, Skip> = new Map();
+
+/** A card wins over a skip: a Posting with both was re-queued part way and shows as queued. */
+const isQueued = (entry: Entry) => entry.card?.stage === "queued";
+const isSkipped = (entry: Entry) => entry.skip !== undefined && entry.card === undefined;
+
+function inView(entry: Entry, show: Show): boolean {
+  switch (show) {
+    case "all":
+      return !isSkipped(entry);
+    case "queued":
+      return isQueued(entry);
+    case "skipped":
+      return isSkipped(entry);
+  }
+}
+
+function JobList({
+  meta,
+  postings,
+  updating,
+  queue,
+  actions,
+  dailyQueueTarget,
+  roleTypeOrder,
+  now,
+}: JobListProps) {
   const [filters, setFilters] = useState<Filters>(NO_FILTERS);
   const [shown, setShown] = useState(PAGE_SIZE);
+  const [problem, setProblem] = useState<string | undefined>();
   const update = (patch: Partial<Filters>) => {
     setFilters((current) => ({ ...current, ...patch }));
     setShown(PAGE_SIZE);
   };
 
+  const cards = queue.kind === "ready" ? queue.cards : NO_CARDS;
+  const skips = queue.kind === "ready" ? queue.skips : NO_SKIPS;
   const options = useMemo(() => filterOptions(postings, roleTypeOrder), [postings, roleTypeOrder]);
-  const ranked = useMemo(
-    () => postings.map((posting, index) => ({ posting, rank: index + 1 })),
-    [postings],
-  );
+  const entries = useMemo(() => {
+    const listed: Entry[] = postings.map((posting, index) => ({
+      posting,
+      rank: index + 1,
+      card: cards.get(posting.id),
+      skip: skips.get(posting.id),
+    }));
+    const ids = new Set(postings.map((p) => p.id));
+    // Queued Postings that left the Job List stay visible after it, oldest first.
+    const unlisted: Entry[] = [...cards.values()]
+      .filter((card) => card.stage === "queued" && !ids.has(card.postingId))
+      .sort(
+        (a, b) => a.queuedAt.localeCompare(b.queuedAt) || a.postingId.localeCompare(b.postingId),
+      )
+      .map((card) => ({
+        posting: card.posting,
+        rank: undefined,
+        card,
+        skip: skips.get(card.postingId),
+      }));
+    return [...listed, ...unlisted];
+  }, [postings, cards, skips]);
   const matches = useMemo(
-    () => ranked.filter(({ posting }) => matchesFilters(posting, filters, now)),
-    [ranked, filters, now],
+    () =>
+      entries.filter(
+        (entry) => inView(entry, filters.show) && matchesFilters(entry.posting, filters, now),
+      ),
+    [entries, filters, now],
   );
-  const filtered = Object.values(filters).some((value) => value !== "");
+  const counts = useMemo(
+    () => ({
+      all: entries.filter((e) => inView(e, "all")).length,
+      queued: entries.filter(isQueued).length,
+      skipped: entries.filter(isSkipped).length,
+      possiblyClosed: entries.filter(
+        (e) => isQueued(e) && e.card && queueAgeDays(e.card.queuedAt, now) >= POSSIBLY_CLOSED_DAYS,
+      ).length,
+    }),
+    [entries, now],
+  );
+  const filtered = (Object.keys(filters) as (keyof Filters)[]).some(
+    (key) => filters[key] !== NO_FILTERS[key],
+  );
+  const save = async (change: () => Promise<void>) => {
+    try {
+      await change();
+      setProblem(undefined);
+    } catch (error) {
+      setProblem(saveProblem(error));
+    }
+  };
 
   return (
     <div class="job-list">
@@ -155,7 +287,18 @@ function JobList({ meta, postings, updating, roleTypeOrder, now }: JobListProps)
         )}
       </div>
 
-      {postings.length === 0 ? (
+      {queue.kind === "failed" && (
+        <p class="notice notice-problem" role="alert">
+          Your Queue stopped loading. Reload the page to try again.
+        </p>
+      )}
+      {problem && (
+        <p class="notice notice-problem" role="alert">
+          {problem}
+        </p>
+      )}
+
+      {postings.length === 0 && entries.length === 0 ? (
         <div class="empty">
           <h2>No Postings matched your Search Profile</h2>
           <p>
@@ -173,6 +316,27 @@ function JobList({ meta, postings, updating, roleTypeOrder, now }: JobListProps)
               event.preventDefault();
             }}
           >
+            <fieldset class="filter filter-show">
+              <legend class="filter-label">Show</legend>
+              <div class="segments">
+                {SHOW_OPTIONS.map(({ value, label }) => (
+                  <label key={value} class="segment">
+                    <input
+                      type="radio"
+                      name="job-list-show"
+                      value={value}
+                      checked={filters.show === value}
+                      onChange={() => {
+                        update({ show: value });
+                      }}
+                    />
+                    <span>
+                      {label} <span class="segment-count numeric">{counts[value]}</span>
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </fieldset>
             <div class="filter filter-search">
               <label class="filter-label" for="job-list-search">
                 Search
@@ -259,7 +423,7 @@ function JobList({ meta, postings, updating, roleTypeOrder, now }: JobListProps)
             <p aria-live="polite">
               {filtered
                 ? `Showing ${count(matches.length, "Posting")} of ${postings.length.toLocaleString("en-US")}`
-                : `Showing all ${count(postings.length, "Posting")}, best first`}
+                : `Showing all ${count(matches.length, "Posting")}, best first`}
             </p>
             {filtered && (
               <button
@@ -276,14 +440,17 @@ function JobList({ meta, postings, updating, roleTypeOrder, now }: JobListProps)
           </div>
 
           {matches.length === 0 ? (
-            <div class="empty empty-compact">
-              <h2>No Postings match these filters</h2>
-              <p>Try a broader search or clear the filters.</p>
-            </div>
+            <EmptyView show={filters.show} filtered={filtered} />
           ) : (
             <ol class="postings" aria-label="Job List">
-              {matches.slice(0, shown).map(({ posting, rank }) => (
-                <PostingRow key={posting.id} posting={posting} rank={rank} now={now} />
+              {matches.slice(0, shown).map((entry) => (
+                <PostingRow
+                  key={entry.posting.id}
+                  entry={entry}
+                  actions={queue.kind === "ready" ? actions : null}
+                  save={save}
+                  now={now}
+                />
               ))}
             </ol>
           )}
@@ -301,6 +468,74 @@ function JobList({ meta, postings, updating, roleTypeOrder, now }: JobListProps)
           )}
         </>
       )}
+
+      <QueueBar
+        queue={queue}
+        size={counts.queued}
+        possiblyClosed={counts.possiblyClosed}
+        target={dailyQueueTarget}
+      />
+    </div>
+  );
+}
+
+function EmptyView({ show, filtered }: { show: Show; filtered: boolean }) {
+  const onlyShow = filtered && show !== "all";
+  if (show === "queued" && onlyShow) {
+    return (
+      <div class="empty empty-compact">
+        <h2>No queued Postings match</h2>
+        <p>Tick a Posting to add it to your Queue, or clear the filters.</p>
+      </div>
+    );
+  }
+  if (show === "skipped" && onlyShow) {
+    return (
+      <div class="empty empty-compact">
+        <h2>No skipped Postings match</h2>
+        <p>Postings you untick from your Queue wait here, so you can un-skip them.</p>
+      </div>
+    );
+  }
+  return (
+    <div class="empty empty-compact">
+      <h2>No Postings match these filters</h2>
+      <p>Try a broader search or clear the filters.</p>
+    </div>
+  );
+}
+
+function QueueBar({
+  queue,
+  size,
+  possiblyClosed,
+  target,
+}: {
+  queue: QueueState;
+  size: number;
+  possiblyClosed: number;
+  target: number | undefined;
+}) {
+  return (
+    <div class="queue-bar" role="region" aria-label="Queue">
+      {queue.kind === "loading" ? (
+        <p class="muted">Loading your Queue…</p>
+      ) : (
+        <p class="queue-bar-count">
+          <span>
+            <strong class="numeric">{size.toLocaleString("en-US")}</strong>{" "}
+            {size === 1 ? "Posting" : "Postings"} in your Queue
+          </span>
+          {target !== undefined && <span class="muted numeric">Daily target {target}</span>}
+          {possiblyClosed > 0 && (
+            <span class="queue-bar-warning numeric">{possiblyClosed} possibly closed</span>
+          )}
+        </p>
+      )}
+      <a class="queue-bar-link" href="#progress">
+        <span class="queue-bar-link-lead">Open the </span>Progress board
+        <span aria-hidden="true"> →</span>
+      </a>
     </div>
   );
 }
@@ -337,14 +572,65 @@ function Select({
 
 const SHOWN_LOCATIONS = 2;
 
-function PostingRow({ posting, rank, now }: { posting: Posting; rank: number; now: number }) {
+interface PostingRowProps {
+  entry: Entry;
+  /** Null while the Queue loads or when changes can't be saved. */
+  actions: QueueActions | null;
+  save: (change: () => Promise<void>) => Promise<void>;
+  now: number;
+}
+
+function PostingRow({ entry, actions, save, now }: PostingRowProps) {
+  const { posting, rank, card, skip } = entry;
+  const [asking, setAsking] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const tick = useRef<HTMLButtonElement>(null);
+  const queued = isQueued(entry);
+  const skipped = isSkipped(entry);
   const extra = posting.locations.length - SHOWN_LOCATIONS;
   const lists = posting.sources.map((source) => source.list ?? source.name);
+  const age = queued && card ? queueAgeDays(card.queuedAt, now) : 0;
+  const disabled = !actions || busy;
+
+  const run = async (change: (actions: QueueActions) => Promise<void>) => {
+    if (!actions) return;
+    setBusy(true);
+    await save(() => change(actions));
+    setBusy(false);
+  };
+  const closePrompt = () => {
+    setAsking(false);
+    tick.current?.focus();
+  };
+
+  const classes = ["posting", queued && "posting-queued", skipped && "posting-skipped"];
   return (
-    <li class="posting">
+    <li class={classes.filter(Boolean).join(" ")}>
+      <div class="posting-tick">
+        {(card === undefined || queued) && (
+          <button
+            ref={tick}
+            type="button"
+            role="checkbox"
+            class="tick"
+            aria-checked={queued}
+            aria-disabled={disabled}
+            aria-label={`${queued ? "In your Queue" : "Add to your Queue"}: ${posting.title} at ${posting.company}`}
+            onClick={() => {
+              if (disabled) return;
+              if (queued) setAsking((open) => !open);
+              else void run((a) => a.tick(posting, skipped));
+            }}
+          />
+        )}
+      </div>
       <span class="posting-rank numeric">
-        <span class="visually-hidden">Rank </span>
-        {rank}
+        {rank !== undefined && (
+          <>
+            <span class="visually-hidden">Rank </span>
+            {rank}
+          </>
+        )}
       </span>
       <div class="posting-main">
         <h3 class="posting-title">
@@ -363,6 +649,22 @@ function PostingRow({ posting, rank, now }: { posting: Posting; rank: number; no
           <li>{formatLevel(posting.level)}</li>
           <li>{formatPostedAge(posting.postedOn, now)}</li>
         </ul>
+        <QueueFlags entry={entry} age={age} />
+        {skipped && skip && (
+          <p class="posting-skip">
+            <span class="flag">Skipped: {SKIP_REASON_LABELS[skip.reason].toLowerCase()}</span>
+            <button
+              type="button"
+              class="link-button"
+              aria-disabled={disabled}
+              onClick={() => {
+                if (!disabled) void run((a) => a.unskip(posting.id));
+              }}
+            >
+              Un-skip
+            </button>
+          </p>
+        )}
       </div>
       <div class="posting-side">
         <span class="score numeric" title="Score within its Location Tier, out of 100">
@@ -381,7 +683,92 @@ function PostingRow({ posting, rank, now }: { posting: Posting; rank: number; no
           {lists.join(", ")}
         </p>
       </div>
+      {asking && queued && (
+        <SkipPrompt
+          title={posting.title}
+          onCancel={closePrompt}
+          onChoose={(reason) => {
+            setAsking(false);
+            void run((a) => a.skip(posting, reason));
+          }}
+        />
+      )}
     </li>
+  );
+}
+
+function QueueFlags({ entry, age }: { entry: Entry; age: number }) {
+  const { card, rank } = entry;
+  const flags: { text: string; warning?: boolean }[] = [];
+  if (card && card.stage !== "queued") flags.push({ text: STAGE_LABELS[card.stage] });
+  if (isQueued(entry)) {
+    if (rank === undefined) flags.push({ text: "No longer in your Job List", warning: true });
+    if (age >= 1) flags.push({ text: `${count(age, "day")} in Queue` });
+    if (age >= POSSIBLY_CLOSED_DAYS) flags.push({ text: "Possibly closed", warning: true });
+  }
+  if (flags.length === 0) return null;
+  return (
+    <ul class="flags">
+      {flags.map(({ text, warning }) => (
+        <li key={text} class={warning ? "flag flag-warning" : "flag"}>
+          {text}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function SkipPrompt({
+  title,
+  onChoose,
+  onCancel,
+}: {
+  title: string;
+  onChoose: (reason: SkipReason) => void;
+  onCancel: () => void;
+}) {
+  const box = useRef<HTMLDivElement>(null);
+  const first = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    first.current?.focus({ preventScroll: true });
+    // Its scroll margin keeps the prompt clear of the sticky Queue bar.
+    box.current?.scrollIntoView({ block: "nearest" });
+  }, []);
+  return (
+    <div
+      ref={box}
+      class="skip-prompt"
+      role="group"
+      aria-label={`Why skip ${title}?`}
+      onKeyDown={(event) => {
+        if (event.key === "Escape") {
+          event.preventDefault();
+          onCancel();
+        }
+      }}
+    >
+      <p class="skip-prompt-question" aria-hidden="true">
+        Why skip it?
+      </p>
+      <div class="skip-prompt-reasons">
+        {SKIP_REASONS.map((reason, index) => (
+          <button
+            key={reason}
+            ref={index === 0 ? first : null}
+            type="button"
+            class="chip"
+            onClick={() => {
+              onChoose(reason);
+            }}
+          >
+            {SKIP_REASON_LABELS[reason]}
+          </button>
+        ))}
+        <button type="button" class="link-button skip-prompt-cancel" onClick={onCancel}>
+          Keep in Queue
+        </button>
+      </div>
+    </div>
   );
 }
 

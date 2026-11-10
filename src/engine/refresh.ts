@@ -1,15 +1,18 @@
 /**
- * The Refresh engine core: Source Postings, the settings document and the current Job List in;
- * the new Job List, a change set of dashboard writes and a summary out. It is deterministic and
+ * The Refresh engine core: Source Postings, the settings document, the current Job List and the
+ * Queue in; the new Job List, the Postings it pre-queued, a change set of dashboard writes and a
+ * summary out. It is deterministic and
  * makes no network or Claude calls: fetching Sources and resolving short links happen in the
  * adapter (src/refresh/), which hands this module plain data.
  */
 import {
+  CARDS_COLLECTION,
   JOB_LIST_META_ID,
   MAX_JOB_LIST,
   POSTINGS_COLLECTION,
   POSTINGS_PER_PAGE,
   jobListPageId,
+  type Card,
   type JobListMeta,
   type JobListPage,
   type LocationTier,
@@ -29,6 +32,7 @@ import {
 } from "./companies.ts";
 import { freshness, postedOnFrom } from "./freshness.ts";
 import { locationTierOf, parseLocations, unmatchedTierLocations, type Place } from "./locations.ts";
+import { planQueue, type CurrentQueue, type QueueSummary } from "./queue.ts";
 import { levelOf, matchRoleType, withinStartWindow } from "./roles.ts";
 import type { SourcePosting, SourceResult } from "./source.ts";
 import { canonicalApplyUrl, isShortLink, postingId } from "./urls.ts";
@@ -45,13 +49,15 @@ export interface RefreshInput {
   settings: Settings;
   sources: readonly SourceResult[];
   current: CurrentJobList;
+  /** The Queue and skips as the dashboard database holds them now. */
+  queue: CurrentQueue;
   /** Where each short link leads, from the adapter. Unresolved links stay as they are. */
   resolvedLinks?: Readonly<Record<string, string>>;
 }
 
 export interface ChangeSet {
-  /** Documents to write whole, pages first and the meta document last. */
-  set: { collection: string; docId: string; data: JobListPage | JobListMeta }[];
+  /** Documents to write whole: Job List pages, then the meta document, then new Queue cards. */
+  set: { collection: string; docId: string; data: JobListPage | JobListMeta | Card }[];
   /** Documents to remove. */
   delete: { collection: string; docId: string }[];
 }
@@ -82,11 +88,14 @@ export interface RefreshSummary {
   /** Location Tier entries that matched no location in any Source. */
   unmatchedLocations: string[];
   top: Pick<Posting, "company" | "title" | "locations" | "locationTier" | "score" | "applyUrl">[];
+  queue: QueueSummary;
 }
 
 export interface RefreshResult {
   jobList: Posting[];
   meta: JobListMeta;
+  /** The cards this Refresh pre-queued, in Queue order. */
+  preQueued: Card[];
   changeSet: ChangeSet;
   summary: RefreshSummary;
 }
@@ -166,7 +175,7 @@ interface Matching {
 }
 
 function match(
-  input: Omit<RefreshInput, "resolvedLinks">,
+  input: Omit<RefreshInput, "resolvedLinks" | "queue">,
   resolvedLinks: Readonly<Record<string, string>>,
 ): Matching {
   const filteredOut: FilteredOut = { location: 0, seniority: 0, startWindow: 0, roleType: 0 };
@@ -215,7 +224,9 @@ function match(
 }
 
 /** The short links among matching Postings, for the adapter to resolve before `runRefresh`. */
-export function shortLinksToResolve(input: Omit<RefreshInput, "resolvedLinks">): string[] {
+export function shortLinksToResolve(
+  input: Omit<RefreshInput, "resolvedLinks" | "queue">,
+): string[] {
   const { candidates } = match(input, {});
   return [...new Set(candidates.filter((c) => c.unresolved).map((c) => c.rawUrl))];
 }
@@ -405,6 +416,12 @@ export function runRefresh(input: RefreshInput): RefreshResult {
     matched: ranked.length,
     sources: matching.sourceReports,
   };
+  const queue = planQueue({
+    now,
+    dailyQueueTarget: settings.dailyQueueTarget,
+    jobList,
+    queue: input.queue,
+  });
   const keptPages = new Set(pages.map((p) => jobListPageId(p.page)));
   const changeSet: ChangeSet = {
     set: [
@@ -414,6 +431,11 @@ export function runRefresh(input: RefreshInput): RefreshResult {
         data,
       })),
       { collection: POSTINGS_COLLECTION, docId: JOB_LIST_META_ID, data: meta },
+      ...queue.cards.map((data) => ({
+        collection: CARDS_COLLECTION,
+        docId: data.postingId,
+        data,
+      })),
     ],
     delete: current.pages
       .map((page) => jobListPageId(page.page))
@@ -454,6 +476,7 @@ export function runRefresh(input: RefreshInput): RefreshResult {
         score: s,
         applyUrl,
       })),
+    queue: queue.summary,
   };
-  return { jobList, meta, changeSet, summary };
+  return { jobList, meta, preQueued: queue.cards, changeSet, summary };
 }

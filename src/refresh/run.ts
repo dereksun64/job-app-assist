@@ -5,20 +5,28 @@
  * ready-to-send ArtifactData batches under `<dir>/out`.
  *
  * Layout of `<dir>`:
- * - state/settings/main.json, state/postings/<doc-id>.json: the current dashboard documents.
+ * - state/settings/main.json, state/postings/<doc-id>.json, state/cards/<doc-id>.json,
+ *   state/skips/<doc-id>.json: the current dashboard documents.
  * - versions.json: `{ "postings/<doc-id>": <version> }` for every postings document read.
  * - short-links.json: short links resolved on earlier Refreshes (kept between runs).
- * - out/postings/<doc-id>.json, out/writes.json, out/summary.json: what this run produced.
+ * - out/postings/<doc-id>.json, out/cards/<doc-id>.json, out/writes.json, out/summary.json: what
+ *   this run produced. Refresh only creates cards, so card writes carry no version.
  */
 import { join, resolve } from "node:path";
 import {
+  CARDS_COLLECTION,
+  POSSIBLY_CLOSED_DAYS,
   POSTINGS_COLLECTION,
+  SKIPS_COLLECTION,
+  validateCardDocument,
   validateDocument,
   validatePostingsDocument,
   validateSettings,
+  type Card,
   type JobListMeta,
   type JobListPage,
 } from "../contract/index.ts";
+import type { CurrentQueue } from "../engine/queue.ts";
 import {
   runRefresh,
   shortLinksToResolve,
@@ -103,6 +111,33 @@ async function readState(io: RefreshIo, dir: string): Promise<State> {
   return { current, existing };
 }
 
+/** The ids of the JSON documents saved for one collection. */
+async function savedIds(io: RefreshIo, folder: string): Promise<string[]> {
+  return (await io.readDir(folder))
+    .filter((name) => name.endsWith(".json"))
+    .map((name) => name.slice(0, -".json".length))
+    .sort();
+}
+
+/**
+ * The Queue and skips. A card or skip that does not match the contract still counts as taken,
+ * so Refresh never writes over a card or re-queues a skip it could not read.
+ */
+async function readQueue(io: RefreshIo, dir: string): Promise<CurrentQueue> {
+  const cardsFolder = join(dir, "state", CARDS_COLLECTION);
+  const cardIds = await savedIds(io, cardsFolder);
+  const cards: Card[] = [];
+  for (const docId of cardIds) {
+    const result = validateCardDocument(
+      docId,
+      await readJson(io, join(cardsFolder, `${docId}.json`)),
+    );
+    if (result.ok) cards.push(result.value as Card);
+  }
+  const skippedIds = await savedIds(io, join(dir, "state", SKIPS_COLLECTION));
+  return { cards, cardIds, skippedIds };
+}
+
 async function readVersions(io: RefreshIo, dir: string): Promise<Record<string, number>> {
   const json = await readJson(io, join(dir, "versions.json"));
   if (json === undefined) return {};
@@ -150,6 +185,7 @@ function batchesOf(writes: readonly { write: BatchWrite; bytes: number }[]): Bat
 }
 
 const number = (n: number) => n.toLocaleString("en-US");
+const count = (n: number, one: string, many = `${one}s`) => `${number(n)} ${n === 1 ? one : many}`;
 
 export function formatSummary(
   summary: RefreshSummary,
@@ -196,6 +232,20 @@ export function formatSummary(
   if (summary.unmatchedLocations.length > 0) {
     lines.push(
       `Location Tier entries that matched no Posting location: ${summary.unmatchedLocations.join(", ")}.`,
+    );
+  }
+  const { queue } = summary;
+  lines.push(
+    `Queue: ${count(queue.size, "Posting")} for a daily target of ${number(queue.target)}; ${number(queue.preQueued)} pre-queued now and ${number(queue.carriedOver)} carried over.`,
+  );
+  if (queue.possiblyClosed > 0) {
+    lines.push(
+      `${count(queue.possiblyClosed, "Queue item has", "Queue items have")} waited ${String(POSSIBLY_CLOSED_DAYS)} or more days and may have closed.`,
+    );
+  }
+  if (queue.notListed > 0) {
+    lines.push(
+      `${count(queue.notListed, "Queue item is", "Queue items are")} no longer in the Job List; the Posting may have closed.`,
     );
   }
   if (summary.top.length > 0) {
@@ -246,7 +296,8 @@ export async function runRefreshCommand(
 
     const now = io.now();
     const feed = await readFeed(io, now, options.feed);
-    const base = { now, settings: settings.value, sources: [feed], current };
+    const queue = await readQueue(io, dir);
+    const base = { now, settings: settings.value, sources: [feed], current, queue };
 
     const cachePath = join(dir, "short-links.json");
     const cacheJson = await readJson(io, cachePath);
@@ -264,8 +315,10 @@ export async function runRefreshCommand(
 
     const out = join(dir, "out");
     await io.removeDir(out);
-    await io.makeDir(join(out, POSTINGS_COLLECTION));
-    const versionOf = (docId: string) => versions[`${POSTINGS_COLLECTION}/${docId}`];
+    for (const collection of new Set(changeSet.set.map((w) => w.collection))) {
+      await io.makeDir(join(out, collection));
+    }
+    const versionOf = (collection: string, docId: string) => versions[`${collection}/${docId}`];
     const writes: { write: BatchWrite; bytes: number }[] = [];
     for (const { collection, docId, data } of changeSet.set) {
       const check = validateDocument(collection, docId, data);
@@ -278,18 +331,20 @@ export async function runRefreshCommand(
       const text = `${JSON.stringify(data)}\n`;
       await io.writeFile(filePath, text);
       const write: BatchWrite = { op: "set", collection, doc_id: docId, file_path: filePath };
-      const version = versionOf(docId);
+      const version = versionOf(collection, docId);
       if (version !== undefined) write.if_version = version;
       writes.push({ write, bytes: Buffer.byteLength(text) });
     }
-    const written = new Set(changeSet.set.map((w) => w.docId));
+    const written = new Set(
+      changeSet.set.filter((w) => w.collection === POSTINGS_COLLECTION).map((w) => w.docId),
+    );
     const removals = new Set([
       ...changeSet.delete.map((d) => d.docId),
       ...existing.filter((id) => !written.has(id)),
     ]);
     for (const docId of [...removals].sort()) {
       const write: BatchWrite = { op: "delete", collection: POSTINGS_COLLECTION, doc_id: docId };
-      const version = versionOf(docId);
+      const version = versionOf(POSTINGS_COLLECTION, docId);
       if (version !== undefined) write.if_version = version;
       writes.push({ write, bytes: 0 });
     }

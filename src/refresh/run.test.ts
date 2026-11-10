@@ -1,6 +1,7 @@
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import type { JobListMeta, JobListPage, Settings } from "../contract/index.ts";
+import type { Card, JobListMeta, JobListPage, Posting, Settings, Skip } from "../contract/index.ts";
+import { postingId } from "../engine/urls.ts";
 import { JOB_FEED_URL, parseJobFeed, readJobFeed, type Fetch } from "./job-feed.ts";
 import { runRefreshCommand, type BatchWrite, type RefreshIo } from "./run.ts";
 import { resolveShortLinks } from "./short-links.ts";
@@ -238,6 +239,10 @@ function readOut<T>(io: { disk: Map<string, string> }, ...parts: string[]): T {
   return JSON.parse(text) as T;
 }
 
+function page1Ids(io: { disk: Map<string, string> }): string[] {
+  return readOut<JobListPage>(io, "out", "postings", "page-1.json").postings.map((p) => p.id);
+}
+
 describe("jaa refresh", () => {
   const feed = feedJson([
     job(),
@@ -275,6 +280,12 @@ describe("jaa refresh", () => {
           doc_id: "meta",
           file_path: at("out", "postings", "meta.json"),
         },
+        ...page1Ids(io).map((id) => ({
+          op: "set",
+          collection: "cards",
+          doc_id: id,
+          file_path: at("out", "cards", `${id}.json`),
+        })),
       ],
     ]);
     const page = readOut<JobListPage>(io, "out", "postings", "page-1.json");
@@ -297,6 +308,81 @@ describe("jaa refresh", () => {
     expect(io.out).toContain("- Job Feed: read 3 Postings.");
     expect(io.out).toContain("Left out: 1 outside your Location Tiers");
     expect(io.out).toContain("1. Acme: Software Engineer, New Grad (New York, NY; Tier 1; score");
+  });
+
+  it("pre-queues up to the daily target around the Queue and skips it read", async () => {
+    const urls = [1, 2, 3, 4].map((n) => `https://job-boards.greenhouse.io/acme/jobs/${String(n)}`);
+    const [queuedId, skippedId, unreadableId, freshId] = urls.map(postingId);
+    const fetch = fakeFetch({
+      [JOB_FEED_URL]: json(
+        feedJson(
+          urls.map((applyUrl, i) =>
+            job({ applyUrl, title: `Software Engineer ${String(i + 1)}, New Grad` }),
+          ),
+        ),
+      ),
+    });
+    const snapshot = (id: string, n: number): Posting => ({
+      id,
+      applyUrl: urls[n] ?? "",
+      company: "Acme",
+      title: "Software Engineer, New Grad",
+      locations: ["New York, NY"],
+      locationTier: 1,
+      roleType: "Software Engineer",
+      level: "new_grad",
+      postedOn: "2026-11-01",
+      sources: [{ name: "Job Feed" }],
+      score: 80,
+      boosts: [],
+    });
+    const queued: Card = {
+      schemaVersion: 1,
+      postingId: queuedId ?? "",
+      stage: "queued",
+      queuedAt: "2026-11-04T15:00:00.000Z",
+      queuedBy: "refresh",
+      posting: snapshot(queuedId ?? "", 0),
+      updatedAt: "2026-11-04T15:00:00.000Z",
+    };
+    const skipped: Skip = {
+      schemaVersion: 1,
+      postingId: skippedId ?? "",
+      reason: "wrong_company",
+      skippedAt: "2026-11-05T15:00:00.000Z",
+      posting: snapshot(skippedId ?? "", 1),
+    };
+    const io = memoryIo(
+      {
+        [`${dir}/state/settings/main.json`]: JSON.stringify({ ...settings, dailyQueueTarget: 3 }),
+        [`${dir}/state/cards/${queuedId ?? ""}.json`]: JSON.stringify(queued),
+        [`${dir}/state/cards/${unreadableId ?? ""}.json`]: JSON.stringify({ old: "shape" }),
+        [`${dir}/state/skips/${skippedId ?? ""}.json`]: JSON.stringify(skipped),
+      },
+      fetch,
+    );
+    expect(await runRefreshCommand(dir, {}, io)).toBe(0);
+    expect(io.err).toBe("");
+    const { batches } = readOut<{ batches: BatchWrite[][] }>(io, "out", "writes.json");
+    const cardWrites = batches.flat().filter((w) => w.collection === "cards");
+    expect(cardWrites).toEqual([
+      {
+        op: "set",
+        collection: "cards",
+        doc_id: freshId,
+        file_path: at("out", "cards", `${freshId ?? ""}.json`),
+      },
+    ]);
+    expect(readOut<Card>(io, "out", "cards", `${freshId ?? ""}.json`)).toMatchObject({
+      postingId: freshId,
+      stage: "queued",
+      queuedBy: "refresh",
+      queuedAt: NOW,
+    });
+    expect(io.out).toContain(
+      "Queue: 2 Postings for a daily target of 3; 1 pre-queued now and 1 carried over.",
+    );
+    expect(io.out).toContain("1 Queue item has waited 5 or more days and may have closed.");
   });
 
   it("pins writes to the versions read and deletes documents the new Job List does not use", async () => {
@@ -334,6 +420,7 @@ describe("jaa refresh", () => {
     expect(batches[0]?.map(({ op, doc_id, if_version }) => [op, doc_id, if_version])).toEqual([
       ["set", "page-1", 3],
       ["set", "meta", 7],
+      ["set", page1Ids(io)[0], undefined],
       ["delete", "page-2", 2],
     ]);
     expect(io.disk.has(at("out", "postings", "page-9.json"))).toBe(false);
