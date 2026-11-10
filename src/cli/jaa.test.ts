@@ -36,6 +36,8 @@ function io(
     removeDir: () => Promise.resolve(),
     fetch: () => Promise.reject(new Error("no network in tests")),
     now: () => "2026-11-10T15:00:00.000Z",
+    timeZone: () => "UTC",
+    sleep: () => Promise.resolve(),
     readStdin: () => Promise.resolve(stdin),
     fileSize: (path: string) => Promise.resolve(sizes[path]),
     stdout: (text: string) => {
@@ -99,6 +101,10 @@ describe("jaa usage", () => {
     [["refresh", "dir", "--rerun", "--feed", "x"]],
     [["check-resumes"]],
     [["check-resumes", "m.json", "--settings"]],
+    [["news"]],
+    [["news", "publish", "dir"]],
+    [["news", "plan"]],
+    [["news", "build", "dir", "extra"]],
   ])("prints usage and exits 2 for %j", async (argv) => {
     const cli = io();
     expect(await runCli(argv, cli)).toBe(2);
@@ -110,6 +116,13 @@ describe("jaa usage", () => {
     expect(await runCli(["--help"], cli)).toBe(0);
     expect(cli.out).toContain("Usage: jaa validate");
     expect(cli.out).toContain("jaa refresh <dir>");
+    expect(cli.out).toContain("jaa news plan <dir>");
+  });
+
+  it("runs news build and asks for the plan first", async () => {
+    const cli = io();
+    expect(await runCli(["news", "build", "some/dir"], cli)).toBe(1);
+    expect(cli.err).toContain("Run jaa news plan first.");
   });
 
   it("runs refresh and reports missing settings", async () => {

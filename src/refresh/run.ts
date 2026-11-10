@@ -87,9 +87,10 @@ export interface BatchWrite {
 const BATCH_MAX_WRITES = 50;
 const BATCH_MAX_BYTES = 900 * 1024;
 
-class RefreshError extends Error {}
+/** A problem the skill can fix; the CLI prints its message and exits 1. */
+export class RefreshError extends Error {}
 
-async function readJson(io: RefreshIo, path: string): Promise<unknown> {
+export async function readJson(io: RefreshIo, path: string): Promise<unknown> {
   let text: string;
   try {
     text = await io.readFile(path);
@@ -131,7 +132,7 @@ async function readState(io: RefreshIo, dir: string): Promise<State> {
 }
 
 /** The ids of the JSON documents saved for one collection. */
-async function savedIds(io: RefreshIo, folder: string): Promise<string[]> {
+export async function savedIds(io: RefreshIo, folder: string): Promise<string[]> {
   return (await io.readDir(folder))
     .filter((name) => name.endsWith(".json"))
     .map((name) => name.slice(0, -".json".length))
@@ -246,7 +247,7 @@ interface SavedSources {
   sources: SourceResult[];
 }
 
-function batchesOf(writes: readonly { write: BatchWrite; bytes: number }[]): BatchWrite[][] {
+export function batchesOf(writes: readonly { write: BatchWrite; bytes: number }[]): BatchWrite[][] {
   const batches: BatchWrite[][] = [];
   let batch: BatchWrite[] = [];
   let size = 0;

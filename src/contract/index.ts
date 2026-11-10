@@ -3,6 +3,7 @@
  * Skills write only documents this module accepts, and the dashboard page reads through it.
  */
 import { CARDS_COLLECTION, validateCardDocument } from "./cards.ts";
+import { NEWS_COLLECTION, validateNewsDocument } from "./news.ts";
 import { POSTINGS_COLLECTION, validatePostingsDocument } from "./postings.ts";
 import { SETTINGS_COLLECTION, SETTINGS_DOC_ID, validateSettings } from "./settings.ts";
 import { SKIPS_COLLECTION, validateSkipDocument } from "./skips.ts";
@@ -14,6 +15,7 @@ import {
 } from "./variant-overrides.ts";
 
 export * from "./cards.ts";
+export * from "./news.ts";
 export * from "./postings.ts";
 export * from "./settings.ts";
 export * from "./skips.ts";
@@ -37,9 +39,10 @@ const collections: Record<string, CollectionRule> = {
   [SKIPS_COLLECTION]: validateSkipDocument,
   [VARIANT_OVERRIDES_COLLECTION]: validateVariantOverrideDocument,
   [SOURCES_COLLECTION]: validateSourceDocument,
+  [NEWS_COLLECTION]: validateNewsDocument,
 };
 
-/** The collections the contract defines so far; later tickets add sources, news and more. */
+/** The collections the contract defines so far. */
 export const CONTRACT_COLLECTIONS: readonly string[] = Object.keys(collections);
 
 /** Checks one document, addressed by collection and id, against the contract. */

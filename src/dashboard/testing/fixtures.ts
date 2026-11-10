@@ -3,10 +3,12 @@ import type {
   Card,
   JobListMeta,
   JobListPage,
+  NewsDigest,
   Posting,
   Settings,
   Skip,
 } from "../../contract/index.ts";
+import { sampleDigest } from "../../contract/testing/fixtures.ts";
 
 export const NOW = Date.parse("2026-11-10T15:00:00.000Z");
 export const REFRESHED = "2026-11-10T14:30:00.000Z";
@@ -109,4 +111,12 @@ export function skipDoc(of: Posting, overrides: Partial<Skip> = {}): Record<stri
       ...overrides,
     },
   };
+}
+
+/** A News Digest document for a day, keyed by its path. */
+export function newsDoc(
+  day: string,
+  overrides: Partial<NewsDigest> = {},
+): Record<string, NewsDigest> {
+  return { [`news/${day}`]: sampleDigest({ day, builtAt: `${day}T14:30:00.000Z`, ...overrides }) };
 }

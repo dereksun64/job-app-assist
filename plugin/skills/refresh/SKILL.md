@@ -1,7 +1,7 @@
 ---
 name: refresh
-description: Refresh the Candidate's Job List and Queue. Pulls Postings from the Candidate's enabled Sources (the Job Feed, their watchlist companies' job boards and Postings they added by URL), keeps the ones that match the Search Profile, ranks them, picks a Resume Variant for each, pre-queues the best ones up to the daily Queue target, writes them to the dashboard's Postings tab and ends with a short summary in chat. Use when the Candidate asks to refresh, update their jobs, or see today's Postings.
-allowed-tools: Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs refresh .job-app-assist/refresh) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs refresh .job-app-assist/refresh --rerun) Bash(rm -rf .job-app-assist/refresh/state .job-app-assist/refresh/out) Bash(mkdir -p .job-app-assist/refresh) Bash(cp ${CLAUDE_PLUGIN_ROOT}/dist/dashboard.html .job-app-assist/dashboard.html)
+description: Refresh the Candidate's Job List, Queue and News Digest. Pulls Postings from the Candidate's enabled Sources (the Job Feed, their watchlist companies' job boards and Postings they added by URL), keeps the ones that match the Search Profile, ranks them, picks a Resume Variant for each, pre-queues the best ones up to the daily Queue target, writes them to the dashboard's Postings tab, builds the day's News Digest for the News tab and ends with a short summary in chat. Use when the Candidate asks to refresh, update their jobs, see today's Postings or catch up on the news.
+allowed-tools: Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs refresh .job-app-assist/refresh) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs refresh .job-app-assist/refresh --rerun) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs news plan .job-app-assist/refresh) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs news build .job-app-assist/refresh) WebSearch WebFetch(domain:news.ycombinator.com) Bash(rm -rf .job-app-assist/refresh/state .job-app-assist/refresh/out) Bash(mkdir -p .job-app-assist/refresh) Bash(cp ${CLAUDE_PLUGIN_ROOT}/dist/dashboard.html .job-app-assist/dashboard.html)
 ---
 
 # Refresh
@@ -9,7 +9,8 @@ allowed-tools: Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs refresh .job-app-ass
 Refresh rebuilds the Candidate's Job List: every Posting from their Sources that matches their Search Profile, ranked best first, on the Postings tab of their dashboard.
 It then tops up the Queue: the best-ranked Postings are pre-queued until the Queue holds the daily Queue target, higher Location Tiers first.
 Unsubmitted Queue items carry over and count toward the target, and a Posting the Candidate skipped is never pre-queued again.
-The ranking, filtering, dedupe, Resume Variant picks and pre-queueing happen in `jaa refresh`, a deterministic program; your part is to hand it the dashboard state, review the picks it is unsure about, apply what it produces, and tell the Candidate what changed.
+Last, it builds the day's News Digest on the News tab: hiring signals from the Job List, forum highlights, news about companies in the Queue, and 5 to 8 industry stories.
+The ranking, filtering, dedupe, Resume Variant picks and pre-queueing happen in `jaa refresh`, a deterministic program, and `jaa news` computes the hiring signals; your part is to hand them the dashboard state, review the picks `jaa refresh` is unsure about, gather the news in chat, apply what they produce, and tell the Candidate what changed.
 The current working directory is the Candidate folder.
 
 ## 1. Load the hard rules
@@ -55,9 +56,11 @@ Read with `ArtifactData`, saving the documents as files: pass `out_dir` as the a
 - `action: "list"`, `collection: "cards"`, then `action: "list"`, `collection: "skips"`.
   These hold the Queue and the Postings the Candidate skipped; both are empty until the first Refresh or the first tick.
   Read every page of each listing, so no queued or skipped Posting is missed.
+- `action: "list"`, `collection: "news"`.
+  It holds one News Digest per day; it is empty before the first digest.
 
 Each read reports a `version` for every document.
-Use the Write tool to save `.job-app-assist/refresh/versions.json` mapping each postings document you read to its version, for example `{ "postings/meta": 4, "postings/page-1": 4 }`, or `{}` when there were none.
+Use the Write tool to save `.job-app-assist/refresh/versions.json` mapping each postings and news document you read to its version, for example `{ "postings/meta": 4, "postings/page-1": 4, "news/2026-11-09": 1 }`, or `{}` when there were none.
 Cards and skips need no versions: Refresh only creates new cards and never changes a card or skip that exists.
 Do not open the saved files; `jaa refresh` reads them.
 
@@ -119,7 +122,97 @@ For each batch, in order, call `ArtifactData` with `action: "batch"`, the dashbo
 
 Then read `postings/meta` with `action: "get"` and check that its `refreshedAt` is the one in `.job-app-assist/refresh/out/summary.json`.
 
-## 8. Summarize in chat
+## 8. Build the News Digest
+
+The digest has four sections.
+Hiring signals come from the Job List and are computed for you; you gather the other three in chat with web search and page reads.
+Every item links to its source, and the dashboard page reads nothing from the web itself.
+
+### Plan it
+
+```bash
+node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs news plan .job-app-assist/refresh
+```
+
+It reads the forums' threads for the day, then prints the digest's day, the hiring signals, the companies in the Queue, how each forum read went, and how many sources the past week's digests already linked.
+`.job-app-assist/refresh/out/news-plan.json` holds the same, with the threads under `forums` and the already-linked sources under `recentUrls`; never link one of those again.
+
+### Gather the news
+
+Hard rule 3 holds here: never open, search or link Blind or LinkedIn, even when the Candidate asks; offer the forums below instead.
+Pass `blocked_domains: ["teamblind.com", "linkedin.com"]` on every `WebSearch`, since searches otherwise return their posts.
+Write every summary in your own words, in a sentence or two, without quoting.
+
+- **Forum highlights**, 2 to 4 per forum: what candidates are discussing about the job market, applications, interviews, offers, layoffs and tools.
+  Pick them from the threads under `forums` in `news-plan.json`: the day's top threads on r/csMajors and r/cscareerquestions, and the Hacker News front page.
+  Your web tools cannot reach Reddit, so write a Reddit thread's summary from its title and excerpt; for a Hacker News thread you may read its `url` with `WebFetch` to see what the comments say.
+  On Hacker News keep only stories that matter to an entry-level candidate, such as hiring, layoffs, AI tools, interviews, or a new "Ask HN: Who is hiring?" thread.
+  Link the thread `url` exactly as the plan gives it, never the article a thread links to.
+  For a forum the plan marks FAILED, add a gap naming it instead of searching elsewhere for it.
+- **Company news**, only for the companies the plan lists under Queue: for each, search the web for layoffs, hiring freezes, hiring pushes, funding and acquisitions from the past 30 days.
+  Keep only real news from a named publisher, at most two items per company, and nothing for a company with no news.
+  When the plan lists no companies, leave the section empty.
+- **Industry news**, 5 to 8 stories from the past few days across three topics: AI and LLMs, big tech moves, and the entry-level market.
+  Cover every topic when there is news for it.
+  Give each a `whyItMatters` line written for this Candidate: what it changes for their applications, or what an interviewer may ask about it.
+
+When a section or forum cannot be read, say so in `gaps` instead of leaving it silently empty, for example `{ "section": "forumHighlights", "note": "Reddit could not be read today, so r/csMajors and r/cscareerquestions are missing." }`.
+
+Use the Write tool to save the news as `.job-app-assist/refresh/out/news-gathered.json`, in this shape (days are `YYYY-MM-DD`):
+
+```json
+{
+  "forumHighlights": [
+    {
+      "forum": "r/csMajors",
+      "title": "...",
+      "summary": "...",
+      "url": "https://www.reddit.com/r/csMajors/comments/..."
+    }
+  ],
+  "companyNews": [
+    {
+      "company": "...",
+      "kind": "layoffs",
+      "headline": "...",
+      "summary": "...",
+      "url": "https://...",
+      "source": "Reuters",
+      "publishedOn": "2026-11-09"
+    }
+  ],
+  "industryNews": [
+    {
+      "topic": "ai",
+      "headline": "...",
+      "summary": "...",
+      "whyItMatters": "...",
+      "url": "https://...",
+      "source": "The Verge",
+      "publishedOn": "2026-11-09"
+    }
+  ],
+  "gaps": []
+}
+```
+
+`forum` is one of `r/csMajors`, `r/cscareerquestions` or `Hacker News`.
+`kind` is one of `layoffs`, `hiring_freeze`, `hiring`, `funding`, `acquisition` or `other`.
+`topic` is one of `ai`, `big_tech` or `entry_level_market`.
+
+### Write it to the dashboard
+
+```bash
+node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs news build .job-app-assist/refresh
+```
+
+It joins the hiring signals with your news, checks the digest against the dashboard contract, and writes `.job-app-assist/refresh/out/news-writes.json`.
+If it lists problems, fix those entries in `news-gathered.json` and run it again.
+Then send each batch in `news-writes.json` with `ArtifactData`, `action: "batch"`, exactly as listed, the same way as step 7.
+The batch sets the day's digest (a second Refresh on the same day replaces it) and removes digests older than 90 days.
+If the news cannot be written, say so in the summary; the Job List is already saved.
+
+## 9. Summarize in chat
 
 Finish with a short summary built from the `jaa refresh` output, in plain words:
 
@@ -128,10 +221,11 @@ Finish with a short summary built from the `jaa refresh` output, in plain words:
 - Queue items that may have closed (queued five or more days ago, or no longer in the Job List), so the Candidate applies soon or unticks them;
 - how many Postings got each Resume Variant, how many unsure picks you reviewed and how many you changed, and that the Candidate can change any Posting's Resume Variant in its detail drawer;
 - the top three to five Postings, each as company, title, location and a link to its apply URL;
+- the News Digest: the biggest hiring signal and one or two headlines worth reading, plus any gap `jaa news build` reported;
 - every failing Source, said plainly: which Source (or which watchlist company), what went wrong, and that today's Job List may be incomplete because of it;
 - Postings the Candidate added by URL that were left out, and why, so they can fix the details in the Sources panel or tune their Search Profile;
 - Source documents the summary says do not match the dashboard contract, with a suggestion to switch that Source off and on again in the Sources panel;
 - Location Tier entries that matched no Posting location, if any, with a suggestion to reword them by rerunning `/job-app-assist:setup`;
-- a link to the dashboard's Postings tab (the dashboard `url` followed by `#postings`).
+- links to the dashboard's Postings tab and News tab (the dashboard `url` followed by `#postings` or `#news`).
 
 Keep it to a few lines; the dashboard holds the detail.
