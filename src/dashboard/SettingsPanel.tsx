@@ -327,6 +327,7 @@ function RoleTypesSection({
   const [name, setName] = useState("");
   const [priority, setPriority] = useState<RoleTypePriority>("medium");
   const [error, setError] = useState<string | null>(null);
+  const [kept, setKept] = useState<string | null>(null);
 
   const add = async () => {
     const trimmed = name.trim();
@@ -389,12 +390,12 @@ function RoleTypesSection({
                 );
                 if (aimed.length > 0) {
                   const names = aimed.map((v) => v.name).join(" and ");
-                  setError(
+                  setKept(
                     `${role.name} stays while ${names} ${aimed.length === 1 ? "is" : "are"} aimed at it. Ask your Claude to change your Resume Variants first.`,
                   );
                   return;
                 }
-                setError(null);
+                setKept(null);
                 void save((draft) => {
                   draft.searchProfile.roleTypes.splice(index, 1);
                 });
@@ -403,6 +404,11 @@ function RoleTypesSection({
           </li>
         ))}
       </ul>
+      {kept && (
+        <p class="field-error" role="alert">
+          {kept}
+        </p>
+      )}
       <form
         class="setting-form setting-form-role"
         aria-label="Add a role type"
