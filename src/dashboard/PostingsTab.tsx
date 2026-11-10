@@ -9,6 +9,7 @@ import {
   type Posting,
   type Skip,
   type SkipReason,
+  type VariantOverride,
 } from "../contract/index.ts";
 import {
   SKIP_REASON_LABELS,
@@ -18,6 +19,8 @@ import {
   formatMoment,
   formatPostedAge,
 } from "./format.ts";
+import { PostingDrawer } from "./PostingDrawer.tsx";
+import { chosenVariant, type ChosenVariant } from "./resume-variants.ts";
 import type { JobListState } from "./useJobList.ts";
 import { saveProblem, type QueueActions, type QueueState } from "./useQueue.ts";
 
@@ -62,7 +65,16 @@ const LIST_SEPARATOR = "\u0000";
 const count = (n: number, one: string, many = `${one}s`) =>
   `${n.toLocaleString("en-US")} ${n === 1 ? one : many}`;
 
-export interface PostingsTabProps {
+/** What the Postings tab needs to show and change each Posting's Resume Variant. */
+export interface ResumeVariantProps {
+  /** The names of the Candidate's Resume Variants, in their order. */
+  resumeVariants: readonly string[];
+  /** The Candidate's own choices, by Posting id. */
+  overrides: ReadonlyMap<string, VariantOverride>;
+  onChooseVariant: (posting: Posting, variant: string) => Promise<void>;
+}
+
+export interface PostingsTabProps extends ResumeVariantProps {
   state: JobListState;
   queue: QueueState;
   /** Null when this view has no database to save Queue changes to. */
@@ -81,6 +93,7 @@ export function PostingsTab({
   dailyQueueTarget,
   roleTypeOrder,
   now,
+  ...variants
 }: PostingsTabProps) {
   switch (state.kind) {
     case "loading":
@@ -133,6 +146,7 @@ export function PostingsTab({
           dailyQueueTarget={dailyQueueTarget}
           roleTypeOrder={roleTypeOrder}
           now={now}
+          {...variants}
         />
       );
   }
@@ -158,7 +172,7 @@ function SourceProblems({ meta }: { meta: JobListMeta }) {
   );
 }
 
-interface JobListProps {
+interface JobListProps extends ResumeVariantProps {
   meta: JobListMeta;
   postings: readonly Posting[];
   updating: boolean;
@@ -205,8 +219,12 @@ function JobList({
   dailyQueueTarget,
   roleTypeOrder,
   now,
+  resumeVariants,
+  overrides,
+  onChooseVariant,
 }: JobListProps) {
   const [filters, setFilters] = useState<Filters>(NO_FILTERS);
+  const [openId, setOpenId] = useState<string | null>(null);
   const [shown, setShown] = useState(PAGE_SIZE);
   const [problem, setProblem] = useState<string | undefined>();
   const update = (patch: Partial<Filters>) => {
@@ -239,6 +257,8 @@ function JobList({
       }));
     return [...listed, ...unlisted];
   }, [postings, cards, skips]);
+  // A Posting that leaves the list (no longer listed nor queued) closes its drawer.
+  const open = openId === null ? undefined : entries.find((e) => e.posting.id === openId)?.posting;
   const matches = useMemo(
     () =>
       entries.filter(
@@ -450,6 +470,14 @@ function JobList({
                   actions={queue.kind === "ready" ? actions : null}
                   save={save}
                   now={now}
+                  variant={chosenVariant(
+                    entry.posting,
+                    overrides.get(entry.posting.id),
+                    resumeVariants,
+                  )}
+                  onOpen={() => {
+                    setOpenId(entry.posting.id);
+                  }}
                 />
               ))}
             </ol>
@@ -467,6 +495,19 @@ function JobList({
             </button>
           )}
         </>
+      )}
+
+      {open && (
+        <PostingDrawer
+          posting={open}
+          resumeVariants={resumeVariants}
+          override={overrides.get(open.id)}
+          onChooseVariant={(variant) => onChooseVariant(open, variant)}
+          onClose={() => {
+            setOpenId(null);
+          }}
+          now={now}
+        />
       )}
 
       <QueueBar
@@ -578,9 +619,11 @@ interface PostingRowProps {
   actions: QueueActions | null;
   save: (change: () => Promise<void>) => Promise<void>;
   now: number;
+  variant: ChosenVariant;
+  onOpen: () => void;
 }
 
-function PostingRow({ entry, actions, save, now }: PostingRowProps) {
+function PostingRow({ entry, actions, save, now, variant, onOpen }: PostingRowProps) {
   const { posting, rank, card, skip } = entry;
   const [asking, setAsking] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -634,9 +677,9 @@ function PostingRow({ entry, actions, save, now }: PostingRowProps) {
       </span>
       <div class="posting-main">
         <h3 class="posting-title">
-          <a href={posting.applyUrl} target="_blank" rel="noopener noreferrer">
+          <button type="button" class="posting-open" aria-haspopup="dialog" onClick={onOpen}>
             {posting.title}
-          </a>
+          </button>
         </h3>
         <p class="posting-company">{posting.company}</p>
         <ul class="posting-facts">
@@ -649,6 +692,10 @@ function PostingRow({ entry, actions, save, now }: PostingRowProps) {
           <li>{formatLevel(posting.level)}</li>
           <li>{formatPostedAge(posting.postedOn, now)}</li>
         </ul>
+        <p class="posting-variant">
+          Resume: <span class="posting-variant-name">{variant.name}</span>
+          {variant.byCandidate && <span class="muted"> (your choice)</span>}
+        </p>
         <QueueFlags entry={entry} age={age} />
         {skipped && skip && (
           <p class="posting-skip">

@@ -1,4 +1,4 @@
-import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { text } from "node:stream/consumers";
 import { runCli } from "./jaa.ts";
 
@@ -13,6 +13,11 @@ process.exitCode = await runCli(process.argv.slice(2), {
   fetch: (url, init) => fetch(url, init),
   now: () => new Date().toISOString(),
   readStdin: () => text(process.stdin),
+  fileSize: (path) =>
+    stat(path).then(
+      (info) => (info.isFile() ? info.size : undefined),
+      () => undefined,
+    ),
   stdout: (chunk) => process.stdout.write(chunk),
   stderr: (chunk) => process.stderr.write(chunk),
 });

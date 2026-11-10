@@ -58,7 +58,8 @@ const CATEGORY_FAMILIES: [RegExp, string[]][] = [
   [/hardware/i, ["hardware"]],
 ];
 
-function familiesOf(text: string): Set<string> {
+/** The role families a title or a name belongs to, such as "software" or "ml". */
+export function familiesOf(text: string): Set<string> {
   const normalized = normalize(text);
   return new Set(
     Object.entries(FAMILIES)

@@ -93,18 +93,75 @@ const searchProfile = z.strictObject({
   ),
 });
 
-const settings = z.strictObject({
-  schemaVersion: z.literal(1),
-  searchProfile,
-  dailyQueueTarget: z
-    .int({ error: "must be a whole number" })
-    .check(z.gte(1, "must be at least 1"), z.lte(100, "must be at most 100")),
-  updatedAt: z.iso.datetime({ error: "must be an ISO 8601 timestamp" }),
+/** The most Resume Variants a Candidate keeps: a small, fixed set, one per role type they target. */
+export const MAX_RESUME_VARIANTS = 6;
+
+/**
+ * One Resume Variant as the dashboard knows it: its label and the rules Refresh uses to pick it.
+ * The resume file itself stays in the Candidate folder and never enters the database.
+ */
+const resumeVariant = z.strictObject({
+  /** The label the Candidate gave it, for example "Backend SWE/SDE". */
+  name: z
+    .string()
+    .check(
+      z.trim(),
+      z.minLength(1, "must not be blank"),
+      z.maxLength(60, "must be 60 characters or fewer"),
+    ),
+  /** Search Profile role types this variant is written for. */
+  roleTypes: z.array(label).check(z.maxLength(30)),
+  /** Words or phrases that point to this variant when a Posting's title or description has them. */
+  keywords: z.array(label).check(
+    z.maxLength(30),
+    noRepeats(
+      (keywords) => keywords,
+      (keyword) => `${keyword} is listed more than once`,
+    ),
+  ),
 });
+
+const settings = z
+  .strictObject({
+    schemaVersion: z.literal(1),
+    searchProfile,
+    /** The Candidate's Resume Variants; the first one listed is the default. */
+    resumeVariants: z.array(resumeVariant).check(
+      z.minLength(1, "list at least one Resume Variant"),
+      z.maxLength(
+        MAX_RESUME_VARIANTS,
+        `keep at most ${String(MAX_RESUME_VARIANTS)} Resume Variants`,
+      ),
+      noRepeats(
+        (variants) => variants.map((v) => v.name),
+        (name) => `${name} is listed more than once`,
+      ),
+    ),
+    dailyQueueTarget: z
+      .int({ error: "must be a whole number" })
+      .check(z.gte(1, "must be at least 1"), z.lte(100, "must be at most 100")),
+    updatedAt: z.iso.datetime({ error: "must be an ISO 8601 timestamp" }),
+  })
+  .check(
+    z.superRefine((value, ctx) => {
+      const known = new Set(value.searchProfile.roleTypes.map((r) => r.name.toLowerCase()));
+      value.resumeVariants.forEach((variant, index) => {
+        const unknown = variant.roleTypes.filter((name) => !known.has(name.toLowerCase()));
+        if (unknown.length === 0) return;
+        ctx.addIssue({
+          code: "custom",
+          path: ["resumeVariants", index, "roleTypes"],
+          message: `${unknown.join(", ")} ${unknown.length === 1 ? "is not a role type" : "are not role types"} in the Search Profile`,
+          input: variant.roleTypes,
+        });
+      });
+    }),
+  );
 
 export type Seniority = (typeof SENIORITIES)[number];
 export type RoleTypePriority = (typeof ROLE_TYPE_PRIORITIES)[number];
 export type RoleType = z.output<typeof roleType>;
+export type ResumeVariant = z.output<typeof resumeVariant>;
 export type LocationTier = z.output<typeof locationTier>;
 export type SearchProfile = z.output<typeof searchProfile>;
 export type Settings = z.output<typeof settings>;

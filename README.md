@@ -10,6 +10,7 @@ This is an early version: Setup, Refresh and the Queue work today, and Fill and 
 
 - A Claude plan and the Claude desktop app, signed in with your claude.ai account
 - Node.js 20 or newer
+- Your resume as a PDF or Word file, or a few resumes each aimed at a different role type
 
 ## Install
 
@@ -22,13 +23,18 @@ claude plugin install job-app-assist@job-app-assist
 ```
 
 Then open a folder for your job search in the Code tab of the Claude desktop app and run `/job-app-assist:setup`, or just tell Claude you want to set up Job App Assist.
-Describe the jobs you want in your own words, confirm the Search Profile Claude drafts, and Claude publishes your dashboard.
+Describe the jobs you want in your own words, then point Claude at your resumes in that folder and give each a short label, such as "Backend SWE" or "AI/ML Engineer".
+One resume is enough to start.
+Confirm the Search Profile and Resume Variants Claude drafts, and Claude publishes your dashboard.
+Your resume files stay in your folder; the dashboard only knows their labels.
 
 ## Refresh
 
 Run `/job-app-assist:refresh`, or just ask Claude to refresh your jobs.
 Claude pulls Postings from the shared Job Feed, keeps the ones that match your Search Profile, merges duplicates listed in several places, and ranks them: Location Tier first, then fit to your role types, company boosts (Fortune 500 companies and the Job Feed's company tiers) and freshness.
 The ranked Job List appears on the Postings tab of your dashboard, with search and filters for role type, Location Tier, Source and how recently a Posting went up.
+Each Posting shows the Resume Variant Claude picked for it.
+Click a Posting to open its details, see why that Resume Variant was picked, and choose a different one if you disagree.
 Claude ends with a short summary in chat, and says plainly when a Source could not be read.
 
 ## Queue

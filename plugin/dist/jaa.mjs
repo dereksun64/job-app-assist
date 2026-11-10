@@ -7,7 +7,7 @@ var __export = (target, all) => {
 };
 
 // src/cli/main.ts
-import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { text as text3 } from "node:stream/consumers";
 
 // node_modules/zod/v4/core/util.js
@@ -1978,12 +1978,57 @@ var searchProfile = strictObject({
     )
   )
 });
+var MAX_RESUME_VARIANTS = 6;
+var resumeVariant = strictObject({
+  /** The label the Candidate gave it, for example "Backend SWE/SDE". */
+  name: string2().check(
+    _trim(),
+    _minLength(1, "must not be blank"),
+    _maxLength(60, "must be 60 characters or fewer")
+  ),
+  /** Search Profile role types this variant is written for. */
+  roleTypes: array(label).check(_maxLength(30)),
+  /** Words or phrases that point to this variant when a Posting's title or description has them. */
+  keywords: array(label).check(
+    _maxLength(30),
+    noRepeats(
+      (keywords) => keywords,
+      (keyword) => `${keyword} is listed more than once`
+    )
+  )
+});
 var settings = strictObject({
   schemaVersion: literal(1),
   searchProfile,
+  /** The Candidate's Resume Variants; the first one listed is the default. */
+  resumeVariants: array(resumeVariant).check(
+    _minLength(1, "list at least one Resume Variant"),
+    _maxLength(
+      MAX_RESUME_VARIANTS,
+      `keep at most ${String(MAX_RESUME_VARIANTS)} Resume Variants`
+    ),
+    noRepeats(
+      (variants) => variants.map((v) => v.name),
+      (name) => `${name} is listed more than once`
+    )
+  ),
   dailyQueueTarget: int({ error: "must be a whole number" }).check(_gte(1, "must be at least 1"), _lte(100, "must be at most 100")),
   updatedAt: iso_exports.datetime({ error: "must be an ISO 8601 timestamp" })
-});
+}).check(
+  superRefine((value, ctx) => {
+    const known = new Set(value.searchProfile.roleTypes.map((r) => r.name.toLowerCase()));
+    value.resumeVariants.forEach((variant, index) => {
+      const unknown = variant.roleTypes.filter((name) => !known.has(name.toLowerCase()));
+      if (unknown.length === 0) return;
+      ctx.addIssue({
+        code: "custom",
+        path: ["resumeVariants", index, "roleTypes"],
+        message: `${unknown.join(", ")} ${unknown.length === 1 ? "is not a role type" : "are not role types"} in the Search Profile`,
+        input: variant.roleTypes
+      });
+    });
+  })
+);
 function validateSettings(input) {
   return validateWith(settings, input);
 }
@@ -1995,6 +2040,7 @@ var JOB_LIST_META_ID = "meta";
 var POSTINGS_PER_PAGE = 200;
 var MAX_JOB_LIST_PAGES = 5;
 var MAX_JOB_LIST = POSTINGS_PER_PAGE * MAX_JOB_LIST_PAGES;
+var POSTING_DESCRIPTION_MAX = 400;
 function jobListPageId(page2) {
   return `page-${String(page2)}`;
 }
@@ -2018,6 +2064,12 @@ var postingSource = strictObject({
   /** Where inside the Source the Posting was listed, for example "Simplify New Grad". */
   list: optional(text(120))
 });
+var resumeVariantPick = strictObject({
+  /** The name of one of the Candidate's Resume Variants. */
+  name: text(60),
+  /** Why it was picked, in plain words, for example "Title mentions \"backend\"." */
+  reason: text(300)
+});
 var postingSchema = strictObject({
   /** A short hash of the Posting's canonical apply URL; stable across Refreshes. */
   id: postingIdSchema,
@@ -2036,7 +2088,11 @@ var postingSchema = strictObject({
   /** Rank within its Location Tier, 0 to 100, from fit, company boosts and freshness. */
   score: int({ error: "must be a whole number" }).check(_gte(0, "must be at least 0"), _lte(100, "must be at most 100")),
   /** Why the company was boosted, for example "Fortune 500". */
-  boosts: array(text(80)).check(_maxLength(10))
+  boosts: array(text(80)).check(_maxLength(10)),
+  /** The Resume Variant Refresh picked for this Posting, and why. */
+  resumeVariant: resumeVariantPick,
+  /** The start of the Posting's description, when its Source gives one. */
+  description: optional(text(POSTING_DESCRIPTION_MAX))
 });
 var page = strictObject({
   schemaVersion: literal(1),
@@ -2212,6 +2268,33 @@ function validateSkipDocument(docId, input) {
   return result;
 }
 
+// src/contract/variant-overrides.ts
+var VARIANT_OVERRIDES_COLLECTION = "variantOverrides";
+var override = strictObject({
+  schemaVersion: literal(1),
+  /** The name of the Resume Variant the Candidate chose. */
+  variant: string2().check(
+    _trim(),
+    _minLength(1, "must not be blank"),
+    _maxLength(60, "must be 60 characters or fewer")
+  ),
+  chosenAt: iso_exports.datetime({ error: "must be an ISO 8601 timestamp" })
+});
+function validateVariantOverride(input) {
+  return validateWith(override, input);
+}
+function validateVariantOverrideDocument(docId, input) {
+  if (!/^[0-9a-f]{12}$/.test(docId)) {
+    return {
+      ok: false,
+      issues: [
+        "A Resume Variant override is stored under its Posting's id: 12 lowercase hex characters."
+      ]
+    };
+  }
+  return validateVariantOverride(input);
+}
+
 // src/contract/index.ts
 var collections = {
   [SETTINGS_COLLECTION]: (docId, input) => docId === SETTINGS_DOC_ID ? validateSettings(input) : {
@@ -2220,7 +2303,8 @@ var collections = {
   },
   [POSTINGS_COLLECTION]: validatePostingsDocument,
   [CARDS_COLLECTION]: validateCardDocument,
-  [SKIPS_COLLECTION]: validateSkipDocument
+  [SKIPS_COLLECTION]: validateSkipDocument,
+  [VARIANT_OVERRIDES_COLLECTION]: validateVariantOverrideDocument
 };
 var CONTRACT_COLLECTIONS = Object.keys(collections);
 function validateDocument(collection, docId, input) {
@@ -3834,10 +3918,127 @@ function postingId(canonicalUrl) {
   return createHash("sha256").update(canonicalUrl).digest("hex").slice(0, 12);
 }
 
+// src/engine/variants.ts
+var POINTS = { titleKeyword: 4, roleType: 2, family: 1, listingKeyword: 1 };
+var MAX_LISTING_KEYWORDS = 3;
+var CONFIDENT_LEAD = 2;
+var SHOWN_KEYWORDS = 3;
+var MAX_REASON = 300;
+var FAMILY_LABELS = {
+  software: "software",
+  ml: "machine learning",
+  data: "data",
+  product: "product",
+  program: "program management",
+  quant: "quant",
+  hardware: "hardware",
+  security: "security"
+};
+function escape2(text4) {
+  return text4.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+function mentions(text4, keyword) {
+  const words = keyword.trim().toLowerCase().split(/[\s-]+/).map(escape2);
+  const phrase = words.join("[\\s-]+");
+  return new RegExp(`(?<![\\p{L}\\p{N}])${phrase}(?![\\p{L}\\p{N}+#])`, "u").test(text4);
+}
+function quoteList(words) {
+  const quoted = words.slice(0, SHOWN_KEYWORDS).map((word) => `"${word}"`);
+  if (quoted.length <= 1) return quoted.join("");
+  return `${quoted.slice(0, -1).join(", ")} and ${quoted.at(-1) ?? ""}`;
+}
+function nameList(names) {
+  if (names.length <= 2) return names.join(" and ");
+  return `${names.slice(0, -1).join(", ")} and ${names.at(-1) ?? ""}`;
+}
+function sentence(parts) {
+  const text4 = parts.join("; ");
+  return `${text4.charAt(0).toUpperCase()}${text4.slice(1)}.`;
+}
+function fit(text4) {
+  return text4.length <= MAX_REASON ? text4 : `${text4.slice(0, MAX_REASON - 1).trimEnd()}\u2026`;
+}
+function score(variant, index, posting, title, listing, titleFamilies) {
+  const evidence = [];
+  let points = 0;
+  const inTitle = variant.keywords.filter((keyword) => mentions(title, keyword));
+  if (inTitle.length > 0) {
+    points += POINTS.titleKeyword * inTitle.length;
+    evidence.push(`the title mentions ${quoteList(inTitle)}`);
+  }
+  const roleType2 = posting.roleType.toLowerCase();
+  if (variant.roleTypes.some((name) => name.toLowerCase() === roleType2)) {
+    points += POINTS.roleType;
+    evidence.push(`made for ${posting.roleType} roles`);
+  }
+  const shared = [...familiesOf(variant.name)].filter((family) => titleFamilies.has(family));
+  if (shared.length > 0) {
+    points += POINTS.family;
+    if (inTitle.length === 0) {
+      const labels = shared.map((family) => FAMILY_LABELS[family] ?? family);
+      evidence.push(`the title reads as a ${nameList(labels)} role`);
+    }
+  }
+  const inListing = variant.keywords.filter(
+    (keyword) => !inTitle.includes(keyword) && mentions(listing, keyword)
+  );
+  if (inListing.length > 0) {
+    points += POINTS.listingKeyword * Math.min(inListing.length, MAX_LISTING_KEYWORDS);
+    evidence.push(`the listing mentions ${quoteList(inListing)}`);
+  }
+  return { variant, index, score: points, evidence };
+}
+function pickResumeVariant(posting, variants) {
+  const [fallback] = variants;
+  if (!fallback) throw new Error("A Candidate has at least one Resume Variant.");
+  if (variants.length === 1) {
+    return { pick: { name: fallback.name, reason: "Your only Resume Variant." }, confident: true };
+  }
+  const title = posting.title.toLowerCase();
+  const listing = [posting.category ?? "", posting.description ?? ""].join("\n").toLowerCase();
+  const titleFamilies = familiesOf(posting.title);
+  const ranked = variants.map((variant, index) => score(variant, index, posting, title, listing, titleFamilies)).sort((a, b) => b.score - a.score || a.index - b.index);
+  const [best, second] = ranked;
+  if (!best || best.score === 0) {
+    return {
+      pick: {
+        name: fallback.name,
+        reason: "Nothing in the title or listing points to a variant, so it uses your default."
+      },
+      confident: false
+    };
+  }
+  const tied = ranked.filter((entry) => entry.score === best.score);
+  if (tied.length > 1 && best.index === 0) {
+    const names = nameList(tied.map((entry) => entry.variant.name));
+    const [first = ""] = best.evidence;
+    return {
+      pick: {
+        name: best.variant.name,
+        reason: fit(
+          `${sentence([first]).slice(0, -1)}, which fits ${names} equally; ${best.variant.name} is your default.`
+        )
+      },
+      confident: true
+    };
+  }
+  const lead = best.score - (second?.score ?? 0);
+  if (second && second.score > 0 && lead < CONFIDENT_LEAD) {
+    const reason = `Close call between ${best.variant.name} and ${second.variant.name}: ${best.evidence.join("; ")}.`;
+    return { pick: { name: best.variant.name, reason: fit(reason) }, confident: false };
+  }
+  return {
+    pick: { name: best.variant.name, reason: fit(sentence(best.evidence)) },
+    confident: true
+  };
+}
+
 // src/engine/refresh.ts
+var MAX_JUDGMENT_REASON = 280;
+var MAX_VARIANT_REVIEW = 25;
 var FIT = { high: 1, medium: 0.6, low: 0.25 };
 var WEIGHTS = { fit: 0.5, boost: 0.3, freshness: 0.2 };
-function score(priority, boost, postedOn, now) {
+function score2(priority, boost, postedOn, now) {
   const value = WEIGHTS.fit * FIT[priority] + WEIGHTS.boost * boost + WEIGHTS.freshness * freshness(postedOn, now);
   return Math.round(100 * value);
 }
@@ -3970,6 +4171,34 @@ function mergeSources(sources) {
   const unique = new Map(sources.map((source) => [sourceKey(source), source]));
   return [...unique.values()].sort((a, b) => compareText(sourceKey(a), sourceKey(b)));
 }
+function excerpt(description) {
+  const text4 = description?.replace(/\s+/g, " ").trim();
+  if (!text4) return void 0;
+  if (text4.length <= POSTING_DESCRIPTION_MAX) return text4;
+  const cut = text4.slice(0, POSTING_DESCRIPTION_MAX);
+  const atWord = cut.slice(0, cut.lastIndexOf(" ")).replace(/[\s,;:.-]+$/, "");
+  return `${atWord}\u2026`;
+}
+function lowerFirst(text4) {
+  return /^[A-Z][a-z]/.test(text4) ? `${text4.charAt(0).toLowerCase()}${text4.slice(1)}` : text4;
+}
+function withResumeVariant(base, evidence, settings2, judgments) {
+  const judgment = Object.hasOwn(judgments, base.id) ? judgments[base.id] : void 0;
+  if (judgment && settings2.resumeVariants.some((v) => v.name === judgment.variant)) {
+    return {
+      posting: {
+        ...base,
+        resumeVariant: {
+          name: judgment.variant,
+          reason: `Reviewed: ${lowerFirst(judgment.reason.replace(/^reviewed\s*:\s*/i, ""))}`
+        }
+      },
+      unsure: false
+    };
+  }
+  const { pick: pick2, confident } = pickResumeVariant(evidence, settings2.resumeVariants);
+  return { posting: { ...base, resumeVariant: pick2 }, unsure: !confident };
+}
 function merge2(group, tiers, now) {
   const [representative] = [...group].sort(
     (a, b) => Number(a.unresolved) - Number(b.unresolved) || a.order - b.order
@@ -3982,7 +4211,8 @@ function merge2(group, tiers, now) {
   const named = group.find((c) => companyKnown(c.listing.company)) ?? representative;
   const tierOfPlace = (place) => locationTierOf([place], tiers) ?? Number.MAX_SAFE_INTEGER;
   const places = representative.places.map((place, index) => ({ place, index, tier: tierOfPlace(place) })).sort((a, b) => a.tier - b.tier || a.index - b.index).map(({ place }) => place);
-  return {
+  const description = group.map((c) => c.listing.description).find((text4) => text4?.trim());
+  const posting = {
     id: postingId(representative.canonicalUrl),
     applyUrl: representative.canonicalUrl,
     company: companyKnown(named.listing.company) ? displayCompany(named.listing.company) : UNKNOWN_COMPANY,
@@ -3993,9 +4223,18 @@ function merge2(group, tiers, now) {
     level: representative.level,
     postedOn,
     sources: mergeSources(group.map((c) => c.source)),
-    score: score(representative.priority, boost.value, postedOn, now),
+    score: score2(representative.priority, boost.value, postedOn, now),
     boosts: boost.reasons
   };
+  const short = excerpt(description);
+  if (short !== void 0) posting.description = short;
+  const evidence = {
+    title: posting.title,
+    roleType: posting.roleType,
+    category: representative.listing.category
+  };
+  if (description !== void 0) evidence.description = description;
+  return { posting, evidence };
 }
 function carryOver(current, failed, settings2, now) {
   if (failed.size === 0) return [];
@@ -4004,14 +4243,15 @@ function carryOver(current, failed, settings2, now) {
     const locationTier2 = locationTierOf(posting.locations.flatMap(parseLocations), locationTiers);
     const roleType2 = matchRoleType(posting.title, "", roleTypes);
     if (locationTier2 === void 0 || !roleType2 || !seniority.includes(posting.level)) return [];
-    return [
-      {
-        ...posting,
-        locationTier: locationTier2,
-        roleType: roleType2.name,
-        score: score(roleType2.priority, companyBoostFromReasons(posting), posting.postedOn, now)
-      }
-    ];
+    const kept = {
+      ...posting,
+      locationTier: locationTier2,
+      roleType: roleType2.name,
+      score: score2(roleType2.priority, companyBoostFromReasons(posting), posting.postedOn, now)
+    };
+    const evidence = { title: kept.title, roleType: kept.roleType };
+    if (kept.description !== void 0) evidence.description = kept.description;
+    return [{ posting: kept, evidence }];
   });
 }
 function companyBoostFromReasons(posting) {
@@ -4028,16 +4268,19 @@ function compareRank(a, b) {
 function runRefresh(input) {
   const { now, settings: settings2, current } = input;
   const matching = match(input, input.resolvedLinks ?? {});
+  const judgments = input.variantJudgments ?? {};
+  const pick2 = ({ posting, evidence }) => withResumeVariant(posting, evidence, settings2, judgments);
   const fresh = groupDuplicates(matching.candidates).map(
-    (group) => merge2(group, settings2.searchProfile.locationTiers, now)
+    (group) => pick2(merge2(group, settings2.searchProfile.locationTiers, now))
   );
-  const freshIds = new Set(fresh.map((p) => p.id));
-  const freshUrls = new Set(fresh.map((p) => p.applyUrl));
-  const carried = carryOver(current, matching.failedSources, settings2, now).filter(
-    (p) => !freshIds.has(p.id) && !freshUrls.has(p.applyUrl)
-  );
-  const ranked = [...fresh, ...carried].sort(compareRank);
+  const freshIds = new Set(fresh.map((p) => p.posting.id));
+  const freshUrls = new Set(fresh.map((p) => p.posting.applyUrl));
+  const carriedPicks = carryOver(current, matching.failedSources, settings2, now).filter(({ posting: p }) => !freshIds.has(p.id) && !freshUrls.has(p.applyUrl)).map(pick2);
+  const carried = carriedPicks.map((p) => p.posting);
+  const rankedPicks = [...fresh, ...carriedPicks].sort((a, b) => compareRank(a.posting, b.posting));
+  const ranked = rankedPicks.map((p) => p.posting);
   const jobList = ranked.slice(0, MAX_JOB_LIST);
+  const unsure = rankedPicks.slice(0, MAX_JOB_LIST).filter((p) => p.unsure);
   const pages = [];
   for (let start = 0; start < jobList.length; start += POSTINGS_PER_PAGE) {
     pages.push({
@@ -4096,6 +4339,24 @@ function runRefresh(input) {
     carriedOver: carried.filter((p) => nextIds.has(p.id)).length,
     // With no Source read, nothing can be said about which entries match.
     unmatchedLocations: matching.allPlaces.length === 0 ? [] : unmatchedTierLocations(matching.allPlaces, settings2.searchProfile.locationTiers),
+    byVariant: Object.fromEntries(
+      settings2.resumeVariants.map((variant) => [
+        variant.name,
+        jobList.filter((p) => p.resumeVariant.name === variant.name).length
+      ])
+    ),
+    variantReview: {
+      unsure: unsure.length,
+      postings: unsure.slice(0, MAX_VARIANT_REVIEW).map(({ posting: p }) => ({
+        id: p.id,
+        company: p.company,
+        title: p.title,
+        roleType: p.roleType,
+        applyUrl: p.applyUrl,
+        picked: p.resumeVariant.name,
+        reason: p.resumeVariant.reason
+      }))
+    },
     top: jobList.slice(0, 5).map(({ company, title, locations, locationTier: locationTier2, score: s, applyUrl }) => ({
       company,
       title,
@@ -4313,6 +4574,33 @@ async function readFeed(io, now, feed) {
   if (json === void 0) return { name: "Job Feed", ok: false, error: `Could not read ${feed}.` };
   return parseJobFeed(json, now);
 }
+async function readJudgments(io, dir) {
+  const path = join(dir, "variant-judgments.json");
+  const json = await readJson(io, path);
+  if (json === void 0) return {};
+  const problem = (detail) => new RefreshError(
+    `${path} ${detail}. It maps Posting ids to { "variant": "<Resume Variant name>", "reason": "<why, in one sentence>" }.`
+  );
+  if (typeof json !== "object" || json === null || Array.isArray(json)) {
+    throw problem("is not a JSON object");
+  }
+  const judgments = {};
+  for (const [id, entry] of Object.entries(json)) {
+    if (!/^[0-9a-f]{12}$/.test(id)) throw problem(`has the key "${id}", which is not a Posting id`);
+    const { variant, reason } = entry ?? {};
+    if (typeof variant !== "string" || variant.trim() === "") {
+      throw problem(`gives ${id} no variant`);
+    }
+    if (typeof reason !== "string" || reason.trim() === "") {
+      throw problem(`gives ${id} no reason`);
+    }
+    if (reason.trim().length > MAX_JUDGMENT_REASON) {
+      throw problem(`gives ${id} a reason longer than ${String(MAX_JUDGMENT_REASON)} characters`);
+    }
+    judgments[id] = { variant: variant.trim(), reason: reason.trim() };
+  }
+  return judgments;
+}
 function batchesOf(writes) {
   const batches = [];
   let batch = [];
@@ -4331,7 +4619,8 @@ function batchesOf(writes) {
 }
 var number2 = (n) => n.toLocaleString("en-US");
 var count = (n, one, many = `${one}s`) => `${number2(n)} ${n === 1 ? one : many}`;
-function formatSummary(summary, writesPath, batches) {
+function formatSummary(summary, paths, batches) {
+  const { writes: writesPath, review: reviewPath } = paths;
   const lines = [];
   const tiers = summary.byTier.map((count2, i) => `Tier ${String(i + 1)}: ${number2(count2)}`).join(", ");
   lines.push(`Refresh finished at ${summary.refreshedAt.slice(0, 16).replace("T", " ")} UTC.`);
@@ -4384,6 +4673,14 @@ function formatSummary(summary, writesPath, batches) {
       `${count(queue.notListed, "Queue item is", "Queue items are")} no longer in the Job List; the Posting may have closed.`
     );
   }
+  const variants = Object.entries(summary.byVariant).map(([name, n]) => `${name} ${number2(n)}`).join(", ");
+  lines.push(`Resume Variants: ${variants}.`);
+  const { unsure } = summary.variantReview;
+  if (unsure > 0) {
+    lines.push(
+      `${number2(unsure)} unsure Resume Variant ${unsure === 1 ? "pick" : "picks"} to review: see ${reviewPath}.`
+    );
+  }
   if (summary.top.length > 0) {
     lines.push("Top Postings:");
     summary.top.forEach((posting, i) => {
@@ -4425,22 +4722,54 @@ ${settings2.issues.map((i) => `- ${i}`).join("\n")}`
         `versions.json has no version for ${missing.map((id) => `${POSTINGS_COLLECTION}/${id}`).join(", ")}. Add the version ArtifactData reported for each document read.`
       );
     }
-    const now = io.now();
-    const feed = await readFeed(io, now, options.feed);
+    const judgments = await readJudgments(io, dir);
     const queue = await readQueue(io, dir);
-    const base = { now, settings: settings2.value, sources: [feed], current, queue };
+    const out = join(dir, "out");
+    const sourcesPath = join(out, "sources.json");
+    const now = io.now();
     const cachePath = join(dir, "short-links.json");
     const cacheJson = await readJson(io, cachePath);
     const cache = typeof cacheJson === "object" && cacheJson !== null ? cacheJson : {};
-    const { resolved } = await resolveShortLinks(shortLinksToResolve(base), {
-      fetch: io.fetch,
-      cache
-    });
-    await io.writeFile(cachePath, `${JSON.stringify({ ...cache, ...resolved }, null, 2)}
+    let sources;
+    let resolved;
+    if (options.rerun) {
+      const saved = await readJson(io, sourcesPath);
+      if (!saved || !Array.isArray(saved.sources)) {
+        throw new RefreshError(
+          `No Sources saved at ${sourcesPath}. Run jaa refresh without --rerun first.`
+        );
+      }
+      sources = saved.sources;
+      resolved = cache;
+    } else {
+      sources = [await readFeed(io, now, options.feed)];
+      const base = { now, settings: settings2.value, sources, current, queue };
+      resolved = (await resolveShortLinks(shortLinksToResolve(base), { fetch: io.fetch, cache })).resolved;
+      await io.writeFile(cachePath, `${JSON.stringify({ ...cache, ...resolved }, null, 2)}
 `);
-    const { changeSet, summary } = runRefresh({ ...base, resolvedLinks: resolved });
-    const out = join(dir, "out");
+    }
+    const { jobList, changeSet, summary } = runRefresh({
+      now,
+      settings: settings2.value,
+      sources,
+      current,
+      queue,
+      resolvedLinks: resolved,
+      variantJudgments: judgments
+    });
     await io.removeDir(out);
+    await io.makeDir(out);
+    await io.writeFile(sourcesPath, `${JSON.stringify({ sources })}
+`);
+    if (Object.keys(judgments).length > 0) {
+      const listed = new Set(jobList.map((p) => p.id));
+      const names = new Set(settings2.value.resumeVariants.map((v) => v.name));
+      const kept = Object.fromEntries(
+        Object.entries(judgments).filter(([id, j]) => listed.has(id) && names.has(j.variant))
+      );
+      await io.writeFile(join(dir, "variant-judgments.json"), `${JSON.stringify(kept, null, 2)}
+`);
+    }
     for (const collection of new Set(changeSet.set.map((w) => w.collection))) {
       await io.makeDir(join(out, collection));
     }
@@ -4482,7 +4811,11 @@ ${check.issues.map((i) => `- ${i}`).join("\n")}`
 `);
     await io.writeFile(join(out, "summary.json"), `${JSON.stringify(summary, null, 2)}
 `);
-    io.stdout(formatSummary(summary, writesPath, batches.length));
+    const reviewPath = join(out, "variant-review.json");
+    const review = { variants: settings2.value.resumeVariants, ...summary.variantReview };
+    await io.writeFile(reviewPath, `${JSON.stringify(review, null, 2)}
+`);
+    io.stdout(formatSummary(summary, { writes: writesPath, review: reviewPath }, batches.length));
     return 0;
   } catch (error2) {
     if (error2 instanceof RefreshError) {
@@ -4494,14 +4827,125 @@ ${check.issues.map((i) => `- ${i}`).join("\n")}`
   }
 }
 
+// src/cli/resumes.ts
+import { isAbsolute, normalize as normalize2 } from "node:path";
+var RESUME_FILE = /\.(pdf|docx?)$/i;
+var manifest = strictObject({
+  variants: array(
+    strictObject({
+      name: string2().check(
+        _trim(),
+        _minLength(1, "must not be blank"),
+        _maxLength(60, "must be 60 characters or fewer")
+      ),
+      file: string2().check(
+        _trim(),
+        refine(
+          (path) => path !== "" && !isAbsolute(path) && !normalize2(path).startsWith(".."),
+          "must be a path inside the Candidate folder, relative to it"
+        ),
+        _regex(RESUME_FILE, "must be a PDF or Word file (.pdf, .docx or .doc)")
+      )
+    })
+  ).check(
+    _minLength(1, "list at least one Resume Variant"),
+    _maxLength(MAX_RESUME_VARIANTS, `keep at most ${String(MAX_RESUME_VARIANTS)}`),
+    superRefine((variants, ctx) => {
+      const seen = /* @__PURE__ */ new Set();
+      for (const { name } of variants) {
+        const key = name.toLowerCase();
+        if (seen.has(key)) {
+          ctx.addIssue({
+            code: "custom",
+            message: `${name} is listed more than once`,
+            input: name
+          });
+        }
+        seen.add(key);
+      }
+    })
+  )
+});
+async function readJson2(io, source) {
+  const text4 = source === "-" ? await io.readStdin() : await io.readFile(source);
+  return JSON.parse(text4);
+}
+function fail(io, lines) {
+  io.stderr(lines.map((line) => `${line}
+`).join(""));
+  return 1;
+}
+async function runCheckResumes(manifestPath, settingsSource, io) {
+  let json;
+  try {
+    json = await readJson2(io, manifestPath);
+  } catch (error2) {
+    return fail(io, [`Could not read ${manifestPath} as JSON: ${messageOf(error2)}`]);
+  }
+  const result = validateWith(manifest, json);
+  if (!result.ok) {
+    return fail(io, [
+      `${manifestPath} does not list the Resume Variants as expected:`,
+      ...result.issues.map((issue2) => `- ${issue2}`)
+    ]);
+  }
+  const { variants } = result.value;
+  const problems = [];
+  for (const { file } of variants) {
+    const size = await io.fileSize(file);
+    if (size === void 0) problems.push(`- ${file} is not in the Candidate folder.`);
+    else if (size === 0) problems.push(`- ${file} is empty.`);
+  }
+  if (settingsSource !== void 0) {
+    let settingsJson;
+    try {
+      settingsJson = await readJson2(io, settingsSource);
+    } catch (error2) {
+      return fail(io, [`Could not read the settings document as JSON: ${messageOf(error2)}`]);
+    }
+    const settings2 = validateSettings(settingsJson);
+    if (!settings2.ok) {
+      problems.push(
+        "- The settings document does not match the dashboard contract; run jaa validate settings main on it."
+      );
+    } else {
+      const inSettings = settings2.value.resumeVariants.map((v) => v.name);
+      const inManifest = variants.map((v) => v.name);
+      if (inSettings.join("\0") !== inManifest.join("\0")) {
+        problems.push(
+          `- The settings document lists ${inSettings.join(", ")}; the Resume Variant files are for ${inManifest.join(", ")}. List the same names in the same order in both.`
+        );
+      }
+    }
+  }
+  if (problems.length > 0) {
+    return fail(io, [`The Resume Variants in ${manifestPath} need fixing:`, ...problems]);
+  }
+  io.stdout(
+    `${String(variants.length)} Resume ${variants.length === 1 ? "Variant" : "Variants"}, every file found:
+${variants.map(({ name, file }) => `- ${name}: ${file}
+`).join("")}`
+  );
+  return 0;
+}
+function messageOf(error2) {
+  return error2 instanceof Error ? error2.message : String(error2);
+}
+
 // src/cli/jaa.ts
 var USAGE = `Usage: jaa validate <collection> <doc-id> <file|->
-       jaa refresh <dir> [--feed <url|file>]
+       jaa refresh <dir> [--feed <url|file> | --rerun]
+       jaa check-resumes <manifest> [--settings <file|->]
 
-validate  Checks one dashboard document (JSON, from a file or from stdin with -)
-          against the dashboard contract. Exits 0 when it matches, 1 when it does not.
-refresh   Builds the Job List from the dashboard state saved in <dir>/state and the
-          Job Feed, and writes the documents and ArtifactData batches to <dir>/out.
+validate       Checks one dashboard document (JSON, from a file or from stdin with -)
+               against the dashboard contract. Exits 0 when it matches, 1 when it does not.
+refresh        Builds the Job List from the dashboard state saved in <dir>/state and the
+               Job Feed, and writes the documents and ArtifactData batches to <dir>/out.
+               --rerun rebuilds from the Sources the last run read, without the network,
+               applying the Resume Variant judgments in <dir>/variant-judgments.json.
+check-resumes  Checks that every Resume Variant file the manifest lists is in the Candidate
+               folder, and with --settings that the settings document names the same
+               Resume Variants in the same order.
 `;
 async function runCli(argv, io) {
   if (argv[0] === "--help" || argv[0] === "-h") {
@@ -4511,12 +4955,23 @@ async function runCli(argv, io) {
   if (argv[0] === "refresh") {
     const [, dir, ...flags] = argv;
     const feed = flags[0] === "--feed" ? flags[1] : void 0;
-    const valid = flags.length === 0 || flags.length === 2 && feed !== void 0;
+    const rerun = flags.length === 1 && flags[0] === "--rerun";
+    const valid = flags.length === 0 || rerun || flags.length === 2 && feed !== void 0;
     if (!dir || dir.startsWith("--") || !valid) {
       io.stderr(USAGE);
       return 2;
     }
-    return runRefreshCommand(dir, feed === void 0 ? {} : { feed }, io);
+    return runRefreshCommand(dir, feed === void 0 ? { rerun } : { feed }, io);
+  }
+  if (argv[0] === "check-resumes") {
+    const [, manifest2, ...flags] = argv;
+    const settings2 = flags[0] === "--settings" ? flags[1] : void 0;
+    const valid = flags.length === 0 || flags.length === 2 && settings2 !== void 0;
+    if (!manifest2 || manifest2.startsWith("--") || !valid) {
+      io.stderr(USAGE);
+      return 2;
+    }
+    return runCheckResumes(manifest2, settings2, io);
   }
   const [command, collection, docId, file, ...rest] = argv;
   if (command !== "validate" || !collection || !docId || !file || rest.length > 0) {
@@ -4527,7 +4982,7 @@ async function runCli(argv, io) {
   try {
     text4 = file === "-" ? await io.readStdin() : await io.readFile(file);
   } catch (error2) {
-    io.stderr(`Could not read ${file}: ${messageOf(error2)}
+    io.stderr(`Could not read ${file}: ${messageOf2(error2)}
 `);
     return 1;
   }
@@ -4535,7 +4990,7 @@ async function runCli(argv, io) {
   try {
     document = JSON.parse(text4);
   } catch (error2) {
-    io.stderr(`The document is not valid JSON: ${messageOf(error2)}
+    io.stderr(`The document is not valid JSON: ${messageOf2(error2)}
 `);
     return 1;
   }
@@ -4552,7 +5007,7 @@ async function runCli(argv, io) {
   );
   return 1;
 }
-function messageOf(error2) {
+function messageOf2(error2) {
   return error2 instanceof Error ? error2.message : String(error2);
 }
 
@@ -4568,6 +5023,10 @@ process.exitCode = await runCli(process.argv.slice(2), {
   fetch: (url, init) => fetch(url, init),
   now: () => (/* @__PURE__ */ new Date()).toISOString(),
   readStdin: () => text3(process.stdin),
+  fileSize: (path) => stat(path).then(
+    (info) => info.isFile() ? info.size : void 0,
+    () => void 0
+  ),
   stdout: (chunk) => process.stdout.write(chunk),
   stderr: (chunk) => process.stderr.write(chunk)
 });

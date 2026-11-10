@@ -18,6 +18,7 @@ const settings: Settings = {
     startWindow: { earliest: "2027-01", latest: "2027-12" },
     locationTiers: [{ locations: ["New York City", "Remote"] }, { locations: ["Boston"] }],
   },
+  resumeVariants: [{ name: "Generalist SWE", roleTypes: [], keywords: [] }],
   dailyQueueTarget: 20,
   updatedAt: "2026-11-10T15:00:00.000Z",
 };

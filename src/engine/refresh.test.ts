@@ -9,6 +9,7 @@ import {
   type Settings,
 } from "../contract/index.ts";
 import {
+  MAX_VARIANT_REVIEW,
   runRefresh,
   shortLinksToResolve,
   type CurrentJobList,
@@ -32,6 +33,19 @@ const settings: Settings = {
     startWindow: { earliest: "2027-01", latest: "2027-12" },
     locationTiers: [{ locations: ["New York City", "Remote"] }, { locations: ["Boston"] }],
   },
+  resumeVariants: [
+    { name: "Generalist SWE", roleTypes: ["Software Engineer"], keywords: ["full stack"] },
+    {
+      name: "Backend SWE/SDE",
+      roleTypes: ["Software Engineer"],
+      keywords: ["backend", "distributed systems", "infrastructure", "API"],
+    },
+    {
+      name: "AI/ML Engineer",
+      roleTypes: ["Machine Learning Engineer"],
+      keywords: ["machine learning", "ML", "AI", "LLM"],
+    },
+  ],
   dailyQueueTarget: 20,
   updatedAt: "2026-11-01T00:00:00.000Z",
 };
@@ -644,5 +658,158 @@ describe("failing Sources", () => {
   it("is deterministic: the same input gives the same change set", () => {
     const postings = Array.from({ length: 30 }, (_, i) => listed({ age: `${String(i)}d` }));
     expect(refresh(postings)).toEqual(refresh(postings));
+  });
+});
+
+describe("Resume Variants", () => {
+  it("picks a Resume Variant for every Posting and records why", () => {
+    const { jobList } = refresh([
+      listed({ company: "Acme", title: "Backend Engineer, New Grad" }),
+      listed({
+        company: "Brainy",
+        title: "Machine Learning Engineer Intern",
+        jobType: "internship",
+      }),
+      listed({ company: "Plain", title: "Software Engineer, New Grad" }),
+    ]);
+    const picks = Object.fromEntries(jobList.map((p) => [p.company, p.resumeVariant]));
+    expect(picks).toEqual({
+      Acme: {
+        name: "Backend SWE/SDE",
+        reason: 'The title mentions "backend"; made for Software Engineer roles.',
+      },
+      Brainy: {
+        name: "AI/ML Engineer",
+        reason: 'The title mentions "machine learning"; made for Machine Learning Engineer roles.',
+      },
+      Plain: {
+        name: "Generalist SWE",
+        reason:
+          "Made for Software Engineer roles, which fits Generalist SWE and Backend SWE/SDE equally; Generalist SWE is your default.",
+      },
+    });
+  });
+
+  it("reads the description a Source gives and keeps a short excerpt of it", () => {
+    const description = `Join the team that runs our distributed systems and public API. ${"Lorem ipsum dolor sit amet. ".repeat(30)}`;
+    const { jobList } = refresh([
+      listed({ company: "Acme", title: "Software Engineer", description }),
+      listed({ company: "Bare", title: "Software Engineer" }),
+    ]);
+    const acme = jobList.find((p) => p.company === "Acme");
+    expect(acme?.resumeVariant.name).toBe("Backend SWE/SDE");
+    expect(acme?.description?.length).toBeLessThanOrEqual(400);
+    expect(acme?.description).toMatch(/^Join the team that runs our distributed systems.*…$/s);
+    expect(acme?.description).not.toMatch(/\s…$/);
+    expect(jobList.find((p) => p.company === "Bare")).not.toHaveProperty("description");
+  });
+
+  it("keeps a short description whole, with its whitespace tidied", () => {
+    const { jobList } = refresh([
+      listed({ description: "  Build   the payments API.\n\nWork in Go.  " }),
+    ]);
+    expect(jobList[0]?.description).toBe("Build the payments API. Work in Go.");
+  });
+
+  it("lists unsure picks for the Refresh skill to review, best-ranked first", () => {
+    const { summary } = refresh([
+      listed({ company: "Pm", title: "Product Manager, New Grad" }),
+      listed({ company: "Close", title: "ML Engineer, Distributed Systems Infrastructure" }),
+      listed({ company: "Sure", title: "Backend Engineer" }),
+    ]);
+    expect(summary.variantReview).toEqual({
+      unsure: 2,
+      postings: [
+        expect.objectContaining({ company: "Close", picked: "Backend SWE/SDE" }),
+        {
+          id: expect.stringMatching(/^[0-9a-f]{12}$/) as string,
+          company: "Pm",
+          title: "Product Manager, New Grad",
+          roleType: "Product Manager",
+          picked: "Generalist SWE",
+          reason: "Nothing in the title or listing points to a variant, so it uses your default.",
+          applyUrl: expect.stringMatching(/^https:/) as string,
+        },
+      ],
+    });
+  });
+
+  it("caps the review list and counts the rest", () => {
+    const postings = Array.from({ length: MAX_VARIANT_REVIEW + 5 }, () =>
+      listed({ title: "Product Manager, New Grad" }),
+    );
+    const { summary } = refresh(postings);
+    expect(summary.variantReview.unsure).toBe(MAX_VARIANT_REVIEW + 5);
+    expect(summary.variantReview.postings).toHaveLength(MAX_VARIANT_REVIEW);
+  });
+
+  it("applies the Refresh skill's judgments and stops asking about them", () => {
+    const pm = listed({ company: "Pm", title: "Product Manager, New Grad" });
+    const first = refresh([pm]);
+    const id = first.jobList[0]?.id ?? "";
+    const { jobList, summary } = refresh([pm], {
+      variantJudgments: {
+        [id]: { variant: "Backend SWE/SDE", reason: "The team builds the payments API." },
+      },
+    });
+    expect(jobList[0]?.resumeVariant).toEqual({
+      name: "Backend SWE/SDE",
+      reason: "Reviewed: the team builds the payments API.",
+    });
+    expect(summary.variantReview).toEqual({ unsure: 0, postings: [] });
+  });
+
+  it("says Reviewed once even when the judgment already says it", () => {
+    const pm = listed({ company: "Pm", title: "Product Manager, New Grad" });
+    const id = refresh([pm]).jobList[0]?.id ?? "";
+    const { jobList } = refresh([pm], {
+      variantJudgments: {
+        [id]: { variant: "Backend SWE/SDE", reason: "Reviewed: AI platform work." },
+      },
+    });
+    expect(jobList[0]?.resumeVariant.reason).toBe("Reviewed: AI platform work.");
+  });
+
+  it("ignores a judgment for a Resume Variant the Candidate no longer has", () => {
+    const pm = listed({ company: "Pm", title: "Product Manager, New Grad" });
+    const id = refresh([pm]).jobList[0]?.id ?? "";
+    const { jobList, summary } = refresh([pm], {
+      variantJudgments: { [id]: { variant: "Retired variant", reason: "Old call." } },
+    });
+    expect(jobList[0]?.resumeVariant.name).toBe("Generalist SWE");
+    expect(summary.variantReview.unsure).toBe(1);
+  });
+
+  it("counts picks per Resume Variant", () => {
+    const { summary } = refresh([
+      listed({ title: "Backend Engineer" }),
+      listed({ title: "Backend Engineer, Payments" }),
+      listed({ title: "Software Engineer" }),
+    ]);
+    expect(summary.byVariant).toEqual({
+      "Generalist SWE": 1,
+      "Backend SWE/SDE": 2,
+      "AI/ML Engineer": 0,
+    });
+  });
+
+  it("picks again for Postings kept from a failing Source, with the current variants", () => {
+    const before = refresh([listed({ company: "Acme", title: "Backend Engineer" })]).jobList;
+    const current: CurrentJobList = { meta: metaFor(1), pages: [page(1, before)] };
+    const renamed: Settings = {
+      ...settings,
+      resumeVariants: [{ name: "Only resume", roleTypes: [], keywords: [] }],
+    };
+    const { jobList } = runRefresh({
+      now: NOW,
+      settings: renamed,
+      current,
+      queue: EMPTY_QUEUE,
+      sources: [{ name: "Job Feed", ok: false, error: "timeout" }],
+    });
+    expect(jobList[0]?.resumeVariant).toEqual({
+      name: "Only resume",
+      reason: "Your only Resume Variant.",
+    });
   });
 });

@@ -20,6 +20,8 @@ export interface SourcePosting {
   companyTier: string;
   /** Where inside the Source the Posting was listed, for example "Simplify New Grad". */
   list?: string;
+  /** The Posting's description, when the Source gives one (the Job Feed does not). */
+  description?: string;
 }
 
 export type SourceResult =

@@ -18,6 +18,10 @@ function validSettings(): Settings {
         { locations: ["Los Angeles", "Boston"] },
       ],
     },
+    resumeVariants: [
+      { name: "Generalist SWE", roleTypes: [], keywords: ["full stack"] },
+      { name: "AI/ML Engineer", roleTypes: [], keywords: ["machine learning", "LLM"] },
+    ],
     dailyQueueTarget: 20,
     updatedAt: "2026-11-10T15:00:00.000Z",
   };
@@ -177,6 +181,79 @@ describe("settings document", () => {
   it("reports every problem at once", () => {
     const issues = issuesFor({ ...validSettings(), dailyQueueTarget: 0, updatedAt: "" });
     expect(issues).toHaveLength(2);
+  });
+});
+
+describe("Resume Variants in the settings document", () => {
+  it("accepts Resume Variants aimed at Search Profile role types", () => {
+    const settings = validSettings();
+    settings.resumeVariants = [
+      { name: "Generalist SWE", roleTypes: ["Software Engineer"], keywords: [] },
+      { name: "AI/ML Engineer", roleTypes: ["Machine Learning Engineer"], keywords: ["LLM"] },
+    ];
+    expect(validateSettings(settings).ok).toBe(true);
+  });
+
+  it("accepts a single Resume Variant with no rules", () => {
+    const settings = validSettings();
+    settings.resumeVariants = [{ name: "My resume", roleTypes: [], keywords: [] }];
+    expect(validateSettings(settings).ok).toBe(true);
+  });
+
+  it("requires at least one Resume Variant", () => {
+    const settings = validSettings();
+    settings.resumeVariants = [];
+    expect(issuesFor(settings)).toEqual([expect.stringMatching(/^resumeVariants: /)]);
+    const without: Partial<Settings> = validSettings();
+    delete without.resumeVariants;
+    expect(issuesFor(without)).toEqual([expect.stringMatching(/^resumeVariants: /)]);
+  });
+
+  it("keeps the set small", () => {
+    const settings = validSettings();
+    settings.resumeVariants = Array.from({ length: 7 }, (_, i) => ({
+      name: `Variant ${String(i + 1)}`,
+      roleTypes: [],
+      keywords: [],
+    }));
+    expect(issuesFor(settings)).toEqual([expect.stringMatching(/^resumeVariants: /)]);
+  });
+
+  it("rejects two Resume Variants with the same name, ignoring case", () => {
+    const settings = validSettings();
+    settings.resumeVariants = [
+      { name: "Backend SWE", roleTypes: [], keywords: [] },
+      { name: "backend swe", roleTypes: [], keywords: [] },
+    ];
+    expect(issuesFor(settings)).toEqual([expect.stringMatching(/^resumeVariants: .*Backend SWE/i)]);
+  });
+
+  it("rejects a Resume Variant aimed at a role type the Search Profile does not list", () => {
+    const settings = validSettings();
+    settings.resumeVariants = [{ name: "Quant", roleTypes: ["Quant Trader"], keywords: [] }];
+    expect(issuesFor(settings)).toEqual([
+      expect.stringMatching(/^resumeVariants\.0\.roleTypes: .*Quant Trader/),
+    ]);
+  });
+
+  it("matches role types to the Search Profile ignoring case", () => {
+    const settings = validSettings();
+    settings.resumeVariants = [{ name: "SWE", roleTypes: ["software engineer"], keywords: [] }];
+    expect(validateSettings(settings).ok).toBe(true);
+  });
+
+  it("rejects blank or repeated keywords and fields outside the contract", () => {
+    const settings = validSettings();
+    settings.resumeVariants = [{ name: "SWE", roleTypes: [], keywords: ["api", " "] }];
+    expect(issuesFor(settings)).toEqual([
+      expect.stringMatching(/^resumeVariants\.0\.keywords\.1: /),
+    ]);
+    settings.resumeVariants = [{ name: "SWE", roleTypes: [], keywords: ["API", "api"] }];
+    expect(issuesFor(settings)).toEqual([expect.stringMatching(/^resumeVariants\.0\.keywords: /)]);
+    settings.resumeVariants = [
+      { name: "SWE", roleTypes: [], keywords: [], file: "resumes/swe.pdf" } as never,
+    ];
+    expect(issuesFor(settings)).toEqual([expect.stringContaining("file")]);
   });
 });
 
