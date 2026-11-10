@@ -1,4 +1,4 @@
-import { useMemo, useRef } from "preact/hooks";
+import { useCallback, useMemo, useRef } from "preact/hooks";
 import {
   ROLE_TYPE_PRIORITIES,
   STAGES,
@@ -13,6 +13,7 @@ import { useHashTab } from "./useHashTab.ts";
 import { useJobList } from "./useJobList.ts";
 import { queueActions, useQueue } from "./useQueue.ts";
 import { useSettings, type SettingsState } from "./useSettings.ts";
+import { useVariantOverrides } from "./useVariantOverrides.ts";
 
 export { LOADING_TIMEOUT_MS } from "./useSettings.ts";
 
@@ -50,6 +51,12 @@ export function App({ db, pageVersion, now }: AppProps) {
       settings.kind === "ready" ? settings.settings.searchProfile.roleTypes.map((r) => r.name) : [],
     [settings],
   );
+  const resumeVariants = useMemo(
+    () => (settings.kind === "ready" ? settings.settings.resumeVariants.map((v) => v.name) : []),
+    [settings],
+  );
+  const clock = useCallback(() => now ?? Date.now(), [now]);
+  const { overrides, choose } = useVariantOverrides(db, clock);
   const [tab, selectTab] = useHashTab(TABS);
 
   return (
@@ -87,6 +94,9 @@ export function App({ db, pageVersion, now }: AppProps) {
               }
               roleTypeOrder={roleTypeOrder}
               now={now ?? Date.now()}
+              resumeVariants={resumeVariants}
+              overrides={overrides}
+              onChooseVariant={choose}
             />
           )}
           {tab === "progress" && (

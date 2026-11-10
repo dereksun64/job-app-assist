@@ -5,18 +5,23 @@
  */
 import { validateDocument } from "../contract/index.ts";
 import { runRefreshCommand, type RefreshIo } from "../refresh/run.ts";
+import { runCheckResumes, type ResumeIo } from "./resumes.ts";
 
-export interface CliIo extends RefreshIo {
-  readStdin(): Promise<string>;
-}
+export interface CliIo extends RefreshIo, ResumeIo {}
 
 const USAGE = `Usage: jaa validate <collection> <doc-id> <file|->
-       jaa refresh <dir> [--feed <url|file>]
+       jaa refresh <dir> [--feed <url|file> | --rerun]
+       jaa check-resumes <manifest> [--settings <file|->]
 
-validate  Checks one dashboard document (JSON, from a file or from stdin with -)
-          against the dashboard contract. Exits 0 when it matches, 1 when it does not.
-refresh   Builds the Job List from the dashboard state saved in <dir>/state and the
-          Job Feed, and writes the documents and ArtifactData batches to <dir>/out.
+validate       Checks one dashboard document (JSON, from a file or from stdin with -)
+               against the dashboard contract. Exits 0 when it matches, 1 when it does not.
+refresh        Builds the Job List from the dashboard state saved in <dir>/state and the
+               Job Feed, and writes the documents and ArtifactData batches to <dir>/out.
+               --rerun rebuilds from the Sources the last run read, without the network,
+               applying the Resume Variant judgments in <dir>/variant-judgments.json.
+check-resumes  Checks that every Resume Variant file the manifest lists is in the Candidate
+               folder, and with --settings that the settings document names the same
+               Resume Variants in the same order.
 `;
 
 /** Runs the CLI and resolves its exit code. */
@@ -28,12 +33,23 @@ export async function runCli(argv: readonly string[], io: CliIo): Promise<number
   if (argv[0] === "refresh") {
     const [, dir, ...flags] = argv;
     const feed = flags[0] === "--feed" ? flags[1] : undefined;
-    const valid = flags.length === 0 || (flags.length === 2 && feed !== undefined);
+    const rerun = flags.length === 1 && flags[0] === "--rerun";
+    const valid = flags.length === 0 || rerun || (flags.length === 2 && feed !== undefined);
     if (!dir || dir.startsWith("--") || !valid) {
       io.stderr(USAGE);
       return 2;
     }
-    return runRefreshCommand(dir, feed === undefined ? {} : { feed }, io);
+    return runRefreshCommand(dir, feed === undefined ? { rerun } : { feed }, io);
+  }
+  if (argv[0] === "check-resumes") {
+    const [, manifest, ...flags] = argv;
+    const settings = flags[0] === "--settings" ? flags[1] : undefined;
+    const valid = flags.length === 0 || (flags.length === 2 && settings !== undefined);
+    if (!manifest || manifest.startsWith("--") || !valid) {
+      io.stderr(USAGE);
+      return 2;
+    }
+    return runCheckResumes(manifest, settings, io);
   }
   const [command, collection, docId, file, ...rest] = argv;
   if (command !== "validate" || !collection || !docId || !file || rest.length > 0) {

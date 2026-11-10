@@ -26,6 +26,7 @@ export const settings: Settings = {
     startWindow: {},
     locationTiers: [{ locations: ["New York City", "Remote"] }, { locations: ["Boston"] }],
   },
+  resumeVariants: [{ name: "Generalist SWE", roleTypes: [], keywords: [] }],
   dailyQueueTarget: 20,
   updatedAt: "2026-11-01T00:00:00.000Z",
 };
@@ -46,6 +47,7 @@ export function posting(overrides: Partial<Posting> = {}): Posting {
     sources: [{ name: "Job Feed", list: "Simplify New Grad" }],
     score: 80,
     boosts: [],
+    resumeVariant: { name: "Generalist SWE", reason: "Your only Resume Variant." },
     ...overrides,
   };
 }

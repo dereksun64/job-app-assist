@@ -7,11 +7,16 @@ import { POSTINGS_COLLECTION, validatePostingsDocument } from "./postings.ts";
 import { SETTINGS_COLLECTION, SETTINGS_DOC_ID, validateSettings } from "./settings.ts";
 import { SKIPS_COLLECTION, validateSkipDocument } from "./skips.ts";
 import type { Validation } from "./validation.ts";
+import {
+  VARIANT_OVERRIDES_COLLECTION,
+  validateVariantOverrideDocument,
+} from "./variant-overrides.ts";
 
 export * from "./cards.ts";
 export * from "./postings.ts";
 export * from "./settings.ts";
 export * from "./skips.ts";
+export * from "./variant-overrides.ts";
 export type { Validation } from "./validation.ts";
 
 type CollectionRule = (docId: string, input: unknown) => Validation<unknown>;
@@ -27,6 +32,7 @@ const collections: Record<string, CollectionRule> = {
   [POSTINGS_COLLECTION]: validatePostingsDocument,
   [CARDS_COLLECTION]: validateCardDocument,
   [SKIPS_COLLECTION]: validateSkipDocument,
+  [VARIANT_OVERRIDES_COLLECTION]: validateVariantOverrideDocument,
 };
 
 /** The collections the contract defines so far; later tickets add sources, news and more. */

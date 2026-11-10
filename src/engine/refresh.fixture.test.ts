@@ -29,6 +29,19 @@ const settings: Settings = {
       { locations: ["Southern California", "Boston", "the rest of the East Coast"] },
     ],
   },
+  resumeVariants: [
+    { name: "Generalist SWE", roleTypes: ["Software Engineer"], keywords: ["full stack"] },
+    {
+      name: "Backend SWE/SDE",
+      roleTypes: ["Software Engineer"],
+      keywords: ["backend", "distributed systems", "infrastructure", "API"],
+    },
+    {
+      name: "AI/ML Engineer",
+      roleTypes: ["Machine Learning Engineer"],
+      keywords: ["machine learning", "ML", "AI", "LLM"],
+    },
+  ],
   dailyQueueTarget: 20,
   updatedAt: "2026-11-01T00:00:00.000Z",
 };

@@ -67,9 +67,8 @@ describe("Postings tab", () => {
     const first = rows()[0];
     if (!first) throw new Error("no rows");
     expect(
-      within(first).getByRole("link", { name: "Software Engineer, New Grad" }),
-    ).toHaveAttribute("href", standard[0]?.applyUrl);
-    expect(within(first).getByRole("link")).toHaveAttribute("target", "_blank");
+      within(first).getByRole("button", { name: "Software Engineer, New Grad" }),
+    ).toHaveAttribute("aria-haspopup", "dialog");
     expect(first).toHaveTextContent("Rank 1");
     expect(first).toHaveTextContent("New York, NY; Boston, MA +2 more");
     expect(first).toHaveTextContent("Tier 1");
@@ -78,6 +77,7 @@ describe("Postings tab", () => {
     expect(first).toHaveTextContent("Score 95");
     expect(first).toHaveTextContent("Fortune 500");
     expect(first).toHaveTextContent("Simplify New Grad, Vansh New Grad");
+    expect(first).toHaveTextContent("Resume: Generalist SWE");
   });
 
   it("summarizes the Job List and when it was refreshed", async () => {

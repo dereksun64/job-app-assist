@@ -22,6 +22,7 @@ function posting(overrides: Partial<Posting> = {}): Posting {
     sources: [{ name: "Job Feed" }],
     score: 80,
     boosts: [],
+    resumeVariant: { name: "Generalist SWE", reason: "Your only Resume Variant." },
     ...overrides,
   };
 }

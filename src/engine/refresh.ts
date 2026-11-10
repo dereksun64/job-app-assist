@@ -9,6 +9,7 @@ import {
   CARDS_COLLECTION,
   JOB_LIST_META_ID,
   MAX_JOB_LIST,
+  POSTING_DESCRIPTION_MAX,
   POSTINGS_COLLECTION,
   POSTINGS_PER_PAGE,
   jobListPageId,
@@ -36,6 +37,7 @@ import { planQueue, type CurrentQueue, type QueueSummary } from "./queue.ts";
 import { levelOf, matchRoleType, withinStartWindow } from "./roles.ts";
 import type { SourcePosting, SourceResult } from "./source.ts";
 import { canonicalApplyUrl, isShortLink, postingId } from "./urls.ts";
+import { pickResumeVariant, type VariantEvidence } from "./variants.ts";
 
 /** The Job List as the dashboard database holds it now. */
 export interface CurrentJobList {
@@ -53,6 +55,31 @@ export interface RefreshInput {
   queue: CurrentQueue;
   /** Where each short link leads, from the adapter. Unresolved links stay as they are. */
   resolvedLinks?: Readonly<Record<string, string>>;
+  /** The Refresh skill's calls on unsure Resume Variant picks, by Posting id. */
+  variantJudgments?: Readonly<Record<string, VariantJudgment>>;
+}
+
+/** The Refresh skill's call on one unsure Resume Variant pick. */
+export interface VariantJudgment {
+  variant: string;
+  reason: string;
+}
+
+/** The longest reason a judgment may give; "Reviewed: " is added before it. */
+export const MAX_JUDGMENT_REASON = 280;
+
+/** The most unsure Resume Variant picks one Refresh asks the Refresh skill to review. */
+export const MAX_VARIANT_REVIEW = 25;
+
+/** An unsure Resume Variant pick, for the Refresh skill to review. */
+export interface VariantReviewItem {
+  id: string;
+  company: string;
+  title: string;
+  roleType: string;
+  applyUrl: string;
+  picked: string;
+  reason: string;
 }
 
 export interface ChangeSet {
@@ -87,6 +114,10 @@ export interface RefreshSummary {
   carriedOver: number;
   /** Location Tier entries that matched no location in any Source. */
   unmatchedLocations: string[];
+  /** Postings per Resume Variant, in the Candidate's order. */
+  byVariant: Record<string, number>;
+  /** Unsure picks with no judgment yet: how many, and the best-ranked of them to review. */
+  variantReview: { unsure: number; postings: VariantReviewItem[] };
   top: Pick<Posting, "company" | "title" | "locations" | "locationTier" | "score" | "applyUrl">[];
   queue: QueueSummary;
 }
@@ -298,8 +329,58 @@ function mergeSources(sources: readonly PostingSource[]): PostingSource[] {
   return [...unique.values()].sort((a, b) => compareText(sourceKey(a), sourceKey(b)));
 }
 
-/** One Posting from a group of duplicates. */
-function merge(group: readonly Candidate[], tiers: readonly LocationTier[], now: string): Posting {
+/** A description as a tidy excerpt short enough for the Job List, cut at a word. */
+function excerpt(description: string | undefined): string | undefined {
+  const text = description?.replace(/\s+/g, " ").trim();
+  if (!text) return undefined;
+  if (text.length <= POSTING_DESCRIPTION_MAX) return text;
+  const cut = text.slice(0, POSTING_DESCRIPTION_MAX);
+  const atWord = cut.slice(0, cut.lastIndexOf(" ")).replace(/[\s,;:.-]+$/, "");
+  return `${atWord}…`;
+}
+
+type Unpicked = Omit<Posting, "resumeVariant">;
+
+/** A sentence as it reads after a colon: "The team" becomes "the team", "AI" stays "AI". */
+function lowerFirst(text: string): string {
+  return /^[A-Z][a-z]/.test(text) ? `${text.charAt(0).toLowerCase()}${text.slice(1)}` : text;
+}
+
+/** A Posting with a Resume Variant picked, and whether the pick was unsure. */
+interface Picked {
+  posting: Posting;
+  unsure: boolean;
+}
+
+function withResumeVariant(
+  base: Unpicked,
+  evidence: VariantEvidence,
+  settings: Settings,
+  judgments: Readonly<Record<string, VariantJudgment>>,
+): Picked {
+  const judgment = Object.hasOwn(judgments, base.id) ? judgments[base.id] : undefined;
+  if (judgment && settings.resumeVariants.some((v) => v.name === judgment.variant)) {
+    return {
+      posting: {
+        ...base,
+        resumeVariant: {
+          name: judgment.variant,
+          reason: `Reviewed: ${lowerFirst(judgment.reason.replace(/^reviewed\s*:\s*/i, ""))}`,
+        },
+      },
+      unsure: false,
+    };
+  }
+  const { pick, confident } = pickResumeVariant(evidence, settings.resumeVariants);
+  return { posting: { ...base, resumeVariant: pick }, unsure: !confident };
+}
+
+/** One Posting from a group of duplicates, before its Resume Variant is picked. */
+function merge(
+  group: readonly Candidate[],
+  tiers: readonly LocationTier[],
+  now: string,
+): { posting: Unpicked; evidence: VariantEvidence } {
   // The representative is the earliest listing whose URL is not an unresolved short link.
   const [representative] = [...group].sort(
     (a, b) => Number(a.unresolved) - Number(b.unresolved) || a.order - b.order,
@@ -317,7 +398,8 @@ function merge(group: readonly Candidate[], tiers: readonly LocationTier[], now:
     .map((place, index) => ({ place, index, tier: tierOfPlace(place) }))
     .sort((a, b) => a.tier - b.tier || a.index - b.index)
     .map(({ place }) => place);
-  return {
+  const description = group.map((c) => c.listing.description).find((text) => text?.trim());
+  const posting: Unpicked = {
     id: postingId(representative.canonicalUrl),
     applyUrl: representative.canonicalUrl,
     company: companyKnown(named.listing.company)
@@ -333,6 +415,15 @@ function merge(group: readonly Candidate[], tiers: readonly LocationTier[], now:
     score: score(representative.priority, boost.value, postedOn, now),
     boosts: boost.reasons,
   };
+  const short = excerpt(description);
+  if (short !== undefined) posting.description = short;
+  const evidence: VariantEvidence = {
+    title: posting.title,
+    roleType: posting.roleType,
+    category: representative.listing.category,
+  };
+  if (description !== undefined) evidence.description = description;
+  return { posting, evidence };
 }
 
 /** Postings from the current Job List whose Source failed, re-checked against the settings. */
@@ -341,7 +432,7 @@ function carryOver(
   failed: ReadonlySet<string>,
   settings: Settings,
   now: string,
-): Posting[] {
+): { posting: Unpicked; evidence: VariantEvidence }[] {
   if (failed.size === 0) return [];
   const { roleTypes, seniority, locationTiers } = settings.searchProfile;
   return current.pages
@@ -351,14 +442,16 @@ function carryOver(
       const locationTier = locationTierOf(posting.locations.flatMap(parseLocations), locationTiers);
       const roleType = matchRoleType(posting.title, "", roleTypes);
       if (locationTier === undefined || !roleType || !seniority.includes(posting.level)) return [];
-      return [
-        {
-          ...posting,
-          locationTier,
-          roleType: roleType.name,
-          score: score(roleType.priority, companyBoostFromReasons(posting), posting.postedOn, now),
-        },
-      ];
+      // The old pick is replaced once the Resume Variant is picked again.
+      const kept: Unpicked = {
+        ...posting,
+        locationTier,
+        roleType: roleType.name,
+        score: score(roleType.priority, companyBoostFromReasons(posting), posting.postedOn, now),
+      };
+      const evidence: VariantEvidence = { title: kept.title, roleType: kept.roleType };
+      if (kept.description !== undefined) evidence.description = kept.description;
+      return [{ posting: kept, evidence }];
     });
 }
 
@@ -388,16 +481,22 @@ function compareRank(a: Posting, b: Posting): number {
 export function runRefresh(input: RefreshInput): RefreshResult {
   const { now, settings, current } = input;
   const matching = match(input, input.resolvedLinks ?? {});
+  const judgments = input.variantJudgments ?? {};
+  const pick = ({ posting, evidence }: { posting: Unpicked; evidence: VariantEvidence }) =>
+    withResumeVariant(posting, evidence, settings, judgments);
   const fresh = groupDuplicates(matching.candidates).map((group) =>
-    merge(group, settings.searchProfile.locationTiers, now),
+    pick(merge(group, settings.searchProfile.locationTiers, now)),
   );
-  const freshIds = new Set(fresh.map((p) => p.id));
-  const freshUrls = new Set(fresh.map((p) => p.applyUrl));
-  const carried = carryOver(current, matching.failedSources, settings, now).filter(
-    (p) => !freshIds.has(p.id) && !freshUrls.has(p.applyUrl),
-  );
-  const ranked = [...fresh, ...carried].sort(compareRank);
+  const freshIds = new Set(fresh.map((p) => p.posting.id));
+  const freshUrls = new Set(fresh.map((p) => p.posting.applyUrl));
+  const carriedPicks = carryOver(current, matching.failedSources, settings, now)
+    .filter(({ posting: p }) => !freshIds.has(p.id) && !freshUrls.has(p.applyUrl))
+    .map(pick);
+  const carried = carriedPicks.map((p) => p.posting);
+  const rankedPicks = [...fresh, ...carriedPicks].sort((a, b) => compareRank(a.posting, b.posting));
+  const ranked = rankedPicks.map((p) => p.posting);
   const jobList = ranked.slice(0, MAX_JOB_LIST);
+  const unsure = rankedPicks.slice(0, MAX_JOB_LIST).filter((p) => p.unsure);
 
   const pages: JobListPage[] = [];
   for (let start = 0; start < jobList.length; start += POSTINGS_PER_PAGE) {
@@ -466,6 +565,24 @@ export function runRefresh(input: RefreshInput): RefreshResult {
       matching.allPlaces.length === 0
         ? []
         : unmatchedTierLocations(matching.allPlaces, settings.searchProfile.locationTiers),
+    byVariant: Object.fromEntries(
+      settings.resumeVariants.map((variant) => [
+        variant.name,
+        jobList.filter((p) => p.resumeVariant.name === variant.name).length,
+      ]),
+    ),
+    variantReview: {
+      unsure: unsure.length,
+      postings: unsure.slice(0, MAX_VARIANT_REVIEW).map(({ posting: p }) => ({
+        id: p.id,
+        company: p.company,
+        title: p.title,
+        roleType: p.roleType,
+        applyUrl: p.applyUrl,
+        picked: p.resumeVariant.name,
+        reason: p.resumeVariant.reason,
+      })),
+    },
     top: jobList
       .slice(0, 5)
       .map(({ company, title, locations, locationTier, score: s, applyUrl }) => ({

@@ -89,4 +89,14 @@ describe("in-memory db fake", () => {
     expect(error).toHaveBeenCalledWith({ code: "revoked", message: "gone" });
     expect(next).not.toHaveBeenCalled();
   });
+
+  it("rejects every write with the configured error and stores nothing", async () => {
+    const failure = { code: "quota_exceeded", message: "full" } as const;
+    const db = createMemoryDb({ "settings/main": { a: 1 } }, { failWritesWith: failure });
+    await expect(db.doc("settings/main").set({ a: 2 })).rejects.toEqual(failure);
+    await expect(db.doc("settings/main").update({ a: 2 })).rejects.toEqual(failure);
+    await expect(db.doc("settings/main").delete()).rejects.toEqual(failure);
+    expect(db.writes).toEqual([]);
+    expect(db.contents()).toEqual({ "settings/main": { a: 1 } });
+  });
 });

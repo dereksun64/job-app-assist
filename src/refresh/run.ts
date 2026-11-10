@@ -9,8 +9,12 @@
  *   state/skips/<doc-id>.json: the current dashboard documents.
  * - versions.json: `{ "postings/<doc-id>": <version> }` for every postings document read.
  * - short-links.json: short links resolved on earlier Refreshes (kept between runs).
+ * - variant-judgments.json: the Refresh skill's calls on unsure Resume Variant picks, by Posting
+ *   id (kept between runs, so each Posting is reviewed once).
  * - out/postings/<doc-id>.json, out/cards/<doc-id>.json, out/writes.json, out/summary.json: what
  *   this run produced. Refresh only creates cards, so card writes carry no version.
+ * - out/variant-review.json: unsure Resume Variant picks for the Refresh skill to review.
+ * - out/sources.json: what each Source gave, so `--rerun` can rebuild without the network.
  */
 import { join, resolve } from "node:path";
 import {
@@ -30,8 +34,10 @@ import type { CurrentQueue } from "../engine/queue.ts";
 import {
   runRefresh,
   shortLinksToResolve,
+  MAX_JUDGMENT_REASON,
   type CurrentJobList,
   type RefreshSummary,
+  type VariantJudgment,
 } from "../engine/refresh.ts";
 import type { SourceResult } from "../engine/source.ts";
 import { parseJobFeed, readJobFeed, type Fetch } from "./job-feed.ts";
@@ -53,6 +59,11 @@ export interface RefreshIo {
 export interface RefreshOptions {
   /** Read the Job Feed from this URL or file instead of the published feed. */
   feed?: string;
+  /**
+   * Rebuild from the Sources and short links the last run saved, reading nothing from the
+   * network; used after the Refresh skill records new Resume Variant judgments.
+   */
+  rerun?: boolean;
 }
 
 /** One entry of an ArtifactData `batch` call's `writes`. */
@@ -167,6 +178,39 @@ async function readFeed(
   return parseJobFeed(json, now);
 }
 
+async function readJudgments(io: RefreshIo, dir: string): Promise<Record<string, VariantJudgment>> {
+  const path = join(dir, "variant-judgments.json");
+  const json = await readJson(io, path);
+  if (json === undefined) return {};
+  const problem = (detail: string) =>
+    new RefreshError(
+      `${path} ${detail}. It maps Posting ids to { "variant": "<Resume Variant name>", "reason": "<why, in one sentence>" }.`,
+    );
+  if (typeof json !== "object" || json === null || Array.isArray(json)) {
+    throw problem("is not a JSON object");
+  }
+  const judgments: Record<string, VariantJudgment> = {};
+  for (const [id, entry] of Object.entries(json)) {
+    if (!/^[0-9a-f]{12}$/.test(id)) throw problem(`has the key "${id}", which is not a Posting id`);
+    const { variant, reason } = (entry ?? {}) as { variant?: unknown; reason?: unknown };
+    if (typeof variant !== "string" || variant.trim() === "") {
+      throw problem(`gives ${id} no variant`);
+    }
+    if (typeof reason !== "string" || reason.trim() === "") {
+      throw problem(`gives ${id} no reason`);
+    }
+    if (reason.trim().length > MAX_JUDGMENT_REASON) {
+      throw problem(`gives ${id} a reason longer than ${String(MAX_JUDGMENT_REASON)} characters`);
+    }
+    judgments[id] = { variant: variant.trim(), reason: reason.trim() };
+  }
+  return judgments;
+}
+
+interface SavedSources {
+  sources: SourceResult[];
+}
+
 function batchesOf(writes: readonly { write: BatchWrite; bytes: number }[]): BatchWrite[][] {
   const batches: BatchWrite[][] = [];
   let batch: BatchWrite[] = [];
@@ -189,9 +233,10 @@ const count = (n: number, one: string, many = `${one}s`) => `${number(n)} ${n ==
 
 export function formatSummary(
   summary: RefreshSummary,
-  writesPath: string,
+  paths: { writes: string; review: string },
   batches: number,
 ): string {
+  const { writes: writesPath, review: reviewPath } = paths;
   const lines: string[] = [];
   const tiers = summary.byTier
     .map((count, i) => `Tier ${String(i + 1)}: ${number(count)}`)
@@ -248,6 +293,16 @@ export function formatSummary(
       `${count(queue.notListed, "Queue item is", "Queue items are")} no longer in the Job List; the Posting may have closed.`,
     );
   }
+  const variants = Object.entries(summary.byVariant)
+    .map(([name, n]) => `${name} ${number(n)}`)
+    .join(", ");
+  lines.push(`Resume Variants: ${variants}.`);
+  const { unsure } = summary.variantReview;
+  if (unsure > 0) {
+    lines.push(
+      `${number(unsure)} unsure Resume Variant ${unsure === 1 ? "pick" : "picks"} to review: see ${reviewPath}.`,
+    );
+  }
   if (summary.top.length > 0) {
     lines.push("Top Postings:");
     summary.top.forEach((posting, i) => {
@@ -294,27 +349,59 @@ export async function runRefreshCommand(
       );
     }
 
-    const now = io.now();
-    const feed = await readFeed(io, now, options.feed);
+    const judgments = await readJudgments(io, dir);
     const queue = await readQueue(io, dir);
-    const base = { now, settings: settings.value, sources: [feed], current, queue };
+    const out = join(dir, "out");
+    const sourcesPath = join(out, "sources.json");
 
+    const now = io.now();
     const cachePath = join(dir, "short-links.json");
     const cacheJson = await readJson(io, cachePath);
     const cache =
       typeof cacheJson === "object" && cacheJson !== null
         ? (cacheJson as Record<string, string>)
         : {};
-    const { resolved } = await resolveShortLinks(shortLinksToResolve(base), {
-      fetch: io.fetch,
-      cache,
+    let sources: SourceResult[];
+    let resolved: Record<string, string>;
+    if (options.rerun) {
+      const saved = (await readJson(io, sourcesPath)) as SavedSources | undefined;
+      if (!saved || !Array.isArray(saved.sources)) {
+        throw new RefreshError(
+          `No Sources saved at ${sourcesPath}. Run jaa refresh without --rerun first.`,
+        );
+      }
+      sources = saved.sources;
+      resolved = cache;
+    } else {
+      sources = [await readFeed(io, now, options.feed)];
+      const base = { now, settings: settings.value, sources, current, queue };
+      resolved = (await resolveShortLinks(shortLinksToResolve(base), { fetch: io.fetch, cache }))
+        .resolved;
+      await io.writeFile(cachePath, `${JSON.stringify({ ...cache, ...resolved }, null, 2)}\n`);
+    }
+
+    const { jobList, changeSet, summary } = runRefresh({
+      now,
+      settings: settings.value,
+      sources,
+      current,
+      queue,
+      resolvedLinks: resolved,
+      variantJudgments: judgments,
     });
-    await io.writeFile(cachePath, `${JSON.stringify({ ...cache, ...resolved }, null, 2)}\n`);
 
-    const { changeSet, summary } = runRefresh({ ...base, resolvedLinks: resolved });
-
-    const out = join(dir, "out");
     await io.removeDir(out);
+    await io.makeDir(out);
+    await io.writeFile(sourcesPath, `${JSON.stringify({ sources } satisfies SavedSources)}\n`);
+    if (Object.keys(judgments).length > 0) {
+      // Keep only judgments that still apply, so the file does not grow forever.
+      const listed = new Set(jobList.map((p) => p.id));
+      const names = new Set(settings.value.resumeVariants.map((v) => v.name));
+      const kept = Object.fromEntries(
+        Object.entries(judgments).filter(([id, j]) => listed.has(id) && names.has(j.variant)),
+      );
+      await io.writeFile(join(dir, "variant-judgments.json"), `${JSON.stringify(kept, null, 2)}\n`);
+    }
     for (const collection of new Set(changeSet.set.map((w) => w.collection))) {
       await io.makeDir(join(out, collection));
     }
@@ -352,7 +439,10 @@ export async function runRefreshCommand(
     const writesPath = join(out, "writes.json");
     await io.writeFile(writesPath, `${JSON.stringify({ batches }, null, 2)}\n`);
     await io.writeFile(join(out, "summary.json"), `${JSON.stringify(summary, null, 2)}\n`);
-    io.stdout(formatSummary(summary, writesPath, batches.length));
+    const reviewPath = join(out, "variant-review.json");
+    const review = { variants: settings.value.resumeVariants, ...summary.variantReview };
+    await io.writeFile(reviewPath, `${JSON.stringify(review, null, 2)}\n`);
+    io.stdout(formatSummary(summary, { writes: writesPath, review: reviewPath }, batches.length));
     return 0;
   } catch (error) {
     if (error instanceof RefreshError) {

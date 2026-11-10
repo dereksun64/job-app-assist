@@ -3,6 +3,7 @@ import { validateDocument } from "./index.ts";
 import {
   JOB_LIST_META_ID,
   MAX_JOB_LIST_PAGES,
+  POSTING_DESCRIPTION_MAX,
   POSTINGS_PER_PAGE,
   jobListPageId,
   validateJobListMeta,
@@ -28,6 +29,7 @@ function posting(overrides: Partial<Posting> = {}): Posting {
     sources: [{ name: "Job Feed", list: "Simplify New Grad" }],
     score: 87,
     boosts: ["Fortune 500"],
+    resumeVariant: { name: "Generalist SWE", reason: "Title reads as a software role." },
     ...overrides,
   };
 }
@@ -89,16 +91,39 @@ describe("Job List page document", () => {
     ["no Sources", { sources: [] }, /^postings\.0\.sources: /],
     ["a score above 100", { score: 101 }, /^postings\.0\.score: /],
     ["a fractional score", { score: 50.5 }, /^postings\.0\.score: /],
+    [
+      "a Resume Variant with no reason",
+      { resumeVariant: { name: "Generalist SWE", reason: "" } },
+      /^postings\.0\.resumeVariant\.reason: /,
+    ],
+    [
+      "a description longer than an excerpt",
+      { description: "x".repeat(POSTING_DESCRIPTION_MAX + 1) },
+      /^postings\.0\.description: /,
+    ],
   ])("rejects a Posting with %s", (_label, overrides, pattern) => {
     expect(issuesOf(validateJobListPage(page({ postings: [posting(overrides)] })))).toEqual([
       expect.stringMatching(pattern),
     ]);
   });
 
-  it("rejects fields outside the contract, such as a description", () => {
-    const withDescription = { ...posting(), description: "Long text" };
-    expect(issuesOf(validateJobListPage(page({ postings: [withDescription] })))).toEqual([
-      expect.stringContaining("description"),
+  it("accepts a short description excerpt", () => {
+    const described = posting({ description: "Build the payments API in Go." });
+    expect(validateJobListPage(page({ postings: [described] })).ok).toBe(true);
+  });
+
+  it("requires the chosen Resume Variant", () => {
+    const without: Partial<Posting> = posting();
+    delete without.resumeVariant;
+    expect(issuesOf(validateJobListPage(page({ postings: [without as Posting] })))).toEqual([
+      expect.stringMatching(/^postings\.0\.resumeVariant: /),
+    ]);
+  });
+
+  it("rejects fields outside the contract, such as a salary", () => {
+    const withSalary = { ...posting(), salary: "$150k" };
+    expect(issuesOf(validateJobListPage(page({ postings: [withSalary] })))).toEqual([
+      expect.stringContaining("salary"),
     ]);
   });
 });

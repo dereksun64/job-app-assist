@@ -16,6 +16,10 @@ const settings: Settings = {
     startWindow: {},
     locationTiers: [{ locations: ["New York City"] }],
   },
+  resumeVariants: [
+    { name: "Resume A", roleTypes: [], keywords: ["full stack"] },
+    { name: "Resume B", roleTypes: [], keywords: ["backend"] },
+  ],
   dailyQueueTarget: 20,
   updatedAt: "2026-11-01T00:00:00.000Z",
 };
@@ -335,6 +339,7 @@ describe("jaa refresh", () => {
       sources: [{ name: "Job Feed" }],
       score: 80,
       boosts: [],
+      resumeVariant: { name: "Resume A", reason: "Your default." },
     });
     const queued: Card = {
       schemaVersion: 1,
@@ -475,5 +480,104 @@ describe("jaa refresh", () => {
     );
     expect(await runRefreshCommand(dir, { feed: "feed.json" }, io)).toBe(0);
     expect(io.out).toContain("- Job Feed: read 3 Postings.");
+  });
+});
+
+describe("jaa refresh and Resume Variants", () => {
+  const feed = feedJson([
+    job(),
+    job({ applyUrl: "https://jobs.lever.co/beta/2", company: "Beta", title: "Backend Engineer" }),
+  ]);
+  const start = (extra: Record<string, string> = {}) =>
+    memoryIo(
+      { [`${dir}/state/settings/main.json`]: JSON.stringify(settings), ...extra },
+      fakeFetch({ [JOB_FEED_URL]: json(feed) }),
+    );
+  interface Review {
+    variants: Settings["resumeVariants"];
+    unsure: number;
+    postings: { id: string; company: string; picked: string }[];
+  }
+
+  it("lists unsure picks for review and counts picks per variant", async () => {
+    const io = start();
+    expect(await runRefreshCommand(dir, {}, io)).toBe(0);
+    const review = readOut<Review>(io, "out", "variant-review.json");
+    expect(review.variants).toEqual(settings.resumeVariants);
+    expect(review.unsure).toBe(1);
+    expect(review.postings).toEqual([
+      expect.objectContaining({ company: "Acme", picked: "Resume A" }),
+    ]);
+    expect(io.out).toContain("Resume Variants: Resume A 1, Resume B 1.");
+    expect(io.out).toContain(
+      `1 unsure Resume Variant pick to review: see ${at("out", "variant-review.json")}.`,
+    );
+  });
+
+  it("says nothing about review when every pick is sure", async () => {
+    const io = memoryIo(
+      { [`${dir}/state/settings/main.json`]: JSON.stringify(settings) },
+      fakeFetch({ [JOB_FEED_URL]: json(feedJson([feed.jobs[1]])) }),
+    );
+    expect(await runRefreshCommand(dir, {}, io)).toBe(0);
+    expect(io.out).not.toContain("unsure");
+    expect(readOut<Review>(io, "out", "variant-review.json").postings).toEqual([]);
+  });
+
+  it("rebuilds offline from the Sources the last run read, applying new judgments", async () => {
+    const io = start();
+    expect(await runRefreshCommand(dir, {}, io)).toBe(0);
+    const [unsure] = readOut<Review>(io, "out", "variant-review.json").postings;
+    io.disk.set(
+      at("variant-judgments.json"),
+      JSON.stringify({
+        [unsure?.id ?? ""]: { variant: "Resume B", reason: "The team owns the payments API." },
+      }),
+    );
+    const noNetwork = fakeFetch({});
+    io.fetch = noNetwork;
+    io.out = "";
+    expect(await runRefreshCommand(dir, { rerun: true }, io)).toBe(0);
+    expect(io.err).toBe("");
+    const acme = readOut<JobListPage>(io, "out", "postings", "page-1.json").postings.find(
+      (p) => p.company === "Acme",
+    );
+    expect(acme?.resumeVariant).toEqual({
+      name: "Resume B",
+      reason: "Reviewed: the team owns the payments API.",
+    });
+    expect(readOut<Review>(io, "out", "variant-review.json").unsure).toBe(0);
+    expect(io.out).toContain("- Job Feed: read 2 Postings.");
+    expect(noNetwork.calls).toEqual([]);
+  });
+
+  it("needs a previous run before it can rebuild offline", async () => {
+    const io = start();
+    expect(await runRefreshCommand(dir, { rerun: true }, io)).toBe(1);
+    expect(io.err).toContain("Run jaa refresh without --rerun first");
+  });
+
+  it("drops judgments for Postings that left the Job List or variants that are gone", async () => {
+    const io = start({
+      [`${dir}/variant-judgments.json`]: JSON.stringify({
+        aaaaaaaaaaaa: { variant: "Resume B", reason: "Gone Posting." },
+      }),
+    });
+    expect(await runRefreshCommand(dir, {}, io)).toBe(0);
+    expect(readOut<object>(io, "variant-judgments.json")).toEqual({});
+  });
+
+  it.each([
+    ["not an object", "[]"],
+    ["a judgment without a reason", JSON.stringify({ aaaaaaaaaaaa: { variant: "Resume B" } })],
+    [
+      "a reason that is too long",
+      JSON.stringify({ aaaaaaaaaaaa: { variant: "Resume B", reason: "x".repeat(281) } }),
+    ],
+    ["a key that is not a Posting id", JSON.stringify({ acme: { variant: "B", reason: "Why." } })],
+  ])("refuses judgments that are %s", async (_label, text) => {
+    const io = start({ [`${dir}/variant-judgments.json`]: text });
+    expect(await runRefreshCommand(dir, {}, io)).toBe(1);
+    expect(io.err).toContain("variant-judgments.json");
   });
 });

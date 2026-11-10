@@ -15,6 +15,7 @@ export function samplePosting(overrides: Partial<Posting> = {}): Posting {
     sources: [{ name: "Job Feed", list: "Simplify New Grad" }],
     score: 87,
     boosts: ["Fortune 500"],
+    resumeVariant: { name: "Generalist SWE", reason: "Title reads as a software role." },
     ...overrides,
   };
 }

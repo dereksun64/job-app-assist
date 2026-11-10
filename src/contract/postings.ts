@@ -17,6 +17,9 @@ export const MAX_JOB_LIST_PAGES = 5;
 /** The most Postings a Job List keeps; Refresh keeps the best-ranked ones past this. */
 export const MAX_JOB_LIST = POSTINGS_PER_PAGE * MAX_JOB_LIST_PAGES;
 
+/** The longest description excerpt a Posting carries; the full text stays on the Posting's site. */
+export const POSTING_DESCRIPTION_MAX = 400;
+
 export function jobListPageId(page: number): string {
   return `page-${String(page)}`;
 }
@@ -57,6 +60,13 @@ const postingSource = z.strictObject({
   list: z.optional(text(120)),
 });
 
+const resumeVariantPick = z.strictObject({
+  /** The name of one of the Candidate's Resume Variants. */
+  name: text(60),
+  /** Why it was picked, in plain words, for example "Title mentions \"backend\"." */
+  reason: text(300),
+});
+
 /** One Posting; cards and skips keep a snapshot of the Posting they refer to. */
 export const postingSchema = z.strictObject({
   /** A short hash of the Posting's canonical apply URL; stable across Refreshes. */
@@ -83,6 +93,10 @@ export const postingSchema = z.strictObject({
     .check(z.gte(0, "must be at least 0"), z.lte(100, "must be at most 100")),
   /** Why the company was boosted, for example "Fortune 500". */
   boosts: z.array(text(80)).check(z.maxLength(10)),
+  /** The Resume Variant Refresh picked for this Posting, and why. */
+  resumeVariant: resumeVariantPick,
+  /** The start of the Posting's description, when its Source gives one. */
+  description: z.optional(text(POSTING_DESCRIPTION_MAX)),
 });
 
 const page = z.strictObject({
@@ -151,6 +165,7 @@ const meta = z
   );
 
 export type PostingSource = z.output<typeof postingSource>;
+export type ResumeVariantPick = z.output<typeof resumeVariantPick>;
 export type Posting = z.output<typeof postingSchema>;
 export type JobListPage = z.output<typeof page>;
 export type SourceReport = z.output<typeof sourceReport>;
