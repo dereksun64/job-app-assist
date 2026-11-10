@@ -4,7 +4,7 @@ A Claude Code plugin that lets your own Claude find, prepare and fill job applic
 Everything lands in a private dashboard in your own claude.ai account, with News, Postings and Progress tabs.
 Your Claude never submits an application, never sends a message as you, and never signs in for you.
 
-This is an early version: Setup, Refresh and the Queue work today, and Fill and the rest are on the way.
+This is an early version: Setup, Refresh, the Queue, Sources, the News Digest, the Progress board, Settings and Tune work today, and Fill is on the way.
 
 ## What you need
 
@@ -66,6 +66,15 @@ While Claude fills an application, its card shows a spinner.
 Drag a card to another column to record where it stands, or drag it back to undo a move.
 Moving a card to Closed asks whether you were rejected or withdrew, and the card keeps the answer.
 Click a card to open the same details as on the Postings tab, where you can also change its Stage.
+
+## Settings and Tune
+
+Two ways change what Refresh recommends, and both edit the same settings.
+The Settings button on the dashboard opens a panel for your daily Queue target, role type priorities, Location Tiers, companies to boost, lower or block, apply sites to block, and how much freshness counts.
+Or run `/job-app-assist:tune` and say what you want in your own words, such as "more AI startups and fewer defense contractors", "stop showing Workday-only postings" or "add PM rotational programs but rank them low".
+Tune shows the exact list of changes and saves them only after you approve.
+Ask Tune what your skips suggest, and it proposes changes from the reasons you gave when you unticked Postings, such as blocking a company you keep skipping.
+The next Refresh ranks and queues with the new settings.
 
 ## Developing
 
