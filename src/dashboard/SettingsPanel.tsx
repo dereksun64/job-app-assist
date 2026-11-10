@@ -270,6 +270,9 @@ function QueueTargetSection({ settings, save }: { settings: Settings; save: Save
     sent.current = text;
     void save((draft) => {
       draft.dailyQueueTarget = value;
+    }).then((stored) => {
+      // A failed save can be tried again with the same number.
+      if (!stored) sent.current = null;
     });
   };
 
