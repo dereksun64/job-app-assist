@@ -22,6 +22,22 @@ describe("parseLocations", () => {
     expect(display(raw)).toEqual(expected);
   });
 
+  it.each([
+    ["New York City", ["New York, NY"]],
+    ["New York", ["New York, NY"]],
+    ["San Francisco", ["San Francisco, CA"]],
+    ["San Francisco; New York City", ["San Francisco, CA", "New York, NY"]],
+    ["Seattle; Remote (US)", ["Seattle, WA", "Remote in US"]],
+    ["Boston | Remote", ["Boston, MA", "Remote"]],
+  ])("reads the bare city name %s the way job boards write it", (raw, expected) => {
+    expect(display(raw)).toEqual(expected);
+  });
+
+  it("leaves bare city names that several places share without a state", () => {
+    expect(parseLocations("Dublin")).toEqual([{ label: "Dublin", city: "Dublin", remote: false }]);
+    expect(display("Cambridge")).toEqual(["Cambridge"]);
+  });
+
   it("splits the Job Feed's run-together location lists", () => {
     expect(
       display(

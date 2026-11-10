@@ -130,6 +130,44 @@ const SHORTHAND: Record<string, { city: string; region: string }> = {
   LA: { city: "Los Angeles", region: "CA" },
   DC: { city: "Washington", region: "DC" },
 };
+/**
+ * Cities job boards and Candidates often write without a state ("New York City", "Seattle").
+ * Only names that clearly mean one US city are here; "Dublin" or "Cambridge" alone stay as
+ * written, since they name places in several countries.
+ */
+const BARE_CITIES: Record<string, { city: string; region: string }> = {
+  "New York City": { city: "New York", region: "NY" },
+  "New York": { city: "New York", region: "NY" },
+  Manhattan: { city: "New York", region: "NY" },
+  Brooklyn: { city: "Brooklyn", region: "NY" },
+  "San Francisco": { city: "San Francisco", region: "CA" },
+  "San Jose": { city: "San Jose", region: "CA" },
+  "Palo Alto": { city: "Palo Alto", region: "CA" },
+  "Mountain View": { city: "Mountain View", region: "CA" },
+  Sunnyvale: { city: "Sunnyvale", region: "CA" },
+  "Menlo Park": { city: "Menlo Park", region: "CA" },
+  "Redwood City": { city: "Redwood City", region: "CA" },
+  "Santa Clara": { city: "Santa Clara", region: "CA" },
+  Cupertino: { city: "Cupertino", region: "CA" },
+  Oakland: { city: "Oakland", region: "CA" },
+  Berkeley: { city: "Berkeley", region: "CA" },
+  "Los Angeles": { city: "Los Angeles", region: "CA" },
+  "Santa Monica": { city: "Santa Monica", region: "CA" },
+  "San Diego": { city: "San Diego", region: "CA" },
+  Irvine: { city: "Irvine", region: "CA" },
+  Seattle: { city: "Seattle", region: "WA" },
+  Bellevue: { city: "Bellevue", region: "WA" },
+  Redmond: { city: "Redmond", region: "WA" },
+  Boston: { city: "Boston", region: "MA" },
+  Chicago: { city: "Chicago", region: "IL" },
+  Austin: { city: "Austin", region: "TX" },
+  Denver: { city: "Denver", region: "CO" },
+  Atlanta: { city: "Atlanta", region: "GA" },
+  Pittsburgh: { city: "Pittsburgh", region: "PA" },
+  Philadelphia: { city: "Philadelphia", region: "PA" },
+  Miami: { city: "Miami", region: "FL" },
+  "Salt Lake City": { city: "Salt Lake City", region: "UT" },
+};
 const CITY_ALIASES: Record<string, string> = {
   "new york city": "New York",
   manhattan: "New York",
@@ -177,6 +215,14 @@ const PATTERNS: { re: RegExp; read: (m: RegExpExecArray) => Place }[] = [
     re: new RegExp(`(${longestFirst(Object.keys(SHORTHAND))})(?!\\p{Ll})`, "uy"),
     read: (m) => {
       const { city, region } = SHORTHAND[m[1] ?? ""] ?? { city: "", region: "" };
+      return usCity(city, region);
+    },
+  },
+  {
+    // Before state names, so "New York" alone reads as the city.
+    re: new RegExp(`(${longestFirst(Object.keys(BARE_CITIES))})(?!\\p{L})`, "uy"),
+    read: (m) => {
+      const { city, region } = BARE_CITIES[m[1] ?? ""] ?? { city: "", region: "" };
       return usCity(city, region);
     },
   },

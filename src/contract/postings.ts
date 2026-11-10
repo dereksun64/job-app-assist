@@ -124,6 +124,8 @@ const page = z.strictObject({
 
 const sourceReport = z.strictObject({
   name: text(80),
+  /** The part of the Source this report covers, for example one watchlist company. */
+  list: z.optional(text(200)),
   ok: z.boolean(),
   /** How many Postings the Source listed, before the Search Profile filtered them. */
   postings: z.int().check(z.gte(0)),
@@ -140,7 +142,8 @@ const meta = z
     total: z.int().check(z.gte(0), z.lte(MAX_JOB_LIST)),
     /** Postings that matched the Search Profile, before the Job List kept the best `total`. */
     matched: z.int().check(z.gte(0)),
-    sources: z.array(sourceReport).check(z.maxLength(50)),
+    /** One report per Source read; the watchlist reports each company on its own. */
+    sources: z.array(sourceReport).check(z.maxLength(250)),
   })
   .check(
     z.superRefine((value, ctx) => {
