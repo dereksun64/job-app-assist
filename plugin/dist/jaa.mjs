@@ -3461,6 +3461,7 @@ function signInSite(applyUrl) {
 var json = (value) => `${JSON.stringify(value, null, 2)}
 `;
 var plural = (n, word, many = `${word}s`) => `${n.toLocaleString("en-US")} ${n === 1 ? word : many}`;
+var fmt = (n) => n.toLocaleString("en-US");
 var name = (card2) => `${card2.posting.company} - ${card2.posting.title}`;
 async function readJsonFile(io, path) {
   let text10;
@@ -3733,12 +3734,12 @@ ${check.issues.map((i) => `- ${i}`).join("\n")}`
   const lines = [
     record.outcome === "filled" ? done.stage === "ready_for_review" ? `${name(card2)}: filled, moving to Ready for Review with ${flags}.` : `${name(card2)}: filled with ${flags}; it stays ${STAGE_LABELS[done.stage]}, where you moved it.` : record.outcome === "needs_sign_in" ? `${name(card2)}: needs a sign-in, staying Queued with ${flags}.` : `${name(card2)}: Fill stopped, staying Queued with ${flags}.`,
     `Send the batch in ${writesPath} with ArtifactData.`,
-    tokens ? `Tokens for this application: ${tokens.total.toLocaleString("en-US")} (${tokens.output.toLocaleString("en-US")} output) over ${plural(tokens.messages, "response")}.` : "Token use for this application could not be measured: this session's transcript was not found."
+    tokens ? `Tokens for this application: ${fmt(tokens.total)} over ${plural(tokens.messages, "response")} (${fmt(tokens.cacheRead)} cache reads, ${fmt(tokens.cacheCreation)} cache writes, ${fmt(tokens.input)} input, ${fmt(tokens.output)} output).` : "Token use for this application could not be measured: this session's transcript was not found."
   ];
   if (totals.length > 0) {
     const average = Math.round(totals.reduce((a, b) => a + b, 0) / totals.length);
     lines.push(
-      `${plural(totals.length, "filled application")} logged so far, averaging ${average.toLocaleString("en-US")} tokens each.`
+      `${plural(totals.length, "filled application")} logged so far, averaging ${fmt(average)} tokens each.`
     );
   }
   io.stdout(`${lines.join("\n")}

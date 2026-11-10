@@ -376,7 +376,9 @@ describe("jaa fill finish", () => {
         messages: 1,
       },
     });
-    expect(io.out).toContain("Tokens for this application: 42,910 (900 output) over 1 response.");
+    expect(io.out).toContain(
+      "Tokens for this application: 42,910 over 1 response (40,000 cache reads, 2,000 cache writes, 10 input, 900 output).",
+    );
     expect(io.out).toContain("1 filled application logged so far, averaging 42,910 tokens each.");
   });
 

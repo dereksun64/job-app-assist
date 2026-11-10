@@ -2,7 +2,7 @@
 name: fill
 description: Fill the Candidate's queued job applications in Helium, stopping before submit. Works through the Queued cards on the Progress board in Queue order (or one Posting the Candidate names), opens each apply URL in a new Helium tab through Claude in Chrome, runs Simplify's Autofill, then checks and fills every field from the Candidate's private answers file, uploads the chosen Resume Variant, flags what the Candidate must answer, and moves each card to Ready for Review. Use when the Candidate asks to fill their Queue, fill applications, apply to their queued jobs, or fill one named Posting.
 argument-hint: "[a Posting to fill, by company and title, or leave empty for the whole Queue]"
-allowed-tools: Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs private-answers check private-answers.md) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs fill plan .job-app-assist/fill) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs fill plan .job-app-assist/fill --posting *) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs fill start .job-app-assist/fill *) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs fill finish .job-app-assist/fill *) Bash(rm -rf .job-app-assist/fill/state .job-app-assist/fill/out .job-app-assist/fill/results .job-app-assist/fill/started) Bash(mkdir -p .job-app-assist/fill/results) Bash(cp ${CLAUDE_PLUGIN_ROOT}/dist/dashboard.html .job-app-assist/dashboard.html) mcp__claude-in-chrome__tabs_context_mcp mcp__claude-in-chrome__tabs_create_mcp mcp__claude-in-chrome__navigate mcp__claude-in-chrome__computer mcp__claude-in-chrome__read_page mcp__claude-in-chrome__find mcp__claude-in-chrome__form_input mcp__claude-in-chrome__file_upload mcp__claude-in-chrome__get_page_text
+allowed-tools: Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs private-answers check private-answers.md) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs fill plan .job-app-assist/fill) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs fill plan .job-app-assist/fill --posting *) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs fill start .job-app-assist/fill *) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs fill finish .job-app-assist/fill *) Bash(rm -rf .job-app-assist/fill/state .job-app-assist/fill/out .job-app-assist/fill/results .job-app-assist/fill/started) Bash(mkdir -p .job-app-assist/fill/results) Bash(cp ${CLAUDE_PLUGIN_ROOT}/dist/dashboard.html .job-app-assist/dashboard.html) mcp__claude-in-chrome__tabs_context_mcp mcp__claude-in-chrome__tabs_create_mcp mcp__claude-in-chrome__navigate mcp__claude-in-chrome__computer mcp__claude-in-chrome__read_page mcp__claude-in-chrome__find mcp__claude-in-chrome__form_input mcp__claude-in-chrome__file_upload mcp__claude-in-chrome__get_page_text mcp__claude-in-chrome__javascript_tool
 ---
 
 # Fill
@@ -107,7 +107,8 @@ Mark the card as filling, so its card shows a spinner on the board:
    If it is refused because the card changed, read it again and repeat once.
    If `jaa fill start` says the card is no longer Queued, the Candidate moved it: skip this Posting.
 
-Open the apply URL with `mcp__claude-in-chrome__tabs_create_mcp` and `mcp__claude-in-chrome__navigate`, so every application gets its own new tab in the Claude tab group in Helium, the Ready to submit group, apart from the Candidate's own tabs.
+Open the apply URL with `mcp__claude-in-chrome__navigate` in a tab of its own: for the first Posting, the empty tab that `tabs_context_mcp` created; for each later one, a new tab from `mcp__claude-in-chrome__tabs_create_mcp`.
+Every application then has its own tab in the Claude tab group in Helium, the Ready to submit group, apart from the Candidate's own tabs.
 Leave each tab open when you finish with it: it is where the Candidate reviews and submits.
 
 When the page shows the job description with a link or tab that opens the application form, open the form.
@@ -119,6 +120,7 @@ When the Posting is closed, the page will not load, or the form cannot be reache
 
 Take a screenshot of the tab with the `computer` tool (`scale: 0.5` is enough to find the panel; coordinates stay in the full-size frame).
 Simplify Copilot shows a panel at the side of the form with an "Autofill This Page" button.
+The panel sometimes opens on a "Save Job to Tracker" view instead: switch to its "Autofill" tab at the top of the panel, and never press its "Save Job" or "Submit Application" buttons.
 The panel is not in the page's accessibility tree, so `find` and `read_page` cannot see it: click the button by its position in the screenshot with the `computer` tool's `left_click`.
 Simplify then fills the standard fields over about 30 seconds: wait with the `computer` tool's `wait` action (10 seconds at a time) and take a screenshot until it says it is done or a minute has passed.
 Record how it went for step 9's `simplify`: `filled` when it filled fields, `absent` when no Simplify panel appeared, `failed` when it appeared but filled nothing or showed an error.
@@ -126,20 +128,55 @@ When the panel offers to answer the free-text questions with AI or to submit, ig
 
 ## 8. Check and fill every field
 
-Read the whole form with `read_page` (`filter: "interactive"`), scrolling and reading again on long forms, so no field is missed.
+Read every field's label and current value with `mcp__claude-in-chrome__javascript_tool`, running this read-only script exactly as written; it changes nothing on the page:
+
+```js
+(() => {
+  const t = (e) => (e?.textContent ?? "").replace(/\s+/g, " ").trim();
+  const out = [];
+  for (const el of document.querySelectorAll("form input, form select, form textarea")) {
+    const type = el.type || el.tagName.toLowerCase();
+    if (["hidden", "submit", "button", "search", "file", "password"].includes(type)) continue;
+    const label =
+      t(el.id && document.querySelector(`label[for="${CSS.escape(el.id)}"]`)) ||
+      el.getAttribute("aria-label") ||
+      "";
+    if (!label) continue;
+    const combo = el.getAttribute("role") === "combobox";
+    const value = combo
+      ? t(
+          el
+            .closest("[class*=control]")
+            ?.querySelector("[class*=single-value],[class*=multi-value]"),
+        )
+      : type === "checkbox" || type === "radio"
+        ? String(el.checked)
+        : el.value;
+    out.push(`${label.slice(0, 100)} = ${JSON.stringify(value)}${combo ? " (dropdown)" : ""}`);
+  }
+  return out.join("\n");
+})();
+```
+
+It is far cheaper than `read_page`, which on many forms lists hundreds of options (a phone country picker alone has over 240) and does not show what is typed in text boxes.
+Use `find` for the `ref` of a field you need to change, and `read_page` only for a field the script cannot see (a form not built from a `form` element, or a field in a frame).
 For every field, decide what it should hold, compare that with what is in it now (Simplify may have filled it wrongly), and fix it:
 
-- **Personal facts and sensitive answers** (name, email, phone, address, links, work authorization, sponsorship, education, start date, relocation, salary, demographic and self-identification questions): use the answer in `private-answers.md`.
-  Replace anything Simplify put there that differs.
-  When the private file leaves that answer blank or has no matching question, clear the field if Simplify filled it and flag it as `missing_answer`.
-  For demographic questions, use the form's option that matches the Candidate's answer, including "Decline to self-identify" when they wrote "Decline to answer".
+- **Sensitive answers** (legal address, work authorization, visa sponsorship, date of birth, government IDs, and every demographic or voluntary self-identification question): these come only from `private-answers.md`.
+  Use the Candidate's answer there, replacing anything Simplify put in the field.
+  When the private file leaves that answer blank or has no matching question, clear the field if Simplify filled it, and flag it as `missing_answer`.
+  For demographic questions, pick the form's option that matches the Candidate's answer, including "Decline to self-identify" when they wrote "Decline to answer".
+- **Standard facts** (name, email, phone, city, links, school, degree, major, GPA, graduation date, start date, relocation, how they heard about the job): when the private file answers one, use that answer and replace anything different.
+  When the form's options do not include the Candidate's answer, leave the field blank and flag it as `uncertain` instead of picking the closest option.
+  Otherwise keep the value Simplify filled from the Candidate's own Simplify profile when it fits the question, and flag the field as `missing_answer` when neither has an answer.
+  Never fill a salary the Candidate did not write down.
 - **Legal claims** (whether the Candidate meets the basic or minimum qualifications, certifies their answers, agrees to terms, a privacy policy or a background check, has worked for or is related to someone at the company, or any other statement about themselves the form asks them to confirm): leave it blank or unchecked and flag it as `legal_claim`, unless the private file answers that exact question.
 - **Free-text questions** (cover letter, "Why this company?", "Anything else?", any open answer longer than a few words): leave them as they are without writing an answer, and flag each as `free_text` so the Candidate writes it.
   Clear any text Simplify put there that is clearly not the Candidate's.
 - **Anything you are not sure about**: leave it blank and flag it as `uncertain`, saying what you were unsure of.
   Never guess, and never pick a likely option to fill a required field.
 - **Resume**: upload the planned Resume Variant file with `mcp__claude-in-chrome__file_upload`, passing its absolute path from the plan and the `ref` of the resume file input from `find` or `read_page`; never click a file input, since that opens a picker you cannot reach.
-  If Simplify attached a different resume, replace it.
+  If Simplify attached a different resume, remove it with the form's remove button first; the file input usually appears only after that.
   Leave cover letter uploads empty.
   If the upload fails or the form has no resume input, flag it as `resume`.
 
@@ -147,6 +184,9 @@ How to fill each kind of field:
 
 - Text boxes, native selects, checkboxes and radio buttons: `form_input` with the field's `ref`.
 - Searchable dropdowns (Greenhouse, Ashby and Lever often use these): click the field with the `computer` tool, type the option, wait a moment, then press Enter, and read the field again to check the choice took.
+  To clear one, click its "Clear selections" button and press Escape.
+- Change dropdowns one at a time, reading the field back after each change and getting fresh refs from `find` before the next.
+  Clearing or choosing an option moves the fields around it, so a batch of clicks on refs found earlier can land on another field's options and choose a wrong answer.
 - After filling, read the form once more and compare every required field: each one is either filled with the right answer or flagged.
 
 Never press the submit button, even when every field is filled, and never press Enter in a field where it would send the form.

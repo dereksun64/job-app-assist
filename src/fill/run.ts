@@ -80,6 +80,7 @@ export function signInSite(applyUrl: string): string | undefined {
 const json = (value: unknown) => `${JSON.stringify(value, null, 2)}\n`;
 const plural = (n: number, word: string, many = `${word}s`) =>
   `${n.toLocaleString("en-US")} ${n === 1 ? word : many}`;
+const fmt = (n: number) => n.toLocaleString("en-US");
 const name = (card: Card) => `${card.posting.company} - ${card.posting.title}`;
 
 async function readJsonFile(io: FillIo, path: string): Promise<unknown> {
@@ -391,13 +392,13 @@ async function finish(dir: string, id: string, version: number, io: FillIo): Pro
         : `${name(card)}: Fill stopped, staying Queued with ${flags}.`,
     `Send the batch in ${writesPath} with ArtifactData.`,
     tokens
-      ? `Tokens for this application: ${tokens.total.toLocaleString("en-US")} (${tokens.output.toLocaleString("en-US")} output) over ${plural(tokens.messages, "response")}.`
+      ? `Tokens for this application: ${fmt(tokens.total)} over ${plural(tokens.messages, "response")} (${fmt(tokens.cacheRead)} cache reads, ${fmt(tokens.cacheCreation)} cache writes, ${fmt(tokens.input)} input, ${fmt(tokens.output)} output).`
       : "Token use for this application could not be measured: this session's transcript was not found.",
   ];
   if (totals.length > 0) {
     const average = Math.round(totals.reduce((a, b) => a + b, 0) / totals.length);
     lines.push(
-      `${plural(totals.length, "filled application")} logged so far, averaging ${average.toLocaleString("en-US")} tokens each.`,
+      `${plural(totals.length, "filled application")} logged so far, averaging ${fmt(average)} tokens each.`,
     );
   }
   io.stdout(`${lines.join("\n")}\n`);
