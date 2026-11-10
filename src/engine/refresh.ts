@@ -20,7 +20,6 @@ import {
   type Card,
   type JobListMeta,
   type JobListPage,
-  type LocationTier,
   type Posting,
   type PostingSource,
   type RoleTypePriority,
@@ -29,10 +28,12 @@ import {
   type SourceReport,
   type SourceSettings,
 } from "../contract/index.ts";
+import { onBlockedSite } from "./apply-sites.ts";
 import {
   companyBoost,
   companyKey,
   companyKnown,
+  companyRuleOf,
   displayCompany,
   UNKNOWN_COMPANY,
 } from "./companies.ts";
@@ -100,11 +101,16 @@ export interface ChangeSet {
   delete: { collection: string; docId: string }[];
 }
 
+/** Source Postings left out, by why. The last two count merged Postings, not listings. */
 export interface FilteredOut {
   location: number;
   seniority: number;
   startWindow: number;
   roleType: number;
+  /** Postings at a company the Candidate blocked. */
+  company: number;
+  /** Postings whose every apply URL is on a site the Candidate blocked. */
+  applySite: number;
 }
 
 /** A Posting the Candidate added by URL that the Job List left out, and why. */
@@ -170,14 +176,25 @@ interface Candidate {
 }
 
 const FIT: Record<RoleTypePriority, number> = { high: 1, medium: 0.6, low: 0.25 };
-const WEIGHTS = { fit: 0.5, boost: 0.3, freshness: 0.2 };
 
-function score(priority: RoleTypePriority, boost: number, postedOn: string, now: string): number {
+/**
+ * A Posting's score, 0 to 100: freshness counts for the Candidate's freshness weight, and role
+ * type priority fit and company boost share the rest, five parts to three.
+ */
+function score(
+  priority: RoleTypePriority,
+  boost: number,
+  postedOn: string,
+  now: string,
+  settings: Settings,
+): number {
+  const freshnessWeight = settings.freshnessWeight / 100;
+  const rest = 1 - freshnessWeight;
   const value =
-    WEIGHTS.fit * FIT[priority] +
-    WEIGHTS.boost * boost +
-    WEIGHTS.freshness * freshness(postedOn, now);
-  return Math.round(100 * value);
+    ((rest * 5) / 8) * FIT[priority] +
+    ((rest * 3) / 8) * boost +
+    freshnessWeight * freshness(postedOn, now);
+  return Math.min(100, Math.max(0, Math.round(100 * value)));
 }
 
 type Evaluation =
@@ -290,7 +307,14 @@ function match(
   input: Omit<RefreshInput, "resolvedLinks" | "queue">,
   resolvedLinks: Readonly<Record<string, string>>,
 ): Matching {
-  const filteredOut: FilteredOut = { location: 0, seniority: 0, startWindow: 0, roleType: 0 };
+  const filteredOut: FilteredOut = {
+    location: 0,
+    seniority: 0,
+    startWindow: 0,
+    roleType: 0,
+    company: 0,
+    applySite: 0,
+  };
   const addedLeftOut: AddedLeftOut[] = [];
   const candidates: Candidate[] = [];
   const placesByText = new Map<string, Place[]>();
@@ -470,18 +494,35 @@ function withResumeVariant(
   return { posting: { ...base, resumeVariant: pick }, unsure: !confident };
 }
 
+type Screening = { group: Candidate[] } | { reason: "company" | "applySite" };
+
+/**
+ * Applies the Candidate's blocks to one group of duplicates: a blocked company drops the group,
+ * and listings on blocked sites drop out, so a Posting stays only while one of its apply URLs is
+ * on a site the Candidate still applies on.
+ */
+function screen(group: readonly Candidate[], settings: Settings): Screening {
+  if (group.some((c) => companyRuleOf(c.listing.company, settings.companies) === "block"))
+    return { reason: "company" };
+  const open = group.filter((c) => !onBlockedSite(c.canonicalUrl, settings.blockedApplySites));
+  return open.length === 0 ? { reason: "applySite" } : { group: open };
+}
+
 /** One Posting from a group of duplicates, before its Resume Variant is picked. */
 function merge(
   group: readonly Candidate[],
-  tiers: readonly LocationTier[],
+  settings: Settings,
   now: string,
 ): { posting: Unpicked; evidence: VariantEvidence } {
+  const tiers = settings.searchProfile.locationTiers;
   // The representative is the earliest listing whose URL is not an unresolved short link.
   const [representative] = [...group].sort(
     (a, b) => Number(a.unresolved) - Number(b.unresolved) || a.order - b.order,
   );
   if (!representative) throw new Error("A duplicate group cannot be empty.");
-  const boosts = group.map((c) => companyBoost(c.listing.company, c.listing.companyTier));
+  const boosts = group.map((c) =>
+    companyBoost(c.listing.company, c.listing.companyTier, settings.companies),
+  );
   const boost = boosts.reduce((best, next) => (next.value > best.value ? next : best));
   const postedOn = group.map((c) => c.postedOn).sort()[0] ?? representative.postedOn;
   const best = [...group].sort((a, b) => a.locationTier - b.locationTier)[0] ?? representative;
@@ -507,7 +548,7 @@ function merge(
     level: representative.level,
     postedOn,
     sources: mergeSources(group.map((c) => c.source)),
-    score: score(representative.priority, boost.value, postedOn, now),
+    score: score(representative.priority, boost.value, postedOn, now, settings),
     boosts: boost.reasons,
   };
   const short = excerpt(description);
@@ -547,29 +588,29 @@ function carryOver(
       const locationTier = locationTierOf(posting.locations.flatMap(parseLocations), locationTiers);
       const roleType = matchRoleType(posting.title, "", roleTypes);
       if (locationTier === undefined || !roleType || !seniority.includes(posting.level)) return [];
+      if (companyRuleOf(posting.company, settings.companies) === "block") return [];
+      if (onBlockedSite(posting.applyUrl, settings.blockedApplySites)) return [];
+      // The company tier is not kept on a Posting; it is read back from the recorded reasons.
+      const tier = posting.boosts
+        .map((reason) => /^Company tier (.+)$/.exec(reason)?.[1])
+        .find(Boolean);
+      const boost = companyBoost(
+        posting.company,
+        tier === undefined ? "" : `Tier ${tier}`,
+        settings.companies,
+      );
       // The old pick is replaced once the Resume Variant is picked again.
       const kept: Unpicked = {
         ...posting,
         locationTier,
         roleType: roleType.name,
-        score: score(roleType.priority, companyBoostFromReasons(posting), posting.postedOn, now),
+        score: score(roleType.priority, boost.value, posting.postedOn, now, settings),
+        boosts: boost.reasons,
       };
       const evidence: VariantEvidence = { title: kept.title, roleType: kept.roleType };
       if (kept.description !== undefined) evidence.description = kept.description;
       return [{ posting: kept, evidence }];
     });
-}
-
-/** A kept Posting's boost, from the reasons it recorded when it was ranked. */
-function companyBoostFromReasons(posting: Posting): number {
-  const tier = posting.boosts
-    .map((reason) => /^Company tier (.+)$/.exec(reason)?.[1])
-    .find(Boolean);
-  const fromTier = tier === undefined ? 0 : companyBoost("", `Tier ${tier}`).value;
-  return Math.max(
-    posting.boosts.includes("Fortune 500") ? companyBoost("Walmart", "").value : 0,
-    fromTier,
-  );
 }
 
 function compareRank(a: Posting, b: Posting): number {
@@ -589,9 +630,20 @@ export function runRefresh(input: RefreshInput): RefreshResult {
   const judgments = input.variantJudgments ?? {};
   const pick = ({ posting, evidence }: { posting: Unpicked; evidence: VariantEvidence }) =>
     withResumeVariant(posting, evidence, settings, judgments);
-  const fresh = groupDuplicates(matching.candidates).map((group) =>
-    pick(merge(group, settings.searchProfile.locationTiers, now)),
-  );
+  const fresh: Picked[] = [];
+  for (const group of groupDuplicates(matching.candidates)) {
+    const screened = screen(group, settings);
+    if (!("reason" in screened)) {
+      fresh.push(pick(merge(screened.group, settings, now)));
+      continue;
+    }
+    matching.filteredOut[screened.reason] += 1;
+    for (const { listing, source } of group) {
+      if (source.name !== ADDED_BY_URL_SOURCE) continue;
+      const { applyUrl: url, company, title } = listing;
+      matching.addedLeftOut.push({ url, company, title, reason: screened.reason });
+    }
+  }
   const freshIds = new Set(fresh.map((p) => p.posting.id));
   const freshUrls = new Set(fresh.map((p) => p.posting.applyUrl));
   const carriedPicks = carryOver(current, matching.failed, settings, now)

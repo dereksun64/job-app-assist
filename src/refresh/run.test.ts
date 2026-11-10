@@ -21,6 +21,9 @@ const settings: Settings = {
     { name: "Resume B", roleTypes: [], keywords: ["backend"] },
   ],
   dailyQueueTarget: 20,
+  companies: { boost: [], lower: [], block: [] },
+  blockedApplySites: [],
+  freshnessWeight: 20,
   updatedAt: "2026-11-01T00:00:00.000Z",
 };
 
@@ -312,6 +315,44 @@ describe("jaa refresh", () => {
     expect(io.out).toContain("- Job Feed: read 3 Postings.");
     expect(io.out).toContain("Left out: 1 outside your Location Tiers");
     expect(io.out).toContain("1. Acme: Software Engineer, New Grad (New York, NY; Tier 1; score");
+  });
+
+  it("ranks with the company rules, blocked sites and freshness weight saved in settings", async () => {
+    const fetch = fakeFetch({
+      [JOB_FEED_URL]: json(
+        feedJson([
+          job({ applyUrl: "https://jobs.lever.co/acme/1", company: "Acme" }),
+          job({ applyUrl: "https://jobs.lever.co/beta/1", company: "Beta" }),
+          job({ applyUrl: "https://beta.wd1.myworkdayjobs.com/1", company: "Gamma" }),
+          job({ applyUrl: "https://jobs.lever.co/delta/1", company: "Delta" }),
+        ]),
+      ),
+    });
+    const tuned: Settings = {
+      ...settings,
+      companies: { boost: ["Delta"], lower: [], block: ["Beta"] },
+      blockedApplySites: ["myworkdayjobs.com"],
+      freshnessWeight: 30,
+    };
+    const io = memoryIo({ [`${dir}/state/settings/main.json`]: JSON.stringify(tuned) }, fetch);
+    expect(await runRefreshCommand(dir, {}, io)).toBe(0);
+    const page = readOut<JobListPage>(io, "out", "postings", "page-1.json");
+    expect(page.postings.map((p) => [p.company, p.boosts])).toEqual([
+      ["Delta", ["Boosted by you"]],
+      ["Acme", []],
+    ]);
+    expect(io.out).toContain(", 1 at companies you blocked, 1 only on apply sites you blocked.");
+  });
+
+  it("reads a settings document saved before company rules existed", async () => {
+    const fetch = fakeFetch({ [JOB_FEED_URL]: json(feed) });
+    const older: Partial<Settings> = { ...settings };
+    delete older.companies;
+    delete older.blockedApplySites;
+    delete older.freshnessWeight;
+    const io = memoryIo({ [`${dir}/state/settings/main.json`]: JSON.stringify(older) }, fetch);
+    expect(await runRefreshCommand(dir, {}, io)).toBe(0);
+    expect(io.err).toBe("");
   });
 
   it("pre-queues up to the daily target around the Queue and skips it read", async () => {

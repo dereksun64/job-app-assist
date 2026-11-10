@@ -30,6 +30,9 @@ export const settings: Settings = {
   },
   resumeVariants: [{ name: "Generalist SWE", roleTypes: [], keywords: [] }],
   dailyQueueTarget: 20,
+  companies: { boost: [], lower: [], block: [] },
+  blockedApplySites: [],
+  freshnessWeight: 20,
   updatedAt: "2026-11-01T00:00:00.000Z",
 };
 

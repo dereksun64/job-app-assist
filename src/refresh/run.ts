@@ -272,6 +272,8 @@ const LEFT_OUT_REASONS: Record<RefreshSummary["addedLeftOut"][number]["reason"],
   seniority: "asks for more experience",
   startWindow: "outside your start window",
   roleType: "not one of your role types",
+  company: "at a company you blocked",
+  applySite: "only on an apply site you blocked",
 };
 
 function formatSources(summary: RefreshSummary): string[] {
@@ -341,10 +343,14 @@ export function formatSummary(
       `Kept ${number(summary.carriedOver)} Postings from the last Refresh because their Source failed.`,
     );
   }
-  const { location, seniority, startWindow, roleType } = summary.filteredOut;
+  const { location, seniority, startWindow, roleType, company, applySite } = summary.filteredOut;
   if (summary.sources.some((source) => source.ok)) {
+    const blocked = [
+      company > 0 ? `, ${number(company)} at companies you blocked` : "",
+      applySite > 0 ? `, ${number(applySite)} only on apply sites you blocked` : "",
+    ].join("");
     lines.push(
-      `Left out: ${number(location)} outside your Location Tiers, ${number(seniority)} at another seniority, ${number(startWindow)} outside your start window, ${number(roleType)} in other roles.`,
+      `Left out: ${number(location)} outside your Location Tiers, ${number(seniority)} at another seniority, ${number(startWindow)} outside your start window, ${number(roleType)} in other roles${blocked}.`,
     );
   }
   if (summary.addedLeftOut.length > 0) {

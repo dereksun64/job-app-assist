@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { validateDocument } from "./index.ts";
-import { SETTINGS_DOC_ID, validateSettings, type Settings } from "./settings.ts";
+import {
+  DEFAULT_FRESHNESS_WEIGHT,
+  SETTINGS_DOC_ID,
+  validateSettings,
+  type Settings,
+} from "./settings.ts";
 
 function validSettings(): Settings {
   return {
@@ -23,6 +28,9 @@ function validSettings(): Settings {
       { name: "AI/ML Engineer", roleTypes: [], keywords: ["machine learning", "LLM"] },
     ],
     dailyQueueTarget: 20,
+    companies: { boost: ["OpenAI"], lower: ["Lockheed Martin"], block: ["Palantir"] },
+    blockedApplySites: ["myworkdayjobs.com"],
+    freshnessWeight: 20,
     updatedAt: "2026-11-10T15:00:00.000Z",
   };
 }
@@ -254,6 +262,77 @@ describe("Resume Variants in the settings document", () => {
       { name: "SWE", roleTypes: [], keywords: [], file: "resumes/swe.pdf" } as never,
     ];
     expect(issuesFor(settings)).toEqual([expect.stringContaining("file")]);
+  });
+});
+
+describe("ranking settings", () => {
+  it("fills in defaults for a settings document saved before they existed", () => {
+    const older: Partial<Settings> = validSettings();
+    delete older.companies;
+    delete older.blockedApplySites;
+    delete older.freshnessWeight;
+    const result = validateSettings(older);
+    if (!result.ok) throw new Error(result.issues.join("\n"));
+    expect(result.value.companies).toEqual({ boost: [], lower: [], block: [] });
+    expect(result.value.blockedApplySites).toEqual([]);
+    expect(result.value.freshnessWeight).toBe(DEFAULT_FRESHNESS_WEIGHT);
+  });
+
+  it("trims company names and lowercases apply sites", () => {
+    const settings = validSettings();
+    settings.companies.boost = ["  Anthropic "];
+    settings.blockedApplySites = [" MyWorkdayJobs.com "];
+    const result = validateSettings(settings);
+    if (!result.ok) throw new Error(result.issues.join("\n"));
+    expect(result.value.companies.boost).toEqual(["Anthropic"]);
+    expect(result.value.blockedApplySites).toEqual(["myworkdayjobs.com"]);
+  });
+
+  it("rejects a company in two lists, ignoring case", () => {
+    const settings = validSettings();
+    settings.companies = { boost: ["Palantir"], lower: [], block: ["palantir"] };
+    expect(issuesFor(settings)).toEqual([expect.stringMatching(/^companies: .*Palantir/)]);
+  });
+
+  it("rejects a company listed twice in one list", () => {
+    const settings = validSettings();
+    settings.companies.boost = ["OpenAI", "openai"];
+    expect(issuesFor(settings)).toEqual([expect.stringMatching(/^companies: .*OpenAI/)]);
+  });
+
+  it("rejects a blank company name and unknown company lists", () => {
+    const settings = validSettings();
+    settings.companies.block = [" "];
+    expect(issuesFor(settings)).toEqual([expect.stringMatching(/^companies\.block\.0: /)]);
+    expect(
+      issuesFor({ ...validSettings(), companies: { boost: [], lower: [], block: [], love: [] } }),
+    ).toEqual([expect.stringContaining("love")]);
+  });
+
+  it.each(["https://myworkdayjobs.com", "myworkdayjobs.com/jobs", "workday", "*.workday.com"])(
+    "rejects an apply site written as %s",
+    (site) => {
+      expect(issuesFor({ ...validSettings(), blockedApplySites: [site] })).toEqual([
+        expect.stringMatching(/^blockedApplySites\.0: /),
+      ]);
+    },
+  );
+
+  it("rejects the same apply site twice", () => {
+    expect(
+      issuesFor({ ...validSettings(), blockedApplySites: ["icims.com", "ICIMS.com"] }),
+    ).toEqual([expect.stringMatching(/^blockedApplySites: .*icims\.com/)]);
+  });
+
+  it.each([-5, 55, 12.5, "20"])("rejects a freshness weight of %j", (weight) => {
+    expect(issuesFor({ ...validSettings(), freshnessWeight: weight })).toEqual([
+      expect.stringMatching(/^freshnessWeight: /),
+    ]);
+  });
+
+  it("accepts freshness weights from 0 to 50", () => {
+    expect(validateSettings({ ...validSettings(), freshnessWeight: 0 }).ok).toBe(true);
+    expect(validateSettings({ ...validSettings(), freshnessWeight: 50 }).ok).toBe(true);
   });
 });
 

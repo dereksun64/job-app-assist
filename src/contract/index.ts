@@ -17,6 +17,7 @@ import {
 export * from "./cards.ts";
 export * from "./news.ts";
 export * from "./postings.ts";
+export * from "./settings-diff.ts";
 export * from "./settings.ts";
 export * from "./skips.ts";
 export * from "./variant-overrides.ts";

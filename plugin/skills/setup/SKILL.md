@@ -41,6 +41,9 @@ Turn the description into a settings document with exactly these fields, plus th
     "locationTiers": [{ "locations": ["New York City", "Remote"] }, { "locations": ["Boston"] }]
   },
   "dailyQueueTarget": 20,
+  "companies": { "boost": [], "lower": [], "block": [] },
+  "blockedApplySites": [],
+  "freshnessWeight": 20,
   "updatedAt": "<now, ISO 8601 UTC>"
 }
 ```
@@ -54,6 +57,9 @@ Turn the description into a settings document with exactly these fields, plus th
   Remote is a location like any other.
 - `dailyQueueTarget`: how many Postings to queue per day, 1 to 100.
   The default is 20; a smaller Claude plan suits a smaller number.
+
+- `companies`, `blockedApplySites` and `freshnessWeight`: start empty and at 20 unless the Candidate names companies to prefer, avoid or rule out, application sites to avoid, or how much recency matters.
+  On a rerun, keep what the current settings have; the Candidate tunes these later with `/job-app-assist:tune` or the dashboard's Settings panel.
 
 Where the description leaves a field open, choose the most likely value and mark it as an assumption when you show the draft.
 
