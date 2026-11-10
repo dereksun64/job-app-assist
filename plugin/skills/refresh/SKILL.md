@@ -42,7 +42,7 @@ rm -rf .job-app-assist/refresh/state .job-app-assist/refresh/out
 mkdir -p .job-app-assist/refresh
 ```
 
-Read with `ArtifactData`, saving the documents as files with `out_dir: ".job-app-assist/refresh/state"`:
+Read with `ArtifactData`, saving the documents as files: pass `out_dir` as the absolute path of `.job-app-assist/refresh/state` in the Candidate folder.
 
 - `action: "get"`, `collection: "settings"`, `doc_id: "main"`.
   If there is no settings document, ask the Candidate to finish `/job-app-assist:setup` and stop.
