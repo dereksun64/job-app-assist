@@ -2923,6 +2923,10 @@ var FORTUNE_500_BRANDS = {
 function displayCompany(name) {
   return name.replace(/[\p{Extended_Pictographic}\u{FE0F}\u{200D}]/gu, "").replace(/\s+/g, " ").trim();
 }
+var UNKNOWN_COMPANY = "Unknown company";
+function companyKnown(name) {
+  return !/^[0-9a-f]{8}[\s-]+[0-9a-f]{4}[\s-]+[0-9a-f]{4}/i.test(name.trim()) && displayCompany(name) !== "";
+}
 var SUFFIXES = /\b(inc|incorporated|llc|l l c|ltd|limited|corp|corporation|co|company|companies|plc|lp|llp|group holdings|holdings)\b/g;
 function companyKey(name) {
   return displayCompany(name).toLowerCase().replace(/&/g, " ").replace(/\(.*?\)/g, " ").replace(/[^\p{L}\p{N}]+/gu, " ").replace(/^the /, "").replace(SUFFIXES, " ").replace(/\s+/g, " ").trim();
@@ -3477,7 +3481,8 @@ var REGIONS = {
   seattle: inCities("WA", SEATTLE_AREA),
   "east coast": inStates(EAST_COAST),
   "west coast": inStates(WEST_COAST),
-  remote: (place) => place.remote
+  // Plain "Remote" means remote from the US or with no country given; "Remote in UK" is its own entry.
+  remote: (place) => place.remote && (place.country === void 0 || place.country === "US")
 };
 function matcherFor(entry) {
   const written = entry.toLowerCase().replace(/^(the )?(rest of (the )?|greater |anywhere in (the )?)/, "").trim();
@@ -3489,6 +3494,10 @@ function matcherFor(entry) {
   const country = COUNTRIES[key];
   if (country) return (place) => place.country === country;
   const [parsed] = parseLocations(entry);
+  if (parsed?.remote) {
+    const within = parsed.country;
+    return (place) => place.remote && place.country === within;
+  }
   if (parsed?.city !== void 0) {
     const city = parsed.city.toLowerCase();
     const { region: within, country: inCountry } = parsed;
@@ -3664,7 +3673,8 @@ var TRACKING_PARAMS = /* @__PURE__ */ new Set([
   "iisn",
   "trk",
   "campaign",
-  "medium"
+  "medium",
+  "embed"
 ]);
 var HOST_ALIASES = {
   "boards.greenhouse.io": "job-boards.greenhouse.io"
@@ -3801,23 +3811,20 @@ function groupDuplicates(candidates) {
     }
     return root;
   };
-  const byUrl = /* @__PURE__ */ new Map();
-  const byText = /* @__PURE__ */ new Map();
+  const owner = /* @__PURE__ */ new Map();
+  const join2 = (key, i) => {
+    const other = owner.get(key);
+    if (other === void 0) owner.set(key, i);
+    else parent[find(i)] = find(other);
+  };
   candidates.forEach((candidate, i) => {
-    const sameUrl = byUrl.get(candidate.canonicalUrl);
-    if (sameUrl === void 0) byUrl.set(candidate.canonicalUrl, i);
-    else parent[find(i)] = find(sameUrl);
+    join2(`url:${candidate.canonicalUrl}`, i);
     const textKey = [
       companyKey(candidate.listing.company),
       titleKey(candidate.listing.title),
-      candidate.places.map((p) => p.label).sort().join(";")
+      [...new Set(candidate.places.map(placeKey))].sort().join(";")
     ].join("|");
-    const list = sourceKey(candidate.source);
-    const seen = byText.get(textKey) ?? [];
-    const other = seen.find((entry) => entry.list !== list);
-    if (other !== void 0) parent[find(i)] = find(other.index);
-    seen.push({ index: i, list });
-    byText.set(textKey, seen);
+    join2(`text:${textKey}`, i);
   });
   const groups = /* @__PURE__ */ new Map();
   candidates.forEach((candidate, i) => {
@@ -3827,6 +3834,9 @@ function groupDuplicates(candidates) {
     groups.set(root, group);
   });
   return [...groups.values()];
+}
+function placeKey(place) {
+  return place.remote ? `remote:${place.country ?? "US"}` : place.label;
 }
 function compareText(a, b) {
   return a < b ? -1 : a > b ? 1 : 0;
@@ -3838,7 +3848,7 @@ function mergeSources(sources) {
   const unique = new Map(sources.map((source) => [sourceKey(source), source]));
   return [...unique.values()].sort((a, b) => compareText(sourceKey(a), sourceKey(b)));
 }
-function merge2(group, now) {
+function merge2(group, tiers, now) {
   const [representative] = [...group].sort(
     (a, b) => Number(a.unresolved) - Number(b.unresolved) || a.order - b.order
   );
@@ -3847,12 +3857,15 @@ function merge2(group, now) {
   const boost = boosts.reduce((best2, next) => next.value > best2.value ? next : best2);
   const postedOn = group.map((c) => c.postedOn).sort()[0] ?? representative.postedOn;
   const best = [...group].sort((a, b) => a.locationTier - b.locationTier)[0] ?? representative;
+  const named = group.find((c) => companyKnown(c.listing.company)) ?? representative;
+  const tierOfPlace = (place) => locationTierOf([place], tiers) ?? Number.MAX_SAFE_INTEGER;
+  const places = representative.places.map((place, index) => ({ place, index, tier: tierOfPlace(place) })).sort((a, b) => a.tier - b.tier || a.index - b.index).map(({ place }) => place);
   return {
     id: postingId(representative.canonicalUrl),
     applyUrl: representative.canonicalUrl,
-    company: displayCompany(representative.listing.company),
+    company: companyKnown(named.listing.company) ? displayCompany(named.listing.company) : UNKNOWN_COMPANY,
     title: representative.listing.title.replace(/\s+/g, " ").trim(),
-    locations: representative.places.length > 0 ? representative.places.slice(0, 60).map((p) => p.label) : ["Unknown"],
+    locations: places.length > 0 ? places.slice(0, 60).map((p) => p.label) : ["Unknown"],
     locationTier: best.locationTier,
     roleType: representative.roleType,
     level: representative.level,
@@ -3893,7 +3906,9 @@ function compareRank(a, b) {
 function runRefresh(input) {
   const { now, settings: settings2, current } = input;
   const matching = match(input, input.resolvedLinks ?? {});
-  const fresh = groupDuplicates(matching.candidates).map((group) => merge2(group, now));
+  const fresh = groupDuplicates(matching.candidates).map(
+    (group) => merge2(group, settings2.searchProfile.locationTiers, now)
+  );
   const freshIds = new Set(fresh.map((p) => p.id));
   const freshUrls = new Set(fresh.map((p) => p.applyUrl));
   const carried = carryOver(current, matching.failedSources, settings2, now).filter(

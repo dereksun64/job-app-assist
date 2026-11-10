@@ -278,6 +278,41 @@ describe("dedupe", () => {
     expect(jobList[0]?.sources.map((s) => s.list)).toEqual(["A", "B", "C"]);
   });
 
+  it("treats Remote and Remote in USA as the same place when merging", () => {
+    const { jobList } = refresh(
+      [
+        listed({
+          company: "CACI",
+          title: "Junior Software Developer",
+          location: "Remote in USA",
+          list: "A",
+        }),
+        listed({
+          company: "CACI",
+          title: "Junior Software Developer",
+          location: "Remote",
+          list: "B",
+        }),
+        listed({
+          company: "CACI",
+          title: "Junior Software Developer",
+          location: "Remote in UK",
+          list: "C",
+        }),
+      ],
+      {
+        settings: {
+          ...settings,
+          searchProfile: {
+            ...settings.searchProfile,
+            locationTiers: [{ locations: ["Remote", "Remote in UK"] }],
+          },
+        },
+      },
+    );
+    expect(jobList.map((p) => p.locations[0]).sort()).toEqual(["Remote in UK", "Remote in USA"]);
+  });
+
   it("keeps the same title at one company in different locations apart", () => {
     const { jobList } = refresh([
       listed({ company: "Acme", location: "NYC" }),

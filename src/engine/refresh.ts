@@ -255,10 +255,7 @@ function groupDuplicates(candidates: readonly Candidate[]): Candidate[][] {
     const textKey = [
       companyKey(candidate.listing.company),
       titleKey(candidate.listing.title),
-      candidate.places
-        .map((p) => p.label)
-        .sort()
-        .join(";"),
+      [...new Set(candidate.places.map(placeKey))].sort().join(";"),
     ].join("|");
     join(`text:${textKey}`, i);
   });
@@ -270,6 +267,11 @@ function groupDuplicates(candidates: readonly Candidate[]): Candidate[][] {
     groups.set(root, group);
   });
   return [...groups.values()];
+}
+
+/** A place for comparing listings: "Remote" and "Remote in USA" are the same place. */
+function placeKey(place: Place): string {
+  return place.remote ? `remote:${place.country ?? "US"}` : place.label;
 }
 
 function compareText(a: string, b: string): number {

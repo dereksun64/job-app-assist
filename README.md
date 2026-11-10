@@ -4,7 +4,7 @@ A Claude Code plugin that lets your own Claude find, prepare and fill job applic
 Everything lands in a private dashboard in your own claude.ai account, with News, Postings and Progress tabs.
 Your Claude never submits an application, never sends a message as you, and never signs in for you.
 
-This is an early version: Setup and the empty dashboard work today, and Refresh, Fill and the rest are on the way.
+This is an early version: Setup and Refresh work today, and the Queue, Fill and the rest are on the way.
 
 ## What you need
 
@@ -23,6 +23,13 @@ claude plugin install job-app-assist@job-app-assist
 
 Then open a folder for your job search in the Code tab of the Claude desktop app and run `/job-app-assist:setup`, or just tell Claude you want to set up Job App Assist.
 Describe the jobs you want in your own words, confirm the Search Profile Claude drafts, and Claude publishes your dashboard.
+
+## Refresh
+
+Run `/job-app-assist:refresh`, or just ask Claude to refresh your jobs.
+Claude pulls Postings from the shared Job Feed, keeps the ones that match your Search Profile, merges duplicates listed in several places, and ranks them: Location Tier first, then fit to your role types, company boosts (Fortune 500 companies and the Job Feed's company tiers) and freshness.
+The ranked Job List appears on the Postings tab of your dashboard, with search and filters for role type, Location Tier, Source and how recently a Posting went up.
+Claude ends with a short summary in chat, and says plainly when a Source could not be read.
 
 ## Developing
 

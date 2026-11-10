@@ -24,3 +24,35 @@ export function formatStartWindow({ earliest, latest }: SearchProfile["startWind
   if (latest) return `By ${formatMonth(latest)}`;
   return "Any time";
 }
+
+/** One seniority, as a short label. */
+export function formatLevel(level: Seniority): string {
+  return SENIORITY_LABELS[level];
+}
+
+/** A moment as "Nov 10, 3:04 PM" in the viewer's own time zone. */
+export function formatMoment(iso: string): string {
+  return new Date(iso).toLocaleString("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+const DAY_MS = 86_400_000;
+
+/** Whole days from a posted day (YYYY-MM-DD, in UTC) to now. */
+export function daysSincePosted(postedOn: string, now: number): number {
+  return Math.max(0, Math.floor((now - Date.parse(`${postedOn}T00:00:00Z`)) / DAY_MS));
+}
+
+/** How long ago a Posting went up: "Today", "Yesterday", "3 days ago", "2 weeks ago", "3 months ago". */
+export function formatPostedAge(postedOn: string, now: number): string {
+  const days = daysSincePosted(postedOn, now);
+  if (days === 0) return "Today";
+  if (days === 1) return "Yesterday";
+  if (days < 14) return `${String(days)} days ago`;
+  if (days < 60) return `${String(Math.floor(days / 7))} weeks ago`;
+  return `${String(Math.floor(days / 30))} months ago`;
+}
