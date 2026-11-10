@@ -71,7 +71,12 @@ describe("authored text", () => {
   })
     .split("\n")
     .filter(
-      (path) => path !== "" && !path.startsWith("plugin/dist/") && path !== "package-lock.json",
+      // Generated files and fixtures copied verbatim from real data are not authored text.
+      (path) =>
+        path !== "" &&
+        !path.startsWith("plugin/dist/") &&
+        !path.includes("/fixtures/") &&
+        path !== "package-lock.json",
     )
     .filter((path) => existsSync(`${root}${path}`));
 

@@ -7,8 +7,8 @@ var __export = (target, all) => {
 };
 
 // src/cli/main.ts
-import { readFile } from "node:fs/promises";
-import { text } from "node:stream/consumers";
+import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { text as text3 } from "node:stream/consumers";
 
 // node_modules/zod/v4/core/util.js
 function getEnumValues(entries) {
@@ -578,6 +578,7 @@ function datetime(args) {
 }
 var anyString = /^[\s\S]{0,}$/;
 var number = /^-?\d+(?:\.\d+)?$/;
+var boolean = /^(?:true|false)$/i;
 
 // node_modules/zod/v4/core/checks.js
 var $ZodCheck = /* @__PURE__ */ $constructor("$ZodCheck", (inst, def) => {
@@ -998,6 +999,27 @@ var $ZodNumberFormat = /* @__PURE__ */ $constructor("$ZodNumberFormat", (inst, d
   $ZodCheckNumberFormat.init(inst, def);
   $ZodNumber.init(inst, def);
 });
+var $ZodBoolean = /* @__PURE__ */ $constructor("$ZodBoolean", (inst, def) => {
+  $ZodType.init(inst, def);
+  inst._zod.pattern = boolean;
+  inst._zod.parse = (payload, _ctx) => {
+    if (def.coerce)
+      try {
+        payload.value = Boolean(payload.value);
+      } catch (_) {
+      }
+    const input = payload.value;
+    if (typeof input === "boolean")
+      return payload;
+    payload.issues.push({
+      expected: "boolean",
+      code: "invalid_type",
+      input,
+      inst
+    });
+    return payload;
+  };
+});
 var $ZodNever = /* @__PURE__ */ $constructor("$ZodNever", (inst, def) => {
   $ZodType.init(inst, def);
   inst._zod.parse = (payload, _ctx) => {
@@ -1015,7 +1037,7 @@ function capSize(inst, size) {
   if (!caps.length)
     return;
   const cap = Math.min(...caps.map((c) => c[0]));
-  const parse2 = inst._zod.parse;
+  const parse3 = inst._zod.parse;
   inst._zod.parse = (payload, ctx) => {
     const n = size(payload.value);
     if (n > cap && !ctx?.skipChecks && ctx?.direction !== "backward") {
@@ -1029,7 +1051,7 @@ function capSize(inst, size) {
         }
       }
     }
-    return parse2(payload, ctx);
+    return parse3(payload, ctx);
   };
 }
 var arraySize = (input) => Array.isArray(input) ? input.length : -1;
@@ -1550,6 +1572,13 @@ function _int(Class, params) {
   });
 }
 // @__NO_SIDE_EFFECTS__
+function _boolean(Class, params) {
+  return new Class({
+    type: "boolean",
+    ...normalizeParams(params)
+  });
+}
+// @__NO_SIDE_EFFECTS__
 function _never(Class, params) {
   return new Class({
     type: "never",
@@ -1696,8 +1725,8 @@ var ZodMiniType = /* @__PURE__ */ $constructor("ZodMiniType", (inst, def) => {
   brand() {
     return this;
   },
-  register(reg, meta2) {
-    reg.add(this, meta2);
+  register(reg, meta3) {
+    reg.add(this, meta3);
     return this;
   },
   apply(fn, ...args) {
@@ -1726,6 +1755,14 @@ var ZodMiniNumberFormat = /* @__PURE__ */ $constructor("ZodMiniNumberFormat", (i
 });
 function int(params) {
   return _int(ZodMiniNumberFormat, params);
+}
+var ZodMiniBoolean = /* @__PURE__ */ $constructor("ZodMiniBoolean", (inst, def) => {
+  $ZodBoolean.init(inst, def);
+  ZodMiniType.init(inst, def);
+});
+// @__NO_SIDE_EFFECTS__
+function boolean2(params) {
+  return _boolean(ZodMiniBoolean, params);
 }
 var ZodMiniNever = /* @__PURE__ */ $constructor("ZodMiniNever", (inst, def) => {
   $ZodNever.init(inst, def);
@@ -1951,12 +1988,150 @@ function validateSettings(input) {
   return validateWith(settings, input);
 }
 
+// src/contract/postings.ts
+var POSTINGS_COLLECTION = "postings";
+var JOB_LIST_META_ID = "meta";
+var POSTINGS_PER_PAGE = 200;
+var MAX_JOB_LIST_PAGES = 5;
+var MAX_JOB_LIST = POSTINGS_PER_PAGE * MAX_JOB_LIST_PAGES;
+function jobListPageId(page2) {
+  return `page-${String(page2)}`;
+}
+var text = (max) => string2().check(
+  _trim(),
+  _minLength(1, "must not be blank"),
+  _maxLength(max, `must be ${String(max)} characters or fewer`)
+);
+var webAddress = string2().check(
+  _maxLength(2e3, "must be 2000 characters or fewer"),
+  _regex(/^https?:\/\/[^\s/]+\.[^\s]*$/, "must be an http or https web address")
+);
+var isoDay = string2().check(
+  _regex(/^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/, "must be a day written as YYYY-MM-DD")
+);
+var timestamp = iso_exports.datetime({ error: "must be an ISO 8601 timestamp" });
+var postingSource = strictObject({
+  /** The Source, for example "Job Feed". */
+  name: text(80),
+  /** Where inside the Source the Posting was listed, for example "Simplify New Grad". */
+  list: optional(text(120))
+});
+var posting = strictObject({
+  /** A short hash of the Posting's canonical apply URL; stable across Refreshes. */
+  id: string2().check(_regex(/^[0-9a-f]{12}$/, "must be 12 lowercase hex characters")),
+  /** Where the Candidate applies, with short links already resolved when they could be. */
+  applyUrl: webAddress,
+  company: text(200),
+  title: text(300),
+  locations: array(text(200)).check(_minLength(1, "list at least one location"), _maxLength(60)),
+  /** The best Location Tier among the Posting's locations, counting from 1. */
+  locationTier: int().check(_gte(1, "must be at least 1"), _lte(10, "must be at most 10")),
+  /** The Search Profile role type the Posting matched. */
+  roleType: text(120),
+  level: _enum(SENIORITIES),
+  postedOn: isoDay,
+  sources: array(postingSource).check(_minLength(1, "list at least one Source"), _maxLength(20)),
+  /** Rank within its Location Tier, 0 to 100, from fit, company boosts and freshness. */
+  score: int({ error: "must be a whole number" }).check(_gte(0, "must be at least 0"), _lte(100, "must be at most 100")),
+  /** Why the company was boosted, for example "Fortune 500". */
+  boosts: array(text(80)).check(_maxLength(10))
+});
+var page = strictObject({
+  schemaVersion: literal(1),
+  /** The Refresh that wrote this page; it matches the meta document's `refreshedAt`. */
+  refreshedAt: timestamp,
+  page: int().check(_gte(1), _lte(MAX_JOB_LIST_PAGES)),
+  postings: array(posting).check(
+    _maxLength(POSTINGS_PER_PAGE, `a page holds at most ${String(POSTINGS_PER_PAGE)} Postings`),
+    superRefine((postings, ctx) => {
+      const seen = /* @__PURE__ */ new Set();
+      for (const { id } of postings) {
+        if (seen.has(id)) {
+          ctx.addIssue({
+            code: "custom",
+            message: `Posting ${id} appears more than once`,
+            input: id
+          });
+        }
+        seen.add(id);
+      }
+    })
+  )
+});
+var sourceReport = strictObject({
+  name: text(80),
+  ok: boolean2(),
+  /** How many Postings the Source listed, before the Search Profile filtered them. */
+  postings: int().check(_gte(0)),
+  /** What went wrong, in plain words, when `ok` is false. */
+  error: optional(text(500))
+});
+var meta2 = strictObject({
+  schemaVersion: literal(1),
+  refreshedAt: timestamp,
+  pageCount: int().check(_gte(0), _lte(MAX_JOB_LIST_PAGES)),
+  /** Postings stored in the Job List. */
+  total: int().check(_gte(0), _lte(MAX_JOB_LIST)),
+  /** Postings that matched the Search Profile, before the Job List kept the best `total`. */
+  matched: int().check(_gte(0)),
+  sources: array(sourceReport).check(_maxLength(50))
+}).check(
+  superRefine((value, ctx) => {
+    if (value.total > value.matched) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["total"],
+        message: "cannot be more than the Postings matched",
+        input: value.total
+      });
+    }
+    const pages = Math.ceil(value.total / POSTINGS_PER_PAGE);
+    if (value.pageCount !== pages) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["pageCount"],
+        message: `must be ${String(pages)} for ${String(value.total)} Postings`,
+        input: value.pageCount
+      });
+    }
+  })
+);
+function validateJobListPage(input) {
+  return validateWith(page, input);
+}
+function validateJobListMeta(input) {
+  return validateWith(meta2, input);
+}
+function validatePostingsDocument(docId, input) {
+  if (docId === JOB_LIST_META_ID) return validateJobListMeta(input);
+  const pageNumber = /^page-([1-9]\d*)$/.exec(docId)?.[1];
+  if (pageNumber === void 0 || Number(pageNumber) > MAX_JOB_LIST_PAGES) {
+    return {
+      ok: false,
+      issues: [
+        `The postings collection holds "${JOB_LIST_META_ID}" and "page-1" to "page-${String(MAX_JOB_LIST_PAGES)}".`
+      ]
+    };
+  }
+  const result = validateJobListPage(input);
+  if (result.ok && result.value.page !== Number(pageNumber)) {
+    return {
+      ok: false,
+      issues: [
+        `page: postings/${docId} must hold page ${pageNumber}, not page ${String(result.value.page)}.`
+      ]
+    };
+  }
+  return result;
+}
+
 // src/contract/index.ts
 var collections = {
   [SETTINGS_COLLECTION]: (docId, input) => docId === SETTINGS_DOC_ID ? validateSettings(input) : {
     ok: false,
     issues: [`The settings collection holds one document, with the id "${SETTINGS_DOC_ID}".`]
-  }
+  },
+  [POSTINGS_COLLECTION]: validatePostingsDocument
 };
 var CONTRACT_COLLECTIONS = Object.keys(collections);
 function validateDocument(collection, docId, input) {
@@ -1970,25 +2145,2204 @@ function validateDocument(collection, docId, input) {
   return rule(docId, input);
 }
 
+// src/refresh/run.ts
+import { join, resolve } from "node:path";
+
+// src/engine/fortune-500.ts
+var FORTUNE_500 = [
+  "Walmart",
+  "Amazon",
+  "UnitedHealth Group",
+  "Apple",
+  "CVS Health",
+  "Berkshire Hathaway",
+  "Alphabet",
+  "Exxon Mobil",
+  "McKesson",
+  "Cencora",
+  "JPMorgan Chase",
+  "Costco Wholesale",
+  "Cigna Group",
+  "Microsoft",
+  "Cardinal Health",
+  "Chevron",
+  "Bank of America",
+  "General Motors",
+  "Ford Motor",
+  "Elevance Health",
+  "Citigroup",
+  "Meta Platforms",
+  "Centene",
+  "Home Depot",
+  "Fannie Mae",
+  "Walgreens Boots Alliance",
+  "Kroger",
+  "Phillips 66",
+  "Marathon Petroleum",
+  "Verizon Communications",
+  "Nvidia",
+  "Goldman Sachs Group",
+  "Wells Fargo",
+  "Valero Energy",
+  "Comcast",
+  "State Farm Insurance",
+  "AT&T",
+  "Freddie Mac",
+  "Humana",
+  "Morgan Stanley",
+  "Target",
+  "StoneX Group",
+  "Tesla",
+  "Dell Technologies",
+  "PepsiCo",
+  "Walt Disney",
+  "United Parcel Service",
+  "Johnson & Johnson",
+  "FedEx",
+  "Archer Daniels Midland",
+  "Procter & Gamble",
+  "Lowe's",
+  "Energy Transfer",
+  "RTX",
+  "Albertsons",
+  "Sysco",
+  "Progressive",
+  "American Express",
+  "Lockheed Martin",
+  "MetLife",
+  "HCA Healthcare",
+  "Prudential Financial",
+  "Boeing",
+  "Caterpillar",
+  "Merck",
+  "Allstate",
+  "Pfizer",
+  "IBM",
+  "New York Life Insurance",
+  "Delta Air Lines",
+  "Publix Super Markets",
+  "Nationwide",
+  "TD Synnex",
+  "United Airlines Holdings",
+  "ConocoPhillips",
+  "TJX",
+  "AbbVie",
+  "Enterprise Products Partners",
+  "Charter Communications",
+  "Performance Food Group",
+  "American Airlines Group",
+  "Capital One Financial",
+  "Cisco Systems",
+  "HP",
+  "Tyson Foods",
+  "Intel",
+  "Oracle",
+  "Broadcom",
+  "Deere",
+  "Nike",
+  "Liberty Mutual Insurance Group",
+  "Plains GP Holdings",
+  "USAA",
+  "Bristol-Myers Squibb",
+  "Ingram Micro Holding",
+  "General Dynamics",
+  "Coca-Cola",
+  "TIAA",
+  "Travelers",
+  "Eli Lilly",
+  "Dow",
+  "CHS",
+  "Thermo Fisher Scientific",
+  "Northrop Grumman",
+  "Abbott Laboratories",
+  "Honeywell International",
+  "Arrow Electronics",
+  "Northwestern Mutual",
+  "Qualcomm",
+  "Molina Healthcare",
+  "Best Buy",
+  "Dollar General",
+  "Philip Morris International",
+  "Netflix",
+  "Mondelez International",
+  "Jabil",
+  "Visa",
+  "Booking Holdings",
+  "Charles Schwab",
+  "Massachusetts Mutual Life Insurance",
+  "PBF Energy",
+  "Truist Financial",
+  "Danaher",
+  "Starbucks",
+  "U.S. Bancorp",
+  "Salesforce",
+  "Mastercard",
+  "General Electric",
+  "GE Vernova",
+  "GE HealthCare Technologies",
+  "Micron Technology",
+  "Applied Materials",
+  "Advanced Micro Devices",
+  "Texas Instruments",
+  "Lam Research",
+  "KLA",
+  "Analog Devices",
+  "Western Digital",
+  "Adobe",
+  "Intuit",
+  "Uber Technologies",
+  "Airbnb",
+  "DoorDash",
+  "PayPal Holdings",
+  "Block",
+  "eBay",
+  "Expedia Group",
+  "Workday",
+  "ServiceNow",
+  "Palo Alto Networks",
+  "Electronic Arts",
+  "Hewlett Packard Enterprise",
+  "DXC Technology",
+  "Cognizant Technology Solutions",
+  "Leidos Holdings",
+  "Booz Allen Hamilton Holding",
+  "Science Applications International",
+  "CACI International",
+  "L3Harris Technologies",
+  "Textron",
+  "Howmet Aerospace",
+  "Huntington Ingalls Industries",
+  "Corning",
+  "Motorola Solutions",
+  "Amphenol",
+  "Arista Networks",
+  "NetApp",
+  "Super Micro Computer",
+  "Sanmina",
+  "Avnet",
+  "CDW",
+  "Insight Enterprises",
+  "Concentrix",
+  "Gartner",
+  "Fiserv",
+  "Fidelity National Information Services",
+  "Global Payments",
+  "Broadridge Financial Solutions",
+  "Automatic Data Processing",
+  "Paychex",
+  "Equifax",
+  "TransUnion",
+  "Moody's",
+  "S&P Global",
+  "Intercontinental Exchange",
+  "CME Group",
+  "Nasdaq",
+  "BlackRock",
+  "State Street",
+  "Bank of New York Mellon",
+  "Northern Trust",
+  "Ameriprise Financial",
+  "Raymond James Financial",
+  "Franklin Resources",
+  "T. Rowe Price",
+  "Invesco",
+  "KKR",
+  "Blackstone",
+  "Apollo Global Management",
+  "Carlyle Group",
+  "Jefferies Financial Group",
+  "Citizens Financial Group",
+  "Fifth Third Bancorp",
+  "KeyCorp",
+  "PNC Financial Services",
+  "Huntington Bancshares",
+  "M&T Bank",
+  "Regions Financial",
+  "Ally Financial",
+  "Synchrony Financial",
+  "Discover Financial Services",
+  "Santander Holdings USA",
+  "American International Group",
+  "Hartford Financial Services",
+  "Aflac",
+  "Lincoln National",
+  "Principal Financial",
+  "Unum Group",
+  "Genworth Financial",
+  "Markel Group",
+  "Loews",
+  "W.R. Berkley",
+  "Fidelity National Financial",
+  "First American Financial",
+  "Assurant",
+  "American Family Insurance Group",
+  "Auto-Owners Insurance",
+  "Pacific Life",
+  "Guardian Life Insurance",
+  "Mutual of Omaha Insurance",
+  "Thrivent Financial for Lutherans",
+  "Western & Southern Financial Group",
+  "Securian Financial Group",
+  "Globe Life",
+  "Marsh McLennan",
+  "Arthur J. Gallagher",
+  "Brown & Brown",
+  "Equitable Holdings",
+  "Voya Financial",
+  "Jackson Financial",
+  "Corebridge Financial",
+  "Reinsurance Group of America",
+  "CNO Financial Group",
+  "Kemper",
+  "Universal Health Services",
+  "Tenet Healthcare",
+  "Community Health Systems",
+  "DaVita",
+  "Labcorp Holdings",
+  "Quest Diagnostics",
+  "Becton Dickinson",
+  "Stryker",
+  "Boston Scientific",
+  "Baxter International",
+  "Zimmer Biomet Holdings",
+  "Intuitive Surgical",
+  "Edwards Lifesciences",
+  "Hologic",
+  "Steris",
+  "Henry Schein",
+  "Owens & Minor",
+  "Amgen",
+  "Gilead Sciences",
+  "Regeneron Pharmaceuticals",
+  "Vertex Pharmaceuticals",
+  "Biogen",
+  "Zoetis",
+  "Viatris",
+  "IQVIA Holdings",
+  "Highmark Health",
+  "Oscar Health",
+  "Kraft Heinz",
+  "General Mills",
+  "Hershey",
+  "J.M. Smucker",
+  "Campbell's",
+  "Conagra Brands",
+  "Hormel Foods",
+  "McCormick",
+  "Post Holdings",
+  "Pilgrim's Pride",
+  "Keurig Dr Pepper",
+  "Constellation Brands",
+  "Molson Coors Beverage",
+  "Brown-Forman",
+  "Monster Beverage",
+  "Altria Group",
+  "Colgate-Palmolive",
+  "Kimberly-Clark",
+  "Estee Lauder",
+  "Clorox",
+  "Church & Dwight",
+  "Coty",
+  "Ulta Beauty",
+  "McDonald's",
+  "Yum Brands",
+  "Chipotle Mexican Grill",
+  "Darden Restaurants",
+  "Domino's Pizza",
+  "Aramark",
+  "Marriott International",
+  "Hilton Worldwide Holdings",
+  "Hyatt Hotels",
+  "Las Vegas Sands",
+  "MGM Resorts International",
+  "Caesars Entertainment",
+  "Wynn Resorts",
+  "Royal Caribbean Cruises",
+  "Carnival",
+  "Southwest Airlines",
+  "Alaska Air Group",
+  "JetBlue Airways",
+  "Avis Budget Group",
+  "Hertz Global Holdings",
+  "Union Pacific",
+  "CSX",
+  "Norfolk Southern",
+  "J.B. Hunt Transport Services",
+  "XPO",
+  "C.H. Robinson Worldwide",
+  "Expeditors International of Washington",
+  "Ryder System",
+  "Old Dominion Freight Line",
+  "Landstar System",
+  "Knight-Swift Transportation Holdings",
+  "Macy's",
+  "Kohl's",
+  "Nordstrom",
+  "Gap",
+  "Ross Stores",
+  "Burlington Stores",
+  "Dillard's",
+  "Dollar Tree",
+  "Five Below",
+  "AutoZone",
+  "O'Reilly Automotive",
+  "Advance Auto Parts",
+  "Genuine Parts",
+  "CarMax",
+  "AutoNation",
+  "Penske Automotive Group",
+  "Lithia Motors",
+  "Group 1 Automotive",
+  "Sonic Automotive",
+  "Carvana",
+  "Tractor Supply",
+  "Williams-Sonoma",
+  "Wayfair",
+  "Chewy",
+  "Dick's Sporting Goods",
+  "Academy Sports and Outdoors",
+  "Bath & Body Works",
+  "Victoria's Secret",
+  "Foot Locker",
+  "Lululemon Athletica",
+  "PVH",
+  "Ralph Lauren",
+  "Tapestry",
+  "VF",
+  "Hanesbrands",
+  "Levi Strauss",
+  "Skechers U.S.A.",
+  "Under Armour",
+  "BJ's Wholesale Club",
+  "Casey's General Stores",
+  "Murphy USA",
+  "Sprouts Farmers Market",
+  "US Foods Holding",
+  "United Natural Foods",
+  "SpartanNash",
+  "Bunge Global",
+  "Ingredion",
+  "Darling Ingredients",
+  "Andersons",
+  "Seaboard",
+  "Land O'Lakes",
+  "Dairy Farmers of America",
+  "Mosaic",
+  "CF Industries Holdings",
+  "Corteva",
+  "FMC",
+  "Sherwin-Williams",
+  "PPG Industries",
+  "RPM International",
+  "Axalta Coating Systems",
+  "Eastman Chemical",
+  "Celanese",
+  "Huntsman",
+  "Westlake",
+  "Olin",
+  "Albemarle",
+  "Air Products & Chemicals",
+  "DuPont de Nemours",
+  "Chemours",
+  "LyondellBasell Industries",
+  "International Paper",
+  "WestRock",
+  "Packaging Corp. of America",
+  "Ball",
+  "Crown Holdings",
+  "Berry Global Group",
+  "Sealed Air",
+  "Sonoco Products",
+  "Graphic Packaging Holding",
+  "Avery Dennison",
+  "3M",
+  "Emerson Electric",
+  "Parker-Hannifin",
+  "Illinois Tool Works",
+  "Rockwell Automation",
+  "Carrier Global",
+  "Otis Worldwide",
+  "Lennox International",
+  "Cummins",
+  "Paccar",
+  "Oshkosh",
+  "AGCO",
+  "Terex",
+  "Dover",
+  "Xylem",
+  "Fortive",
+  "Ametek",
+  "Roper Technologies",
+  "Hubbell",
+  "Generac Holdings",
+  "Regal Rexnord",
+  "Timken",
+  "Pentair",
+  "Stanley Black & Decker",
+  "Snap-on",
+  "Whirlpool",
+  "Mohawk Industries",
+  "Masco",
+  "Owens Corning",
+  "Fortune Brands Innovations",
+  "Builders FirstSource",
+  "BlueLinx Holdings",
+  "Beacon Roofing Supply",
+  "Watsco",
+  "W.W. Grainger",
+  "Fastenal",
+  "MSC Industrial Direct",
+  "WESCO International",
+  "Applied Industrial Technologies",
+  "United Rentals",
+  "Herc Holdings",
+  "Quanta Services",
+  "EMCOR Group",
+  "Jacobs Solutions",
+  "AECOM",
+  "Fluor",
+  "KBR",
+  "Kiewit",
+  "Tutor Perini",
+  "MasTec",
+  "Dycom Industries",
+  "Martin Marietta Materials",
+  "Vulcan Materials",
+  "Nucor",
+  "Steel Dynamics",
+  "Cleveland-Cliffs",
+  "United States Steel",
+  "Commercial Metals",
+  "Reliance",
+  "Alcoa",
+  "Freeport-McMoRan",
+  "Newmont",
+  "Southern Copper",
+  "Occidental Petroleum",
+  "EOG Resources",
+  "Devon Energy",
+  "Diamondback Energy",
+  "APA",
+  "Coterra Energy",
+  "Ovintiv",
+  "Chesapeake Energy",
+  "EQT",
+  "Antero Resources",
+  "Halliburton",
+  "Baker Hughes",
+  "Schlumberger",
+  "NOV",
+  "Kinder Morgan",
+  "Williams",
+  "ONEOK",
+  "Targa Resources",
+  "Cheniere Energy",
+  "Western Midstream Partners",
+  "Plains All American Pipeline",
+  "HF Sinclair",
+  "Delek US Holdings",
+  "CVR Energy",
+  "World Kinect",
+  "Sunoco",
+  "Global Partners",
+  "NextEra Energy",
+  "Duke Energy",
+  "Southern",
+  "Dominion Energy",
+  "Exelon",
+  "American Electric Power",
+  "Xcel Energy",
+  "Sempra",
+  "Edison International",
+  "PG&E",
+  "Consolidated Edison",
+  "Public Service Enterprise Group",
+  "Entergy",
+  "FirstEnergy",
+  "DTE Energy",
+  "CMS Energy",
+  "Ameren",
+  "WEC Energy Group",
+  "Eversource Energy",
+  "PPL",
+  "CenterPoint Energy",
+  "NRG Energy",
+  "Vistra",
+  "Constellation Energy",
+  "AES",
+  "Evergy",
+  "Alliant Energy",
+  "NiSource",
+  "Atmos Energy",
+  "UGI",
+  "Pinnacle West Capital",
+  "OGE Energy",
+  "T-Mobile US",
+  "Lumen Technologies",
+  "Frontier Communications",
+  "Altice USA",
+  "DISH Network",
+  "EchoStar",
+  "Paramount Global",
+  "Warner Bros. Discovery",
+  "Fox",
+  "News Corp.",
+  "iHeartMedia",
+  "Live Nation Entertainment",
+  "Omnicom Group",
+  "Interpublic Group",
+  "Nexstar Media Group",
+  "Sirius XM Holdings",
+  "Polaris",
+  "Harley-Davidson",
+  "Brunswick",
+  "Thor Industries",
+  "Goodyear Tire & Rubber",
+  "BorgWarner",
+  "Lear",
+  "Adient",
+  "Dana",
+  "American Axle & Manufacturing",
+  "Tenneco",
+  "Prologis",
+  "American Tower",
+  "Equinix",
+  "Digital Realty Trust",
+  "Simon Property Group",
+  "Public Storage",
+  "Welltower",
+  "CBRE Group",
+  "Jones Lang LaSalle",
+  "Cushman & Wakefield",
+  "D.R. Horton",
+  "Lennar",
+  "PulteGroup",
+  "NVR",
+  "Toll Brothers",
+  "KB Home",
+  "Taylor Morrison Home",
+  "Meritage Homes",
+  "Waste Management",
+  "Republic Services",
+  "Clean Harbors",
+  "Cintas",
+  "ABM Industries",
+  "Robert Half",
+  "ManpowerGroup",
+  "Kelly Services",
+  "Insperity",
+  "TrueBlue",
+  "Korn Ferry",
+  "Thomson Reuters",
+  "Verisk Analytics",
+  "LPL Financial Holdings",
+  "Coinbase Global",
+  "ON Semiconductor",
+  "Marvell Technology",
+  "GlobalFoundries",
+  "Xerox Holdings"
+];
+var FORTUNE_500_BRANDS = {
+  google: "Alphabet",
+  "google deepmind": "Alphabet",
+  deepmind: "Alphabet",
+  waymo: "Alphabet",
+  youtube: "Alphabet",
+  verily: "Alphabet",
+  meta: "Meta Platforms",
+  facebook: "Meta Platforms",
+  instagram: "Meta Platforms",
+  whatsapp: "Meta Platforms",
+  "amazon web services": "Amazon",
+  aws: "Amazon",
+  "amazon robotics": "Amazon",
+  zappos: "Amazon",
+  "whole foods market": "Amazon",
+  twitch: "Amazon",
+  linkedin: "Microsoft",
+  github: "Microsoft",
+  "microsoft ai": "Microsoft",
+  jpmorgan: "JPMorgan Chase",
+  "j p morgan": "JPMorgan Chase",
+  "jp morgan": "JPMorgan Chase",
+  "jpmorgan chase co": "JPMorgan Chase",
+  chase: "JPMorgan Chase",
+  "goldman sachs": "Goldman Sachs Group",
+  citi: "Citigroup",
+  citibank: "Citigroup",
+  "capital one": "Capital One Financial",
+  "wells fargo bank": "Wells Fargo",
+  "bank of america merrill lynch": "Bank of America",
+  "merrill lynch": "Bank of America",
+  "american express global business travel": "American Express",
+  amex: "American Express",
+  "lockheed martin space": "Lockheed Martin",
+  "northrop grumman space": "Northrop Grumman",
+  raytheon: "RTX",
+  "raytheon technologies": "RTX",
+  "pratt whitney": "RTX",
+  "collins aerospace": "RTX",
+  "general dynamics information technology": "General Dynamics",
+  gdit: "General Dynamics",
+  "general dynamics mission systems": "General Dynamics",
+  "electric boat": "General Dynamics",
+  "gulfstream aerospace": "General Dynamics",
+  l3harris: "L3Harris Technologies",
+  "ge aerospace": "General Electric",
+  "ge healthcare": "GE HealthCare Technologies",
+  "ge vernova": "GE Vernova",
+  gm: "General Motors",
+  cruise: "General Motors",
+  ford: "Ford Motor",
+  "ford motor company": "Ford Motor",
+  "procter gamble": "Procter & Gamble",
+  "p g": "Procter & Gamble",
+  "johnson johnson": "Johnson & Johnson",
+  "j j": "Johnson & Johnson",
+  disney: "Walt Disney",
+  "the walt disney company": "Walt Disney",
+  espn: "Walt Disney",
+  ups: "United Parcel Service",
+  "fedex services": "FedEx",
+  hp: "HP",
+  "hp inc": "HP",
+  hpe: "Hewlett Packard Enterprise",
+  "hewlett packard": "Hewlett Packard Enterprise",
+  dell: "Dell Technologies",
+  cisco: "Cisco Systems",
+  amd: "Advanced Micro Devices",
+  ti: "Texas Instruments",
+  micron: "Micron Technology",
+  nvidia: "Nvidia",
+  "nvidia corporation": "Nvidia",
+  uber: "Uber Technologies",
+  paypal: "PayPal Holdings",
+  venmo: "PayPal Holdings",
+  square: "Block",
+  "cash app": "Block",
+  intuit: "Intuit",
+  salesforce: "Salesforce",
+  slack: "Salesforce",
+  tableau: "Salesforce",
+  oracle: "Oracle",
+  "oracle cloud infrastructure": "Oracle",
+  broadcom: "Broadcom",
+  ibm: "IBM",
+  "international business machines": "IBM",
+  "red hat": "IBM",
+  qualcomm: "Qualcomm",
+  "qualcomm technologies": "Qualcomm",
+  intel: "Intel",
+  "t mobile": "T-Mobile US",
+  "t mobile us": "T-Mobile US",
+  tmobile: "T-Mobile US",
+  verizon: "Verizon Communications",
+  comcast: "Comcast",
+  nbcuniversal: "Comcast",
+  "charter communications": "Charter Communications",
+  spectrum: "Charter Communications",
+  "at t": "AT&T",
+  att: "AT&T",
+  "walmart global tech": "Walmart",
+  sams: "Walmart",
+  "sam s club": "Walmart",
+  "home depot": "Home Depot",
+  "the home depot": "Home Depot",
+  "lowe s": "Lowe's",
+  lowes: "Lowe's",
+  target: "Target",
+  costco: "Costco Wholesale",
+  "costco wholesale": "Costco Wholesale",
+  optum: "UnitedHealth Group",
+  unitedhealthcare: "UnitedHealth Group",
+  "unitedhealth group": "UnitedHealth Group",
+  aetna: "CVS Health",
+  "cvs health": "CVS Health",
+  cigna: "Cigna Group",
+  evernorth: "Cigna Group",
+  "eli lilly": "Eli Lilly",
+  lilly: "Eli Lilly",
+  "bristol myers squibb": "Bristol-Myers Squibb",
+  bms: "Bristol-Myers Squibb",
+  abbott: "Abbott Laboratories",
+  "thermo fisher": "Thermo Fisher Scientific",
+  "boeing company": "Boeing",
+  deere: "Deere",
+  "john deere": "Deere",
+  caterpillar: "Caterpillar",
+  honeywell: "Honeywell International",
+  "us bank": "U.S. Bancorp",
+  "u s bank": "U.S. Bancorp",
+  schwab: "Charles Schwab",
+  "charles schwab": "Charles Schwab",
+  "state farm": "State Farm Insurance",
+  "liberty mutual": "Liberty Mutual Insurance Group",
+  "new york life": "New York Life Insurance",
+  massmutual: "Massachusetts Mutual Life Insurance",
+  "northwestern mutual": "Northwestern Mutual",
+  "travelers companies": "Travelers",
+  prudential: "Prudential Financial",
+  pnc: "PNC Financial Services",
+  truist: "Truist Financial",
+  bny: "Bank of New York Mellon",
+  "bny mellon": "Bank of New York Mellon",
+  "s p global": "S&P Global",
+  "moody s": "Moody's",
+  adp: "Automatic Data Processing",
+  fis: "Fidelity National Information Services",
+  "lam research": "Lam Research",
+  "applied materials": "Applied Materials",
+  kla: "KLA",
+  "kla corporation": "KLA",
+  "western digital": "Western Digital",
+  seagate: "Seagate Technology",
+  "electronic arts": "Electronic Arts",
+  ea: "Electronic Arts",
+  "booz allen": "Booz Allen Hamilton Holding",
+  "booz allen hamilton": "Booz Allen Hamilton Holding",
+  leidos: "Leidos Holdings",
+  saic: "Science Applications International",
+  caci: "CACI International",
+  "palo alto networks": "Palo Alto Networks",
+  "warner bros discovery": "Warner Bros. Discovery",
+  paramount: "Paramount Global",
+  "tesla motors": "Tesla",
+  tesla: "Tesla",
+  apple: "Apple",
+  netflix: "Netflix",
+  microsoft: "Microsoft",
+  amazon: "Amazon",
+  marvell: "Marvell Technology",
+  lululemon: "Lululemon Athletica",
+  coinbase: "Coinbase Global",
+  "general electric": "General Electric",
+  ge: "General Electric"
+};
+
+// src/engine/companies.ts
+function displayCompany(name) {
+  return name.replace(/[\p{Extended_Pictographic}\u{FE0F}\u{200D}]/gu, "").replace(/\s+/g, " ").trim();
+}
+var SUFFIXES = /\b(inc|incorporated|llc|l l c|ltd|limited|corp|corporation|co|company|companies|plc|lp|llp|group holdings|holdings)\b/g;
+function companyKey(name) {
+  return displayCompany(name).toLowerCase().replace(/&/g, " ").replace(/\(.*?\)/g, " ").replace(/[^\p{L}\p{N}]+/gu, " ").replace(/^the /, "").replace(SUFFIXES, " ").replace(/\s+/g, " ").trim();
+}
+var FORTUNE_500_KEYS = new Set(FORTUNE_500.map(companyKey));
+var BRAND_KEYS = new Set(Object.keys(FORTUNE_500_BRANDS).map(companyKey));
+function isFortune500(name) {
+  const key = companyKey(name);
+  return FORTUNE_500_KEYS.has(key) || BRAND_KEYS.has(key);
+}
+var FORTUNE_500_BOOST = 0.8;
+var TIER_BOOSTS = {
+  "1": 1,
+  "1.5": 0.85,
+  "2": 0.7,
+  "3": 0.5,
+  "4": 0.3
+};
+function companyBoost(company, companyTier) {
+  const reasons = [];
+  let value = 0;
+  if (isFortune500(company)) {
+    reasons.push("Fortune 500");
+    value = FORTUNE_500_BOOST;
+  }
+  const tier = /^tier\s*([\d.]+)$/i.exec(companyTier.trim())?.[1];
+  const tierBoost = tier === void 0 ? void 0 : TIER_BOOSTS[tier];
+  if (tier !== void 0 && tierBoost !== void 0) {
+    reasons.push(`Company tier ${tier}`);
+    value = Math.max(value, tierBoost);
+  }
+  return { value, reasons };
+}
+
+// src/engine/freshness.ts
+var DAY_MS = 864e5;
+var MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
+var UNIT_DAYS = { h: 1 / 24, d: 1, w: 7, mo: 30, y: 365 };
+function isoDay2(time3) {
+  return new Date(time3).toISOString().slice(0, 10);
+}
+function postedOnFrom(age, generatedAt) {
+  const reference = Date.parse(generatedAt);
+  const text4 = age.trim().toLowerCase();
+  const relative = /^(\d+)\s*(h|d|w|mo|y)$/.exec(text4);
+  if (relative) {
+    const days = Number(relative[1]) * (UNIT_DAYS[relative[2] ?? "d"] ?? 1);
+    return isoDay2(reference - Math.floor(days) * DAY_MS);
+  }
+  const absolute = /^([a-z]{3})[a-z]*\.?\s+(\d{1,2})$/.exec(text4);
+  const month = absolute ? MONTHS.indexOf(absolute[1] ?? "") : -1;
+  if (absolute && month !== -1) {
+    const now = new Date(reference);
+    let year = now.getUTCFullYear();
+    let date3 = Date.UTC(year, month, Number(absolute[2]));
+    if (date3 > reference) {
+      year -= 1;
+      date3 = Date.UTC(year, month, Number(absolute[2]));
+    }
+    return isoDay2(date3);
+  }
+  return isoDay2(reference);
+}
+function daysSince(postedOn, now) {
+  return Math.max(0, Math.floor((Date.parse(now) - Date.parse(`${postedOn}T00:00:00Z`)) / DAY_MS));
+}
+function freshness(postedOn, now) {
+  return 0.5 ** (daysSince(postedOn, now) / 14);
+}
+
+// src/engine/locations.ts
+var US_STATES = {
+  AL: "Alabama",
+  AK: "Alaska",
+  AZ: "Arizona",
+  AR: "Arkansas",
+  CA: "California",
+  CO: "Colorado",
+  CT: "Connecticut",
+  DE: "Delaware",
+  DC: "District of Columbia",
+  FL: "Florida",
+  GA: "Georgia",
+  HI: "Hawaii",
+  ID: "Idaho",
+  IL: "Illinois",
+  IN: "Indiana",
+  IA: "Iowa",
+  KS: "Kansas",
+  KY: "Kentucky",
+  LA: "Louisiana",
+  ME: "Maine",
+  MD: "Maryland",
+  MA: "Massachusetts",
+  MI: "Michigan",
+  MN: "Minnesota",
+  MS: "Mississippi",
+  MO: "Missouri",
+  MT: "Montana",
+  NE: "Nebraska",
+  NV: "Nevada",
+  NH: "New Hampshire",
+  NJ: "New Jersey",
+  NM: "New Mexico",
+  NY: "New York",
+  NC: "North Carolina",
+  ND: "North Dakota",
+  OH: "Ohio",
+  OK: "Oklahoma",
+  OR: "Oregon",
+  PA: "Pennsylvania",
+  PR: "Puerto Rico",
+  RI: "Rhode Island",
+  SC: "South Carolina",
+  SD: "South Dakota",
+  TN: "Tennessee",
+  TX: "Texas",
+  UT: "Utah",
+  VT: "Vermont",
+  VA: "Virginia",
+  WA: "Washington",
+  WV: "West Virginia",
+  WI: "Wisconsin",
+  WY: "Wyoming"
+};
+var STATE_BY_NAME = new Map(
+  Object.entries(US_STATES).map(([code, name]) => [name.toLowerCase(), code])
+);
+var CANADIAN_PROVINCES = /* @__PURE__ */ new Set([
+  "AB",
+  "BC",
+  "MB",
+  "NB",
+  "NL",
+  "NS",
+  "NT",
+  "NU",
+  "ON",
+  "PE",
+  "QC",
+  "SK",
+  "YT"
+]);
+var COUNTRIES = {
+  "united states of america": "US",
+  "united states": "US",
+  usa: "US",
+  us: "US",
+  canada: "Canada",
+  "united kingdom": "UK",
+  uk: "UK",
+  england: "UK",
+  scotland: "UK",
+  ireland: "Ireland",
+  netherlands: "Netherlands",
+  germany: "Germany",
+  france: "France",
+  switzerland: "Switzerland",
+  spain: "Spain",
+  poland: "Poland",
+  israel: "Israel",
+  india: "India",
+  europe: "Europe",
+  belgium: "Belgium",
+  singapore: "Singapore",
+  japan: "Japan",
+  china: "China",
+  "hong kong": "Hong Kong",
+  taiwan: "Taiwan",
+  australia: "Australia",
+  mexico: "Mexico",
+  brazil: "Brazil"
+};
+var SHORTHAND = {
+  "South SF": { city: "South San Francisco", region: "CA" },
+  SF: { city: "San Francisco", region: "CA" },
+  NYC: { city: "New York", region: "NY" },
+  LA: { city: "Los Angeles", region: "CA" },
+  DC: { city: "Washington", region: "DC" }
+};
+var CITY_ALIASES = {
+  "new york city": "New York",
+  manhattan: "New York",
+  "san fransisco": "San Francisco"
+};
+var escape = (text4) => text4.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+var longestFirst = (names) => [...names].sort((a, b) => b.length - a.length).map(escape).join("|");
+var COUNTRY_NAMES = longestFirst(
+  Object.keys(COUNTRIES).map(
+    (name) => name.length <= 3 ? name.toUpperCase() : name.replace(/\b\w/g, (c) => c.toUpperCase())
+  )
+);
+var STATE_NAMES = longestFirst(Object.values(US_STATES));
+var WORD = "(?:Mc|Mac|O')?\\p{Lu}[\\p{Ll}.'\u2019]*(?:-(?:\\p{Lu}\\p{Ll}+|on|upon|by|le|sur))*";
+var WORDS = `${WORD}(?: (?:${WORD}|[A-Z]{2,4}|upon|on|of|and|de|du|des|la|le|del|el))*`;
+var REGION_CODES = longestFirst([...Object.keys(US_STATES), ...CANADIAN_PROVINCES, "UK"]);
+var PATTERNS = [
+  {
+    re: new RegExp(`Remote(?:(?: in | - |, | \\(| ?)(${COUNTRY_NAMES})\\)?)?(?!\\p{Ll})`, "uy"),
+    read: (m) => remotePlace(m[1])
+  },
+  {
+    // City, ST or City, ST, Country, after any leading parts such as a county.
+    re: new RegExp(
+      `((?:${WORDS}, )*)(${WORDS}), (${REGION_CODES})(?:, (${COUNTRY_NAMES}))?(?!\\p{Ll})`,
+      "uy"
+    ),
+    read: (m) => cityPlace(m[2] ?? "", m[3] ?? "", m[4])
+  },
+  {
+    re: new RegExp(`(${WORDS}), (${COUNTRY_NAMES})(?!\\p{Ll})`, "uy"),
+    read: (m) => cityInCountry(m[1] ?? "", m[2] ?? "")
+  },
+  {
+    re: new RegExp(`(${longestFirst(Object.keys(SHORTHAND))})(?!\\p{Ll})`, "uy"),
+    read: (m) => {
+      const { city, region } = SHORTHAND[m[1] ?? ""] ?? { city: "", region: "" };
+      return usCity(city, region);
+    }
+  },
+  {
+    re: new RegExp(`(${STATE_NAMES})(?!\\p{Ll})`, "uy"),
+    read: (m) => {
+      const name = m[1] ?? "";
+      const code = STATE_BY_NAME.get(name.toLowerCase()) ?? "";
+      return { label: name, region: code, country: "US", remote: false };
+    }
+  },
+  {
+    re: new RegExp(`(${COUNTRY_NAMES})(?!\\p{Ll})`, "uy"),
+    read: (m) => ({ label: m[1] ?? "", country: countryOf(m[1]) ?? m[1] ?? "", remote: false })
+  },
+  {
+    // A lone place name, such as "Chicago" or "Montréal", with nothing after it.
+    re: new RegExp(`(${WORDS})$`, "uy"),
+    read: (m) => ({ label: m[1] ?? "", city: m[1] ?? "", remote: false })
+  }
+];
+function countryOf(written) {
+  return written === void 0 ? void 0 : COUNTRIES[written.toLowerCase()];
+}
+function remotePlace(country) {
+  const place = { label: country ? `Remote in ${country}` : "Remote", remote: true };
+  const code = countryOf(country);
+  if (code) place.country = code;
+  return place;
+}
+function usCity(city, region) {
+  const name = CITY_ALIASES[city.toLowerCase()] ?? city;
+  return { label: `${name}, ${region}`, city: name, region, country: "US", remote: false };
+}
+function cityPlace(city, code, country) {
+  const countryCode = countryOf(country);
+  if (code in US_STATES && (countryCode === void 0 || countryCode === "US")) {
+    return usCity(city, code);
+  }
+  if (CANADIAN_PROVINCES.has(code) && (countryCode === void 0 || countryCode === "Canada")) {
+    return {
+      label: `${city}, ${code}, Canada`,
+      city,
+      region: code,
+      country: "Canada",
+      remote: false
+    };
+  }
+  const written = countryCode === void 0 ? code : country ?? code;
+  const place = { label: `${city}, ${written}`, city, remote: false };
+  const resolved = countryCode ?? countryOf(code);
+  if (resolved) place.country = resolved;
+  return place;
+}
+function cityInCountry(city, country) {
+  const code = countryOf(country);
+  const state = code === "US" ? STATE_BY_NAME.get(city.toLowerCase()) : void 0;
+  if (state) return { label: city, region: state, country: "US", remote: false };
+  const place = { label: `${city}, ${country}`, city, remote: false };
+  if (code) place.country = code;
+  return place;
+}
+function parseLocations(raw) {
+  const text4 = raw.replace(/^\s*\d+\s+locations?/i, "").replace(/\s*\+\d+\s*$/, "").replace(/\bD\.C\./g, "DC").replace(/\s+/g, " ").trim();
+  const places = [];
+  let at = 0;
+  while (at < text4.length) {
+    if (" ;|/,-()".includes(text4[at] ?? "")) {
+      at += 1;
+      continue;
+    }
+    let matched = false;
+    for (const { re, read } of PATTERNS) {
+      re.lastIndex = at;
+      const m = re.exec(text4);
+      if (m && m[0].length > 0) {
+        places.push(read(m));
+        at += m[0].length;
+        matched = true;
+        break;
+      }
+    }
+    if (!matched) {
+      places.push({ label: text4.slice(at).trim(), remote: false });
+      break;
+    }
+  }
+  const seen = /* @__PURE__ */ new Set();
+  return places.filter((place) => {
+    if (place.label === "" || seen.has(place.label)) return false;
+    seen.add(place.label);
+    return true;
+  });
+}
+var BAY_AREA = [
+  "San Francisco",
+  "South San Francisco",
+  "Oakland",
+  "Berkeley",
+  "Emeryville",
+  "Alameda",
+  "San Jose",
+  "Santa Clara",
+  "Sunnyvale",
+  "Mountain View",
+  "Palo Alto",
+  "East Palo Alto",
+  "Menlo Park",
+  "Redwood City",
+  "Redwood Shores",
+  "San Mateo",
+  "Foster City",
+  "Burlingame",
+  "San Bruno",
+  "San Carlos",
+  "Belmont",
+  "Millbrae",
+  "Daly City",
+  "Brisbane",
+  "Cupertino",
+  "Los Gatos",
+  "Campbell",
+  "Milpitas",
+  "Fremont",
+  "Newark",
+  "Union City",
+  "Hayward",
+  "San Leandro",
+  "Pleasanton",
+  "Dublin",
+  "Livermore",
+  "San Ramon",
+  "Walnut Creek",
+  "Concord",
+  "Richmond",
+  "Sausalito",
+  "San Rafael",
+  "Novato",
+  "Los Altos",
+  "Saratoga",
+  "Morgan Hill"
+];
+var NORTHERN_CALIFORNIA_EXTRA = [
+  "Sacramento",
+  "Davis",
+  "Roseville",
+  "Folsom",
+  "Rancho Cordova",
+  "Rocklin",
+  "Santa Cruz",
+  "Scotts Valley",
+  "Santa Rosa",
+  "Petaluma",
+  "Napa",
+  "Vallejo",
+  "Stockton",
+  "Modesto",
+  "Tracy",
+  "Monterey",
+  "Salinas",
+  "Chico",
+  "Redding",
+  "Truckee",
+  "Gilroy"
+];
+var LOS_ANGELES_AREA = [
+  "Los Angeles",
+  "Santa Monica",
+  "Culver City",
+  "Venice",
+  "Playa Vista",
+  "Marina del Rey",
+  "El Segundo",
+  "Hawthorne",
+  "Manhattan Beach",
+  "Redondo Beach",
+  "Torrance",
+  "Long Beach",
+  "Pasadena",
+  "Glendale",
+  "Burbank",
+  "Beverly Hills",
+  "West Hollywood",
+  "Hollywood",
+  "Inglewood",
+  "Carson",
+  "Northridge",
+  "Van Nuys",
+  "Woodland Hills",
+  "Calabasas",
+  "Sherman Oaks",
+  "Universal City",
+  "Thousand Oaks",
+  "Westlake Village",
+  "Agoura Hills"
+];
+var SOUTHERN_CALIFORNIA_EXTRA = [
+  "Irvine",
+  "Costa Mesa",
+  "Newport Beach",
+  "Santa Ana",
+  "Anaheim",
+  "Orange",
+  "Fullerton",
+  "Huntington Beach",
+  "Tustin",
+  "Lake Forest",
+  "Aliso Viejo",
+  "Mission Viejo",
+  "Laguna Hills",
+  "San Diego",
+  "La Jolla",
+  "Carlsbad",
+  "Oceanside",
+  "Escondido",
+  "Chula Vista",
+  "Del Mar",
+  "Riverside",
+  "San Bernardino",
+  "Ontario",
+  "Rancho Cucamonga",
+  "Corona",
+  "Temecula",
+  "Santa Barbara",
+  "Goleta",
+  "Ventura",
+  "Oxnard",
+  "Camarillo",
+  "Simi Valley",
+  "Moorpark",
+  "Palmdale",
+  "Lancaster",
+  "Santa Clarita",
+  "Valencia"
+];
+var NEW_YORK_CITY = [
+  "New York",
+  "Brooklyn",
+  "Queens",
+  "Bronx",
+  "Staten Island",
+  "Long Island City"
+];
+var BOSTON_AREA = [
+  "Boston",
+  "Cambridge",
+  "Somerville",
+  "Brookline",
+  "Newton",
+  "Watertown",
+  "Waltham",
+  "Lexington",
+  "Burlington",
+  "Bedford",
+  "Woburn",
+  "Medford",
+  "Quincy",
+  "Needham",
+  "Wellesley",
+  "Dedham",
+  "Framingham",
+  "Natick",
+  "Marlborough",
+  "Andover",
+  "North Reading",
+  "Wilmington",
+  "Billerica",
+  "Chelmsford",
+  "Westford",
+  "Westborough",
+  "Dorchester",
+  "Charlestown",
+  "Revere"
+];
+var SEATTLE_AREA = [
+  "Seattle",
+  "Bellevue",
+  "Redmond",
+  "Kirkland",
+  "Bothell",
+  "Renton",
+  "Issaquah",
+  "Sammamish",
+  "Woodinville",
+  "Everett",
+  "Lynnwood",
+  "Tacoma",
+  "Kent",
+  "Tukwila",
+  "Mercer Island"
+];
+var EAST_COAST = [
+  "ME",
+  "NH",
+  "VT",
+  "MA",
+  "RI",
+  "CT",
+  "NY",
+  "NJ",
+  "PA",
+  "DE",
+  "MD",
+  "DC",
+  "VA",
+  "NC",
+  "SC",
+  "GA",
+  "FL"
+];
+var WEST_COAST = ["CA", "OR", "WA"];
+var inCities = (state, cities) => {
+  const names = new Set(cities.map((c) => c.toLowerCase()));
+  return (place) => place.region === state && names.has(place.city?.toLowerCase() ?? "");
+};
+var inStates = (states) => {
+  const codes = new Set(states);
+  return (place) => place.country === "US" && codes.has(place.region ?? "");
+};
+var bayArea = inCities("CA", BAY_AREA);
+var REGIONS = {
+  "san francisco bay area": bayArea,
+  "sf bay area": bayArea,
+  "bay area": bayArea,
+  "silicon valley": bayArea,
+  "northern california": inCities("CA", [...BAY_AREA, ...NORTHERN_CALIFORNIA_EXTRA]),
+  norcal: inCities("CA", [...BAY_AREA, ...NORTHERN_CALIFORNIA_EXTRA]),
+  "southern california": inCities("CA", [...LOS_ANGELES_AREA, ...SOUTHERN_CALIFORNIA_EXTRA]),
+  socal: inCities("CA", [...LOS_ANGELES_AREA, ...SOUTHERN_CALIFORNIA_EXTRA]),
+  "los angeles": inCities("CA", LOS_ANGELES_AREA),
+  la: inCities("CA", LOS_ANGELES_AREA),
+  "new york city": inCities("NY", NEW_YORK_CITY),
+  nyc: inCities("NY", NEW_YORK_CITY),
+  boston: inCities("MA", BOSTON_AREA),
+  seattle: inCities("WA", SEATTLE_AREA),
+  "east coast": inStates(EAST_COAST),
+  "west coast": inStates(WEST_COAST),
+  remote: (place) => place.remote
+};
+function matcherFor(entry) {
+  const written = entry.toLowerCase().replace(/^(the )?(rest of (the )?|greater |anywhere in (the )?)/, "").trim();
+  const key = REGIONS[written] ? written : written.replace(/ (area|metro|region)$/, "");
+  const region = REGIONS[key];
+  if (region) return region;
+  const state = STATE_BY_NAME.get(key) ?? (/^[a-z]{2}$/.test(key) && key.toUpperCase() in US_STATES ? key.toUpperCase() : void 0);
+  if (state) return inStates([state]);
+  const country = COUNTRIES[key];
+  if (country) return (place) => place.country === country;
+  const [parsed] = parseLocations(entry);
+  if (parsed?.city !== void 0) {
+    const city = parsed.city.toLowerCase();
+    const { region: within, country: inCountry } = parsed;
+    return (place) => place.city?.toLowerCase() === city && (within === void 0 || place.region === within) && (inCountry === void 0 || place.country === inCountry);
+  }
+  return (place) => place.city?.toLowerCase() === key || place.label.toLowerCase() === key;
+}
+var matcherCache = /* @__PURE__ */ new Map();
+function cachedMatcher(entry) {
+  let matcher = matcherCache.get(entry);
+  if (!matcher) {
+    matcher = matcherFor(entry);
+    matcherCache.set(entry, matcher);
+  }
+  return matcher;
+}
+function locationTierOf(places, tiers) {
+  const index = tiers.findIndex(
+    (tier) => tier.locations.some((entry) => places.some(cachedMatcher(entry)))
+  );
+  return index === -1 ? void 0 : index + 1;
+}
+function unmatchedTierLocations(places, tiers) {
+  return tiers.flatMap((tier) => tier.locations).filter((entry) => !places.some(cachedMatcher(entry)));
+}
+
+// src/engine/roles.ts
+var INTERN = /\bintern(ship)?s?\b|\bco-?op\b|\bapprentice(ship)?\b/;
+var NEW_GRAD = /\bnew (college )?grad(uate)?s?\b|\bgraduate\b|\buniversity\b|\bcollege\b|\bcampus\b|\bentry[- ]level\b|\bearly[- ]career\b|\bncg\b|\brotational\b|\bresidency\b/;
+var JUNIOR = /\bjunior\b|\bjr\.?(?=\s|$)|\bassociate\b|\b(engineer|developer|scientist|sde|swe|analyst|programmer)\s+(i|1)\b/;
+var SENIOR = /\bsenior\b|\bsr\.?(?=\s|$)|\bstaff (?!intern)(?=\w)|\bprincipal\b|\blead (engineer|developer|scientist|software|data|machine)|\b(engineer|developer|scientist|sde|swe|programmer),?\s+(ii|iii|iv|2|3|4)\b|\bdirector\b|\bhead of\b|\barchitect\b|\bexperienced\b|\bmid[- ]level\b|\bengineering manager\b|\bmanager,? (software|engineering)\b/;
+function normalize(text4) {
+  return ` ${text4.toLowerCase().replace(/[\u2013\u2014]/g, "-").replace(/\s+/g, " ")} `;
+}
+function levelOf(title, jobType) {
+  const text4 = normalize(title);
+  if (INTERN.test(text4)) return "intern";
+  if (NEW_GRAD.test(text4)) return "new_grad";
+  if (JUNIOR.test(text4)) return "junior";
+  if (SENIOR.test(text4)) return void 0;
+  return /intern/i.test(jobType) ? "intern" : "new_grad";
+}
+var FAMILIES = {
+  software: /\bsoftware\b|\bswe\b|\bsdes?\b|\bdevelopers?\b|\bfull[- ]?stack\b|\bback[- ]?end\b|\bfront[- ]?end\b|\bmobile\b|\bios\b|\bandroid\b|\bweb\b|\bplatform engineer|\binfrastructure engineer|\bmember of technical staff\b|\bdevops\b|\bsite reliability\b|\bsre\b|\bcloud engineer|\bforward deployed\b|\bprogrammer\b|\bapplications? engineer|\bgeneralist\b/,
+  ml: /\bmachine learning\b|\bml\b|\bai\b|\bartificial intelligence\b|\bdeep learning\b|\bllms?\b|\bnlp\b|\bcomputer vision\b|\bperception\b|\bapplied scientist\b|\bresearch scientist\b|\bresearch engineer\b/,
+  data: /\bdata scien|\bdata engineer|\bdata analy|\banalytics\b|\bbusiness intelligence\b/,
+  product: /\bproduct manag|\bapm\b|\bproduct owner\b/,
+  program: /\bprogram manag|\btpm\b/,
+  quant: /\bquant(itative)?\b|\btrader\b|\btrading\b/,
+  hardware: /\bhardware\b|\basic\b|\bfpga\b|\belectrical engineer|\bembedded\b|\bfirmware\b|\bsilicon\b|\bsoc\b|\bvlsi\b|\brf\b|\bcircuit/,
+  security: /\bsecurity\b|\bcyber|\bpenetration\b/
+};
+var CATEGORY_FAMILIES = [
+  [/software/i, ["software"]],
+  [/\bai\b|machine learning|data science/i, ["ml", "data"]],
+  [/product/i, ["product"]],
+  [/quant/i, ["quant"]],
+  [/hardware/i, ["hardware"]]
+];
+function familiesOf(text4) {
+  const normalized = normalize(text4);
+  return new Set(
+    Object.entries(FAMILIES).filter(([, re]) => re.test(normalized)).map(([family]) => family)
+  );
+}
+var GENERIC_WORDS = /* @__PURE__ */ new Set([
+  "engineer",
+  "engineering",
+  "intern",
+  "internship",
+  "new",
+  "grad",
+  "graduate",
+  "program",
+  "role",
+  "roles",
+  "and",
+  "or",
+  "the",
+  "of",
+  "for",
+  "in",
+  "junior",
+  "entry",
+  "level"
+]);
+var VAGUE_WORDS = /* @__PURE__ */ new Set([
+  "multiple",
+  "teams",
+  "team",
+  "various",
+  "general",
+  "summer",
+  "fall",
+  "spring",
+  "winter",
+  "co",
+  "op",
+  "coop",
+  "undergraduate",
+  "masters",
+  "phd",
+  "starts",
+  "start",
+  "ii"
+]);
+function significantWords(name) {
+  return normalize(name).replace(/\(.*?\)/g, " ").split(/[^a-z0-9+#]+/).filter((word) => word !== "" && !/^\d+$/.test(word) && !GENERIC_WORDS.has(word));
+}
+function hasWord(text4, word) {
+  const stem = word.length > 5 ? word.slice(0, -2) : word;
+  return new RegExp(`\\b${stem.replace(/[+#]/g, "\\$&")}`).test(text4);
+}
+function matchRoleType(title, category, roleTypes) {
+  let titleFamilies = familiesOf(title);
+  if (titleFamilies.size === 0 && significantWords(title).every((word) => VAGUE_WORDS.has(word))) {
+    titleFamilies = new Set(
+      CATEGORY_FAMILIES.filter(([re]) => re.test(category)).flatMap(([, families]) => families)
+    );
+  }
+  const text4 = normalize(title);
+  const ordered = ROLE_TYPE_PRIORITIES.flatMap(
+    (priority) => roleTypes.filter((roleType2) => roleType2.priority === priority)
+  );
+  return ordered.find((roleType2) => {
+    const families = familiesOf(roleType2.name);
+    if (families.size > 0) return [...families].some((family) => titleFamilies.has(family));
+    const words = significantWords(roleType2.name);
+    return words.length > 0 && words.every((word) => hasWord(text4, word));
+  });
+}
+var SEASONS = {
+  winter: ["01", "03"],
+  spring: ["01", "05"],
+  summer: ["05", "09"],
+  fall: ["08", "12"],
+  autumn: ["08", "12"]
+};
+function startWindowOf(title) {
+  const text4 = title.toLowerCase();
+  const years = [...text4.matchAll(/(?<!\d)(20[2-4]\d)(?![\d])/g)].map((m) => Number(m[1]));
+  if (years.length === 0) return void 0;
+  const first = Math.min(...years);
+  const last = Math.max(...years);
+  if (first !== last) return { from: `${String(first)}-01`, to: `${String(last)}-12` };
+  const seasons = [...text4.matchAll(/\b(winter|spring|summer|fall|autumn)\b/g)].map((m) => SEASONS[m[1] ?? ""]).filter((months) => months !== void 0);
+  if (seasons.length === 0) return { from: `${String(first)}-01`, to: `${String(first)}-12` };
+  const from = seasons.map(([start]) => start).sort()[0] ?? "01";
+  const to = seasons.map(([, end]) => end).sort().at(-1) ?? "12";
+  return { from: `${String(first)}-${from}`, to: `${String(first)}-${to}` };
+}
+function withinStartWindow(title, window) {
+  const start = startWindowOf(title);
+  if (!start) return true;
+  if (window.latest !== void 0 && start.from > window.latest) return false;
+  if (window.earliest !== void 0 && start.to < window.earliest) return false;
+  return true;
+}
+
+// src/engine/urls.ts
+import { createHash } from "node:crypto";
+var SHORT_LINK_HOSTS = /* @__PURE__ */ new Set(["go.vansh.nyc"]);
+var TRACKING_PARAMS = /* @__PURE__ */ new Set([
+  "ref",
+  "refs",
+  "referrer",
+  "source",
+  "src",
+  "gh_src",
+  "lever-source",
+  "lever-origin",
+  "iis",
+  "iisn",
+  "trk",
+  "campaign",
+  "medium"
+]);
+var HOST_ALIASES = {
+  "boards.greenhouse.io": "job-boards.greenhouse.io"
+};
+function parse2(url) {
+  try {
+    const parsed = new URL(url.trim());
+    return parsed.protocol === "http:" || parsed.protocol === "https:" ? parsed : void 0;
+  } catch {
+    return void 0;
+  }
+}
+function isShortLink(url) {
+  const parsed = parse2(url);
+  return parsed !== void 0 && SHORT_LINK_HOSTS.has(parsed.hostname.toLowerCase());
+}
+function canonicalApplyUrl(url) {
+  const parsed = parse2(url);
+  if (!parsed) return url.trim();
+  let host = parsed.hostname.toLowerCase().replace(/^www\./, "");
+  host = HOST_ALIASES[host] ?? host;
+  let path = parsed.pathname.replace(/\/+$/, "");
+  if (host === "jobs.lever.co") path = path.replace(/\/apply$/, "");
+  if (host === "jobs.ashbyhq.com") path = path.replace(/\/application$/, "");
+  const params = [...parsed.searchParams].filter(([key]) => {
+    const name = key.toLowerCase();
+    if (name.startsWith("utm_") || TRACKING_PARAMS.has(name)) return false;
+    return !(name === "s" && SHORT_LINK_HOSTS.has(host));
+  }).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0);
+  const query = params.length === 0 ? "" : `?${new URLSearchParams(params).toString()}`;
+  const port = parsed.port === "" ? "" : `:${parsed.port}`;
+  return `https://${host}${port}${path}${query}`;
+}
+function postingId(canonicalUrl) {
+  return createHash("sha256").update(canonicalUrl).digest("hex").slice(0, 12);
+}
+
+// src/engine/refresh.ts
+var FIT = { high: 1, medium: 0.6, low: 0.25 };
+var WEIGHTS = { fit: 0.5, boost: 0.3, freshness: 0.2 };
+function score(priority, boost, postedOn, now) {
+  const value = WEIGHTS.fit * FIT[priority] + WEIGHTS.boost * boost + WEIGHTS.freshness * freshness(postedOn, now);
+  return Math.round(100 * value);
+}
+function evaluate(listing, sourceName, generatedAt, settings2, places) {
+  const { searchProfile: searchProfile2 } = settings2;
+  const locationTier2 = locationTierOf(places, searchProfile2.locationTiers);
+  if (locationTier2 === void 0) return { reason: "location" };
+  const level = levelOf(listing.title, listing.jobType);
+  if (level === void 0 || !searchProfile2.seniority.includes(level))
+    return { reason: "seniority" };
+  if (!withinStartWindow(listing.title, searchProfile2.startWindow))
+    return { reason: "startWindow" };
+  const roleType2 = matchRoleType(listing.title, listing.category, searchProfile2.roleTypes);
+  if (!roleType2) return { reason: "roleType" };
+  const source = { name: sourceName };
+  const list = listing.list?.trim();
+  if (list) source.list = list;
+  return {
+    candidate: {
+      listing,
+      source,
+      places,
+      locationTier: locationTier2,
+      level,
+      roleType: roleType2.name,
+      priority: roleType2.priority,
+      postedOn: postedOnFrom(listing.age, generatedAt)
+    }
+  };
+}
+function match(input, resolvedLinks) {
+  const filteredOut = { location: 0, seniority: 0, startWindow: 0, roleType: 0 };
+  const candidates = [];
+  const placesByText = /* @__PURE__ */ new Map();
+  const sourceReports = [];
+  const failedSources = /* @__PURE__ */ new Set();
+  let order = 0;
+  for (const source of input.sources) {
+    if (!source.ok) {
+      failedSources.add(source.name);
+      sourceReports.push({ name: source.name, ok: false, postings: 0, error: source.error });
+      continue;
+    }
+    sourceReports.push({ name: source.name, ok: true, postings: source.postings.length });
+    for (const listing of source.postings) {
+      let places = placesByText.get(listing.location);
+      if (!places) {
+        places = parseLocations(listing.location);
+        placesByText.set(listing.location, places);
+      }
+      const result = evaluate(listing, source.name, source.fetchedAt, input.settings, places);
+      if ("reason" in result) {
+        filteredOut[result.reason] += 1;
+        continue;
+      }
+      const rawUrl = listing.applyUrl.trim();
+      const short = isShortLink(rawUrl);
+      const target = short ? resolvedLinks[rawUrl] : void 0;
+      candidates.push({
+        ...result.candidate,
+        order: order++,
+        rawUrl,
+        canonicalUrl: canonicalApplyUrl(target ?? rawUrl),
+        unresolved: short && target === void 0
+      });
+    }
+  }
+  return {
+    candidates,
+    filteredOut,
+    allPlaces: [...placesByText.values()].flat(),
+    sourceReports,
+    failedSources
+  };
+}
+function shortLinksToResolve(input) {
+  const { candidates } = match(input, {});
+  return [...new Set(candidates.filter((c) => c.unresolved).map((c) => c.rawUrl))];
+}
+function titleKey(title) {
+  return title.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+}
+function groupDuplicates(candidates) {
+  const parent = candidates.map((_, i) => i);
+  const find = (i) => {
+    let root = i;
+    while (parent[root] !== root) root = parent[root] ?? root;
+    let node = i;
+    while (parent[node] !== root) {
+      const next = parent[node] ?? root;
+      parent[node] = root;
+      node = next;
+    }
+    return root;
+  };
+  const byUrl = /* @__PURE__ */ new Map();
+  const byText = /* @__PURE__ */ new Map();
+  candidates.forEach((candidate, i) => {
+    const sameUrl = byUrl.get(candidate.canonicalUrl);
+    if (sameUrl === void 0) byUrl.set(candidate.canonicalUrl, i);
+    else parent[find(i)] = find(sameUrl);
+    const textKey = [
+      companyKey(candidate.listing.company),
+      titleKey(candidate.listing.title),
+      candidate.places.map((p) => p.label).sort().join(";")
+    ].join("|");
+    const list = sourceKey(candidate.source);
+    const seen = byText.get(textKey) ?? [];
+    const other = seen.find((entry) => entry.list !== list);
+    if (other !== void 0) parent[find(i)] = find(other.index);
+    seen.push({ index: i, list });
+    byText.set(textKey, seen);
+  });
+  const groups = /* @__PURE__ */ new Map();
+  candidates.forEach((candidate, i) => {
+    const root = find(i);
+    const group = groups.get(root) ?? [];
+    group.push(candidate);
+    groups.set(root, group);
+  });
+  return [...groups.values()];
+}
+function compareText(a, b) {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+function sourceKey(source) {
+  return `${source.name}\0${source.list ?? ""}`;
+}
+function mergeSources(sources) {
+  const unique = new Map(sources.map((source) => [sourceKey(source), source]));
+  return [...unique.values()].sort((a, b) => compareText(sourceKey(a), sourceKey(b)));
+}
+function merge2(group, now) {
+  const [representative] = [...group].sort(
+    (a, b) => Number(a.unresolved) - Number(b.unresolved) || a.order - b.order
+  );
+  if (!representative) throw new Error("A duplicate group cannot be empty.");
+  const boosts = group.map((c) => companyBoost(c.listing.company, c.listing.companyTier));
+  const boost = boosts.reduce((best2, next) => next.value > best2.value ? next : best2);
+  const postedOn = group.map((c) => c.postedOn).sort()[0] ?? representative.postedOn;
+  const best = [...group].sort((a, b) => a.locationTier - b.locationTier)[0] ?? representative;
+  return {
+    id: postingId(representative.canonicalUrl),
+    applyUrl: representative.canonicalUrl,
+    company: displayCompany(representative.listing.company),
+    title: representative.listing.title.replace(/\s+/g, " ").trim(),
+    locations: representative.places.length > 0 ? representative.places.slice(0, 60).map((p) => p.label) : ["Unknown"],
+    locationTier: best.locationTier,
+    roleType: representative.roleType,
+    level: representative.level,
+    postedOn,
+    sources: mergeSources(group.map((c) => c.source)),
+    score: score(representative.priority, boost.value, postedOn, now),
+    boosts: boost.reasons
+  };
+}
+function carryOver(current, failed, settings2, now) {
+  if (failed.size === 0) return [];
+  const { roleTypes, seniority, locationTiers } = settings2.searchProfile;
+  return current.pages.flatMap((page2) => page2.postings).filter((posting2) => posting2.sources.some((source) => failed.has(source.name))).flatMap((posting2) => {
+    const locationTier2 = locationTierOf(posting2.locations.flatMap(parseLocations), locationTiers);
+    const roleType2 = matchRoleType(posting2.title, "", roleTypes);
+    if (locationTier2 === void 0 || !roleType2 || !seniority.includes(posting2.level)) return [];
+    return [
+      {
+        ...posting2,
+        locationTier: locationTier2,
+        roleType: roleType2.name,
+        score: score(roleType2.priority, companyBoostFromReasons(posting2), posting2.postedOn, now)
+      }
+    ];
+  });
+}
+function companyBoostFromReasons(posting2) {
+  const tier = posting2.boosts.map((reason) => /^Company tier (.+)$/.exec(reason)?.[1]).find(Boolean);
+  const fromTier = tier === void 0 ? 0 : companyBoost("", `Tier ${tier}`).value;
+  return Math.max(
+    posting2.boosts.includes("Fortune 500") ? companyBoost("Walmart", "").value : 0,
+    fromTier
+  );
+}
+function compareRank(a, b) {
+  return a.locationTier - b.locationTier || b.score - a.score || compareText(b.postedOn, a.postedOn) || compareText(companyKey(a.company), companyKey(b.company)) || compareText(a.title, b.title) || compareText(a.id, b.id);
+}
+function runRefresh(input) {
+  const { now, settings: settings2, current } = input;
+  const matching = match(input, input.resolvedLinks ?? {});
+  const fresh = groupDuplicates(matching.candidates).map((group) => merge2(group, now));
+  const freshIds = new Set(fresh.map((p) => p.id));
+  const freshUrls = new Set(fresh.map((p) => p.applyUrl));
+  const carried = carryOver(current, matching.failedSources, settings2, now).filter(
+    (p) => !freshIds.has(p.id) && !freshUrls.has(p.applyUrl)
+  );
+  const ranked = [...fresh, ...carried].sort(compareRank);
+  const jobList = ranked.slice(0, MAX_JOB_LIST);
+  const pages = [];
+  for (let start = 0; start < jobList.length; start += POSTINGS_PER_PAGE) {
+    pages.push({
+      schemaVersion: 1,
+      refreshedAt: now,
+      page: pages.length + 1,
+      postings: jobList.slice(start, start + POSTINGS_PER_PAGE)
+    });
+  }
+  const meta3 = {
+    schemaVersion: 1,
+    refreshedAt: now,
+    pageCount: pages.length,
+    total: jobList.length,
+    matched: ranked.length,
+    sources: matching.sourceReports
+  };
+  const keptPages = new Set(pages.map((p) => jobListPageId(p.page)));
+  const changeSet = {
+    set: [
+      ...pages.map((data) => ({
+        collection: POSTINGS_COLLECTION,
+        docId: jobListPageId(data.page),
+        data
+      })),
+      { collection: POSTINGS_COLLECTION, docId: JOB_LIST_META_ID, data: meta3 }
+    ],
+    delete: current.pages.map((page2) => jobListPageId(page2.page)).filter((docId) => !keptPages.has(docId)).sort().map((docId) => ({ collection: POSTINGS_COLLECTION, docId }))
+  };
+  const previousIds = new Set(current.pages.flatMap((page2) => page2.postings.map((p) => p.id)));
+  const nextIds = new Set(jobList.map((p) => p.id));
+  const byTier = settings2.searchProfile.locationTiers.map(
+    (_, index) => jobList.filter((p) => p.locationTier === index + 1).length
+  );
+  const summary = {
+    refreshedAt: now,
+    total: jobList.length,
+    matched: ranked.length,
+    newPostings: [...nextIds].filter((id) => !previousIds.has(id)).length,
+    removedPostings: [...previousIds].filter((id) => !nextIds.has(id)).length,
+    byTier,
+    sources: matching.sourceReports,
+    filteredOut: matching.filteredOut,
+    unresolvedLinks: new Set(matching.candidates.filter((c) => c.unresolved).map((c) => c.rawUrl)).size,
+    carriedOver: carried.filter((p) => nextIds.has(p.id)).length,
+    unmatchedLocations: unmatchedTierLocations(
+      matching.allPlaces,
+      settings2.searchProfile.locationTiers
+    ),
+    top: jobList.slice(0, 5).map(({ company, title, locations, locationTier: locationTier2, score: s, applyUrl }) => ({
+      company,
+      title,
+      locations,
+      locationTier: locationTier2,
+      score: s,
+      applyUrl
+    }))
+  };
+  return { jobList, meta: meta3, changeSet, summary };
+}
+
+// src/engine/source.ts
+var JOB_FEED = "Job Feed";
+
+// src/refresh/job-feed.ts
+var JOB_FEED_URL = "https://raw.githubusercontent.com/dereksun64/yet-another-job-repo/main/data/jobs.json";
+var FEED_TIMEOUT_MS = 6e4;
+function isRecord(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+var text2 = (value) => typeof value === "string" ? value : "";
+function parseJobFeed(json, fallbackTime) {
+  if (!isRecord(json) || !Array.isArray(json.jobs)) {
+    return {
+      name: JOB_FEED,
+      ok: false,
+      error: "The Job Feed's data is not in the expected format (no jobs list)."
+    };
+  }
+  const generated = text2(json.generatedAt) || text2(json.fetchedAt);
+  const fetchedAt = Number.isNaN(Date.parse(generated)) ? fallbackTime : new Date(generated).toISOString();
+  const postings = [];
+  for (const job of json.jobs) {
+    if (!isRecord(job)) continue;
+    const applyUrl = text2(job.applyUrl).trim();
+    const company = text2(job.company).trim();
+    const title = text2(job.title).trim();
+    if (!applyUrl || !company || !title) continue;
+    const posting2 = {
+      applyUrl,
+      company,
+      title,
+      location: text2(job.location),
+      jobType: text2(job.jobType),
+      age: text2(job.age),
+      category: text2(job.category),
+      companyTier: text2(job.companyTier)
+    };
+    const list = text2(job.source).trim();
+    if (list) posting2.list = list;
+    postings.push(posting2);
+  }
+  return { name: JOB_FEED, ok: true, fetchedAt, postings };
+}
+function describe2(error2) {
+  if (error2 instanceof Error) {
+    if (error2.name === "TimeoutError") return "it took too long to answer";
+    const cause = error2.cause;
+    return cause instanceof Error ? cause.message : error2.message;
+  }
+  return String(error2);
+}
+async function readJobFeed(fetch2, now, url = JOB_FEED_URL) {
+  let response;
+  try {
+    response = await fetch2(url, { signal: AbortSignal.timeout(FEED_TIMEOUT_MS) });
+  } catch (error2) {
+    return {
+      name: JOB_FEED,
+      ok: false,
+      error: `The Job Feed could not be reached: ${describe2(error2)}.`
+    };
+  }
+  if (!response.ok) {
+    return {
+      name: JOB_FEED,
+      ok: false,
+      error: `The Job Feed answered HTTP ${String(response.status)}.`
+    };
+  }
+  let json;
+  try {
+    json = await response.json();
+  } catch {
+    return { name: JOB_FEED, ok: false, error: "The Job Feed's data is not valid JSON." };
+  }
+  return parseJobFeed(json, now);
+}
+
+// src/refresh/short-links.ts
+var MAX_HOPS = 3;
+async function resolveOne(link, fetch2, timeoutMs) {
+  let current = link;
+  for (let hop = 0; hop < MAX_HOPS; hop++) {
+    let response;
+    try {
+      response = await fetch2(current, {
+        method: "HEAD",
+        redirect: "manual",
+        signal: AbortSignal.timeout(timeoutMs)
+      });
+    } catch {
+      return void 0;
+    }
+    const location = response.headers.get("location");
+    if (response.status < 300 || response.status >= 400 || !location) return void 0;
+    let next;
+    try {
+      next = new URL(location, current).toString();
+    } catch {
+      return void 0;
+    }
+    if (!isShortLink(next)) return next;
+    current = next;
+  }
+  return void 0;
+}
+async function resolveShortLinks(links, { fetch: fetch2, cache = {}, concurrency = 12, timeoutMs = 1e4 }) {
+  const resolved = {};
+  const pending = [];
+  for (const link of new Set(links)) {
+    const known = cache[link];
+    if (known !== void 0) resolved[link] = known;
+    else pending.push(link);
+  }
+  const failed = [];
+  let next = 0;
+  const worker = async () => {
+    while (next < pending.length) {
+      const link = pending[next++];
+      if (link === void 0) break;
+      const target = await resolveOne(link, fetch2, timeoutMs);
+      if (target === void 0) failed.push(link);
+      else resolved[link] = target;
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(concurrency, pending.length) }, worker));
+  failed.sort();
+  return { resolved, failed };
+}
+
+// src/refresh/run.ts
+var BATCH_MAX_WRITES = 50;
+var BATCH_MAX_BYTES = 900 * 1024;
+var RefreshError = class extends Error {
+};
+async function readJson(io, path) {
+  let text4;
+  try {
+    text4 = await io.readFile(path);
+  } catch {
+    return void 0;
+  }
+  try {
+    return JSON.parse(text4);
+  } catch {
+    throw new RefreshError(`${path} is not valid JSON.`);
+  }
+}
+async function readState(io, dir) {
+  const folder = join(dir, "state", POSTINGS_COLLECTION);
+  const files = (await io.readDir(folder)).filter((name) => name.endsWith(".json")).sort();
+  const existing = [];
+  let meta3;
+  const pages = [];
+  for (const file of files) {
+    const docId = file.slice(0, -".json".length);
+    existing.push(docId);
+    const result = validatePostingsDocument(docId, await readJson(io, join(folder, file)));
+    if (!result.ok) continue;
+    if (docId === "meta") meta3 = result.value;
+    else pages.push(result.value);
+  }
+  const consistent = meta3 ? pages.filter((page2) => page2.refreshedAt === meta3.refreshedAt) : pages;
+  const current = { pages: consistent.sort((a, b) => a.page - b.page) };
+  if (meta3) current.meta = meta3;
+  return { current, existing };
+}
+async function readVersions(io, dir) {
+  const json = await readJson(io, join(dir, "versions.json"));
+  if (json === void 0) return {};
+  if (typeof json !== "object" || json === null || Array.isArray(json)) {
+    throw new RefreshError("versions.json must map document paths to versions.");
+  }
+  const versions = {};
+  for (const [path, version2] of Object.entries(json)) {
+    if (!Number.isInteger(version2) || version2 < 1) {
+      throw new RefreshError(
+        `versions.json gives ${path} the version ${JSON.stringify(version2)}; versions are whole numbers from 1.`
+      );
+    }
+    versions[path] = version2;
+  }
+  return versions;
+}
+async function readFeed(io, now, feed) {
+  if (feed === void 0 || /^https?:\/\//.test(feed)) return readJobFeed(io.fetch, now, feed);
+  const json = await readJson(io, feed);
+  if (json === void 0) return { name: "Job Feed", ok: false, error: `Could not read ${feed}.` };
+  return parseJobFeed(json, now);
+}
+function batchesOf(writes) {
+  const batches = [];
+  let batch = [];
+  let size = 0;
+  for (const { write, bytes } of writes) {
+    if (batch.length > 0 && (batch.length >= BATCH_MAX_WRITES || size + bytes > BATCH_MAX_BYTES)) {
+      batches.push(batch);
+      batch = [];
+      size = 0;
+    }
+    batch.push(write);
+    size += bytes + 200;
+  }
+  if (batch.length > 0) batches.push(batch);
+  return batches;
+}
+var number2 = (n) => n.toLocaleString("en-US");
+function formatSummary(summary, writesPath, batches) {
+  const lines = [];
+  const tiers = summary.byTier.map((count, i) => `Tier ${String(i + 1)}: ${number2(count)}`).join(", ");
+  lines.push(`Refresh finished at ${summary.refreshedAt.slice(0, 16).replace("T", " ")} UTC.`);
+  lines.push(
+    `Job List: ${number2(summary.total)} Postings (${tiers}); ${number2(summary.newPostings)} new and ${number2(summary.removedPostings)} gone since the last Refresh.`
+  );
+  if (summary.matched > summary.total) {
+    lines.push(
+      `${number2(summary.matched)} Postings matched; the Job List keeps the best ${number2(summary.total)}.`
+    );
+  }
+  lines.push("Sources:");
+  for (const source of summary.sources) {
+    lines.push(
+      source.ok ? `- ${source.name}: read ${number2(source.postings)} Postings.` : `- ${source.name}: FAILED. ${source.error ?? "No reason given."}`
+    );
+  }
+  if (summary.carriedOver > 0) {
+    lines.push(
+      `Kept ${number2(summary.carriedOver)} Postings from the last Refresh because their Source failed.`
+    );
+  }
+  const { location, seniority, startWindow: startWindow2, roleType: roleType2 } = summary.filteredOut;
+  lines.push(
+    `Left out: ${number2(location)} outside your Location Tiers, ${number2(seniority)} at another seniority, ${number2(startWindow2)} outside your start window, ${number2(roleType2)} in other roles.`
+  );
+  if (summary.unresolvedLinks > 0) {
+    lines.push(
+      `${number2(summary.unresolvedLinks)} short links could not be resolved and keep their short link.`
+    );
+  }
+  if (summary.unmatchedLocations.length > 0) {
+    lines.push(
+      `Location Tier entries that matched no Posting location: ${summary.unmatchedLocations.join(", ")}.`
+    );
+  }
+  if (summary.top.length > 0) {
+    lines.push("Top Postings:");
+    summary.top.forEach((posting2, i) => {
+      lines.push(
+        `${String(i + 1)}. ${posting2.company}: ${posting2.title} (${posting2.locations.slice(0, 3).join("; ")}; Tier ${String(posting2.locationTier)}; score ${String(posting2.score)})`
+      );
+    });
+  }
+  lines.push(
+    `Next: send the ${batches === 1 ? "batch" : `${String(batches)} batches`} in ${writesPath} with ArtifactData, one batch call each, in order.`
+  );
+  return `${lines.join("\n")}
+`;
+}
+async function runRefreshCommand(dirArg, options, io) {
+  const dir = resolve(dirArg);
+  try {
+    const settingsPath = join(dir, "state", "settings", "main.json");
+    const settingsJson = await readJson(io, settingsPath);
+    if (settingsJson === void 0) {
+      throw new RefreshError(
+        `No settings at ${settingsPath}. Read settings/main from the dashboard into ${join(dir, "state")} first.`
+      );
+    }
+    const settings2 = validateSettings(settingsJson);
+    if (!settings2.ok) {
+      throw new RefreshError(
+        `The settings document does not match the dashboard contract:
+${settings2.issues.map((i) => `- ${i}`).join("\n")}`
+      );
+    }
+    const { current, existing } = await readState(io, dir);
+    const versions = await readVersions(io, dir);
+    const missing = existing.filter(
+      (docId) => versions[`${POSTINGS_COLLECTION}/${docId}`] === void 0
+    );
+    if (missing.length > 0) {
+      throw new RefreshError(
+        `versions.json has no version for ${missing.map((id) => `${POSTINGS_COLLECTION}/${id}`).join(", ")}. Add the version ArtifactData reported for each document read.`
+      );
+    }
+    const now = io.now();
+    const feed = await readFeed(io, now, options.feed);
+    const base = { now, settings: settings2.value, sources: [feed], current };
+    const cachePath = join(dir, "short-links.json");
+    const cacheJson = await readJson(io, cachePath);
+    const cache = typeof cacheJson === "object" && cacheJson !== null ? cacheJson : {};
+    const { resolved } = await resolveShortLinks(shortLinksToResolve(base), {
+      fetch: io.fetch,
+      cache
+    });
+    await io.writeFile(cachePath, `${JSON.stringify({ ...cache, ...resolved }, null, 2)}
+`);
+    const { changeSet, summary } = runRefresh({ ...base, resolvedLinks: resolved });
+    const out = join(dir, "out");
+    await io.removeDir(out);
+    await io.makeDir(join(out, POSTINGS_COLLECTION));
+    const versionOf = (docId) => versions[`${POSTINGS_COLLECTION}/${docId}`];
+    const writes = [];
+    for (const { collection, docId, data } of changeSet.set) {
+      const check = validateDocument(collection, docId, data);
+      if (!check.ok) {
+        throw new RefreshError(
+          `Refresh built an invalid ${collection}/${docId}:
+${check.issues.map((i) => `- ${i}`).join("\n")}`
+        );
+      }
+      const filePath = join(out, collection, `${docId}.json`);
+      const text4 = `${JSON.stringify(data)}
+`;
+      await io.writeFile(filePath, text4);
+      const write = { op: "set", collection, doc_id: docId, file_path: filePath };
+      const version2 = versionOf(docId);
+      if (version2 !== void 0) write.if_version = version2;
+      writes.push({ write, bytes: Buffer.byteLength(text4) });
+    }
+    const written = new Set(changeSet.set.map((w) => w.docId));
+    const removals = /* @__PURE__ */ new Set([
+      ...changeSet.delete.map((d) => d.docId),
+      ...existing.filter((id) => !written.has(id))
+    ]);
+    for (const docId of [...removals].sort()) {
+      const write = { op: "delete", collection: POSTINGS_COLLECTION, doc_id: docId };
+      const version2 = versionOf(docId);
+      if (version2 !== void 0) write.if_version = version2;
+      writes.push({ write, bytes: 0 });
+    }
+    const batches = batchesOf(writes);
+    const writesPath = join(out, "writes.json");
+    await io.writeFile(writesPath, `${JSON.stringify({ batches }, null, 2)}
+`);
+    await io.writeFile(join(out, "summary.json"), `${JSON.stringify(summary, null, 2)}
+`);
+    io.stdout(formatSummary(summary, writesPath, batches.length));
+    return 0;
+  } catch (error2) {
+    if (error2 instanceof RefreshError) {
+      io.stderr(`${error2.message}
+`);
+      return 1;
+    }
+    throw error2;
+  }
+}
+
 // src/cli/jaa.ts
 var USAGE = `Usage: jaa validate <collection> <doc-id> <file|->
+       jaa refresh <dir> [--feed <url|file>]
 
-Checks one dashboard document (JSON, from a file or from stdin with -)
-against the dashboard contract. Exits 0 when it matches, 1 when it does not.
+validate  Checks one dashboard document (JSON, from a file or from stdin with -)
+          against the dashboard contract. Exits 0 when it matches, 1 when it does not.
+refresh   Builds the Job List from the dashboard state saved in <dir>/state and the
+          Job Feed, and writes the documents and ArtifactData batches to <dir>/out.
 `;
 async function runCli(argv, io) {
   if (argv[0] === "--help" || argv[0] === "-h") {
     io.stdout(USAGE);
     return 0;
   }
+  if (argv[0] === "refresh") {
+    const [, dir, ...flags] = argv;
+    const feed = flags[0] === "--feed" ? flags[1] : void 0;
+    const valid = flags.length === 0 || flags.length === 2 && feed !== void 0;
+    if (!dir || dir.startsWith("--") || !valid) {
+      io.stderr(USAGE);
+      return 2;
+    }
+    return runRefreshCommand(dir, feed === void 0 ? {} : { feed }, io);
+  }
   const [command, collection, docId, file, ...rest] = argv;
   if (command !== "validate" || !collection || !docId || !file || rest.length > 0) {
     io.stderr(USAGE);
     return 2;
   }
-  let text2;
+  let text4;
   try {
-    text2 = file === "-" ? await io.readStdin() : await io.readFile(file);
+    text4 = file === "-" ? await io.readStdin() : await io.readFile(file);
   } catch (error2) {
     io.stderr(`Could not read ${file}: ${messageOf(error2)}
 `);
@@ -1996,7 +4350,7 @@ async function runCli(argv, io) {
   }
   let document;
   try {
-    document = JSON.parse(text2);
+    document = JSON.parse(text4);
   } catch (error2) {
     io.stderr(`The document is not valid JSON: ${messageOf(error2)}
 `);
@@ -2022,7 +4376,15 @@ function messageOf(error2) {
 // src/cli/main.ts
 process.exitCode = await runCli(process.argv.slice(2), {
   readFile: (path) => readFile(path, "utf8"),
-  readStdin: () => text(process.stdin),
+  writeFile: (path, contents) => writeFile(path, contents, "utf8"),
+  readDir: (path) => readdir(path).catch(() => []),
+  makeDir: async (path) => {
+    await mkdir(path, { recursive: true });
+  },
+  removeDir: (path) => rm(path, { recursive: true, force: true }),
+  fetch: (url, init) => fetch(url, init),
+  now: () => (/* @__PURE__ */ new Date()).toISOString(),
+  readStdin: () => text3(process.stdin),
   stdout: (chunk) => process.stdout.write(chunk),
   stderr: (chunk) => process.stderr.write(chunk)
 });
