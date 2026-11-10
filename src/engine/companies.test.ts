@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { companyBoost, companyKey, displayCompany } from "./companies.ts";
+import { companyBoost, companyKey, companyRuleOf, displayCompany } from "./companies.ts";
 
 describe("company names", () => {
   it("drops the Job Feed's markers from company names", () => {
@@ -44,5 +44,30 @@ describe("companyBoost", () => {
   it("gives no boost to an unlisted company", () => {
     expect(companyBoost("Matillion", "Unlisted")).toEqual({ value: 0, reasons: [] });
     expect(companyBoost("Matillion", "")).toEqual({ value: 0, reasons: [] });
+  });
+});
+
+describe("the Candidate's company rules", () => {
+  const rules = { boost: ["Anthropic"], lower: ["Lockheed Martin"], block: ["Palantir"] };
+
+  it("finds a company's rule by name, ignoring case and legal suffixes", () => {
+    expect(companyRuleOf("Anthropic", rules)).toBe("boost");
+    expect(companyRuleOf("Lockheed Martin Corporation", rules)).toBe("lower");
+    expect(companyRuleOf("🔥 palantir", rules)).toBe("block");
+    expect(companyRuleOf("Acme", rules)).toBeUndefined();
+  });
+
+  it("boosts to the top and keeps the default reasons after the Candidate's", () => {
+    expect(companyBoost("Anthropic", "Tier 1", rules)).toEqual({
+      value: 1,
+      reasons: ["Boosted by you", "Company tier 1"],
+    });
+  });
+
+  it("lowers below no boost and drops the default reasons", () => {
+    expect(companyBoost("Lockheed Martin", "Unlisted", rules)).toEqual({
+      value: -1,
+      reasons: ["Lowered by you"],
+    });
   });
 });

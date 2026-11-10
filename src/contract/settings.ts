@@ -18,12 +18,13 @@ const label = z
 
 /** Case-insensitive duplicates in a list, reported once each in their first spelling. */
 function duplicates(values: readonly string[]): string[] {
-  const seen = new Set<string>();
+  const first = new Map<string, string>();
   const repeated = new Map<string, string>();
   for (const value of values) {
     const key = value.toLowerCase();
-    if (seen.has(key) && !repeated.has(key)) repeated.set(key, value);
-    seen.add(key);
+    const earlier = first.get(key);
+    if (earlier === undefined) first.set(key, value);
+    else if (!repeated.has(key)) repeated.set(key, earlier);
   }
   return [...repeated.values()];
 }
@@ -121,6 +122,43 @@ const resumeVariant = z.strictObject({
   ),
 });
 
+/** How the Candidate wants each company treated, on top of the default boosts. */
+export const COMPANY_RULES = ["boost", "lower", "block"] as const;
+
+const companyNames = z.array(label).check(z.maxLength(200, "list at most 200 companies"));
+
+const companies = z
+  .strictObject({
+    /** Ranked as high as a top company tier. */
+    boost: companyNames,
+    /** Ranked below companies with no rule. */
+    lower: companyNames,
+    /** Left out of the Job List. */
+    block: companyNames,
+  })
+  .check(
+    noRepeats(
+      (lists) => COMPANY_RULES.flatMap((rule) => lists[rule]),
+      (company) => `${company} is listed more than once; each company has one rule`,
+    ),
+  );
+
+/** A site's host name, such as myworkdayjobs.com; it also covers every subdomain. */
+const applySite = z
+  .string()
+  .check(
+    z.trim(),
+    z.toLowerCase(),
+    z.regex(
+      /^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/,
+      "must be a site's host name, such as myworkdayjobs.com",
+    ),
+  );
+
+/** The freshness weight when the Candidate has not chosen one, in percent of the score. */
+export const DEFAULT_FRESHNESS_WEIGHT = 20;
+export const MAX_FRESHNESS_WEIGHT = 50;
+
 const settings = z
   .strictObject({
     schemaVersion: z.literal(1),
@@ -140,6 +178,32 @@ const settings = z
     dailyQueueTarget: z
       .int({ error: "must be a whole number" })
       .check(z.gte(1, "must be at least 1"), z.lte(100, "must be at most 100")),
+    /** Company boosts and blocks the Candidate chose; the Fortune 500 and company tiers still count. */
+    companies: z._default(companies, () => ({ boost: [], lower: [], block: [] })),
+    /** Postings whose only apply URLs are on these sites are left out of the Job List. */
+    blockedApplySites: z._default(
+      z.array(applySite).check(
+        z.maxLength(50, "list at most 50 sites"),
+        noRepeats(
+          (sites) => sites,
+          (site) => `${site} is listed more than once`,
+        ),
+      ),
+      () => [],
+    ),
+    /**
+     * How much freshness counts in a Posting's score, in percent. Role type priority and company
+     * boosts share the rest, five parts to three.
+     */
+    freshnessWeight: z._default(
+      z
+        .int({ error: "must be a whole number" })
+        .check(
+          z.gte(0, "must be at least 0"),
+          z.lte(MAX_FRESHNESS_WEIGHT, `must be at most ${String(MAX_FRESHNESS_WEIGHT)}`),
+        ),
+      DEFAULT_FRESHNESS_WEIGHT,
+    ),
     updatedAt: z.iso.datetime({ error: "must be an ISO 8601 timestamp" }),
   })
   .check(
@@ -160,6 +224,8 @@ const settings = z
 
 export type Seniority = (typeof SENIORITIES)[number];
 export type RoleTypePriority = (typeof ROLE_TYPE_PRIORITIES)[number];
+export type CompanyRule = (typeof COMPANY_RULES)[number];
+export type CompanyRules = z.output<typeof companies>;
 export type RoleType = z.output<typeof roleType>;
 export type ResumeVariant = z.output<typeof resumeVariant>;
 export type LocationTier = z.output<typeof locationTier>;

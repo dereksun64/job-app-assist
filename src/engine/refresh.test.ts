@@ -50,6 +50,9 @@ const settings: Settings = {
     },
   ],
   dailyQueueTarget: 20,
+  companies: { boost: [], lower: [], block: [] },
+  blockedApplySites: [],
+  freshnessWeight: 20,
   updatedAt: "2026-11-01T00:00:00.000Z",
 };
 
@@ -121,7 +124,14 @@ describe("filtering by the Search Profile", () => {
       listed({ company: "Accounting", title: "Accounting Analyst, New Grad" }),
     ]);
     expect(jobList.map((p) => p.company)).toEqual(["Keep"]);
-    expect(summary.filteredOut).toEqual({ location: 1, seniority: 1, startWindow: 1, roleType: 1 });
+    expect(summary.filteredOut).toEqual({
+      location: 1,
+      seniority: 1,
+      startWindow: 1,
+      roleType: 1,
+      company: 0,
+      applySite: 0,
+    });
   });
 
   it("drops levels outside the Candidate's seniority", () => {
@@ -483,6 +493,106 @@ function metaFor(total: number, sources: JobListMeta["sources"] = []): JobListMe
     sources,
   };
 }
+
+describe("the Candidate's ranking settings", () => {
+  const tuned = (overrides: Partial<Settings>): Settings => ({ ...settings, ...overrides });
+  const rules = (overrides: Partial<Settings["companies"]>): Settings["companies"] => ({
+    boost: [],
+    lower: [],
+    block: [],
+    ...overrides,
+  });
+
+  it("ranks a boosted company with the top company tiers and says why", () => {
+    const postings = [
+      listed({ company: "OpenAI", companyTier: "Tier 1" }),
+      listed({ company: "Tiny AI Startup, Inc." }),
+    ];
+    const { jobList } = refresh(postings, {
+      settings: tuned({ companies: rules({ boost: ["tiny ai startup"] }) }),
+    });
+    expect(jobList.map((p) => [p.company, p.score])).toEqual([
+      ["OpenAI", jobList[0]?.score],
+      ["Tiny AI Startup, Inc.", jobList[0]?.score],
+    ]);
+    expect(jobList.find((p) => p.company.startsWith("Tiny"))?.boosts).toEqual(["Boosted by you"]);
+  });
+
+  it("ranks a lowered company below companies with no rule, never under 0", () => {
+    const { jobList } = refresh(
+      [
+        listed({ company: "Lockheed Martin", age: "0d" }),
+        listed({ company: "Plain", age: "2mo" }),
+        listed({ company: "Northrop Grumman", title: "Associate Product Manager", age: "1y" }),
+      ],
+      {
+        settings: tuned({ companies: rules({ lower: ["Lockheed Martin", "Northrop Grumman"] }) }),
+      },
+    );
+    expect(jobList.map((p) => p.company)).toEqual(["Plain", "Lockheed Martin", "Northrop Grumman"]);
+    expect(jobList[1]?.boosts).toEqual(["Lowered by you"]);
+    expect(jobList[2]?.score).toBe(0);
+  });
+
+  it("leaves blocked companies out of the Job List and counts them", () => {
+    const { jobList, summary } = refresh(
+      [listed({ company: "Acme" }), listed({ company: "Palantir Technologies Inc." })],
+      { settings: tuned({ companies: rules({ block: ["palantir technologies"] }) }) },
+    );
+    expect(jobList.map((p) => p.company)).toEqual(["Acme"]);
+    expect(summary.filteredOut).toMatchObject({ company: 1, applySite: 0 });
+  });
+
+  it("leaves out Postings that only apply on a blocked site, keeping another site's twin", () => {
+    const { jobList, summary } = refresh(
+      [
+        listed({ company: "Only Workday", applyUrl: "https://acme.wd5.myworkdayjobs.com/en/1" }),
+        listed({ company: "Twin", applyUrl: "https://twin.wd1.myworkdayjobs.com/jobs/2" }),
+        listed({ company: "Twin", applyUrl: "https://jobs.lever.co/twin/2" }),
+        listed({ company: "Lookalike", applyUrl: "https://notmyworkdayjobs.com/3" }),
+      ],
+      { settings: tuned({ blockedApplySites: ["myworkdayjobs.com"] }) },
+    );
+    expect(jobList.map((p) => [p.company, p.applyUrl])).toEqual([
+      ["Lookalike", "https://notmyworkdayjobs.com/3"],
+      ["Twin", "https://jobs.lever.co/twin/2"],
+    ]);
+    expect(summary.filteredOut).toMatchObject({ applySite: 1 });
+  });
+
+  it("weighs freshness by the freshness weight", () => {
+    const postings = [
+      listed({ company: "Old Star", companyTier: "Tier 1", age: "30d" }),
+      listed({ company: "New Plain", age: "0d" }),
+    ];
+    const order = (freshnessWeight: number) =>
+      refresh(postings, { settings: tuned({ freshnessWeight }) }).jobList.map((p) => p.company);
+    expect(order(20)).toEqual(["Old Star", "New Plain"]);
+    expect(order(50)).toEqual(["New Plain", "Old Star"]);
+    expect(refresh(postings, { settings: tuned({ freshnessWeight: 0 }) }).jobList[1]?.score).toBe(
+      63,
+    );
+  });
+
+  it("applies the rules to Postings kept from a failing Source", () => {
+    const before = refresh([
+      listed({ company: "Acme" }),
+      listed({ company: "Beta" }),
+      listed({ company: "Gamma", applyUrl: "https://gamma.icims.com/jobs/1" }),
+    ]).jobList;
+    const { jobList } = runRefresh({
+      now: NOW,
+      settings: tuned({
+        companies: rules({ boost: ["Beta"], block: ["Acme"] }),
+        blockedApplySites: ["icims.com"],
+      }),
+      current: { meta: metaFor(3), pages: [page(1, before)] },
+      queue: EMPTY_QUEUE,
+      sources: [{ name: "Job Feed", ok: false, error: "timeout" }],
+    });
+    expect(jobList.map((p) => [p.company, p.boosts])).toEqual([["Beta", ["Boosted by you"]]]);
+  });
+});
 
 describe("change set", () => {
   it("writes the Job List as rank-ordered pages and a meta document, all valid", () => {
@@ -1016,6 +1126,35 @@ describe("Sources", () => {
         title: "Staff Software Engineer",
         reason: "seniority",
       },
+    ]);
+  });
+
+  it("names added Postings left out by a company or apply site block", () => {
+    const { jobList, summary } = runRefresh({
+      now: NOW,
+      queue: EMPTY_QUEUE,
+      settings: {
+        ...settings,
+        companies: { boost: [], lower: [], block: ["Blocked Co"] },
+        blockedApplySites: ["myworkdayjobs.com"],
+      },
+      current: empty,
+      sources: [],
+      sourceSettings: sourceSettings({
+        jobFeed: { enabled: false },
+        addedByUrl: {
+          enabled: true,
+          postings: [
+            addedPosting({ url: "https://a.example.com/1", company: "Blocked Co" }),
+            addedPosting({ url: "https://acme.wd1.myworkdayjobs.com/2", company: "Acme" }),
+          ],
+        },
+      }),
+    });
+    expect(jobList).toEqual([]);
+    expect(summary.addedLeftOut.map((p) => [p.company, p.reason])).toEqual([
+      ["Blocked Co", "company"],
+      ["Acme", "applySite"],
     ]);
   });
 

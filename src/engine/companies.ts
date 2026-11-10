@@ -1,7 +1,9 @@
 /**
  * Company names and company boosts. By default a company is boosted when it is on the
- * Fortune 500 or when the Job Feed ranks it in one of its company tiers.
+ * Fortune 500 or when the Job Feed ranks it in one of its company tiers; the Candidate's own
+ * company rules (boost, lower, block) in the settings come first.
  */
+import { COMPANY_RULES, type CompanyRule, type CompanyRules } from "../contract/index.ts";
 import { FORTUNE_500, FORTUNE_500_BRANDS } from "./fortune-500.ts";
 
 /** A company name as shown, without the markers some Sources add (such as "🔥"). */
@@ -60,14 +62,36 @@ const TIER_BOOSTS: Record<string, number> = {
 };
 
 export interface CompanyBoost {
-  /** 0 for no boost, up to 1. */
+  /** -1 for a company the Candidate lowered, 0 for no boost, up to 1. */
   value: number;
   /** Why, in the words the dashboard shows. */
   reasons: string[];
 }
 
-/** The default company boost: the larger of the Fortune 500 boost and the company tier boost. */
-export function companyBoost(company: string, companyTier: string): CompanyBoost {
+export const NO_COMPANY_RULES: CompanyRules = { boost: [], lower: [], block: [] };
+
+/** The rule the Candidate gave a company, matched by its company key. */
+export function companyRuleOf(company: string, rules: CompanyRules): CompanyRule | undefined {
+  const key = companyKey(company);
+  if (key === "") return undefined;
+  return COMPANY_RULES.find((rule) => rules[rule].some((name) => companyKey(name) === key));
+}
+
+export const BOOSTED_BY_YOU = "Boosted by you";
+export const LOWERED_BY_YOU = "Lowered by you";
+
+/**
+ * A company's boost: a company the Candidate boosted ranks with the top company tiers, one they
+ * lowered ranks below every company with no rule, and any other company gets the larger of the
+ * Fortune 500 boost and the company tier boost. Blocked companies never reach ranking.
+ */
+export function companyBoost(
+  company: string,
+  companyTier: string,
+  rules: CompanyRules = NO_COMPANY_RULES,
+): CompanyBoost {
+  const rule = companyRuleOf(company, rules);
+  if (rule === "lower") return { value: -1, reasons: [LOWERED_BY_YOU] };
   const reasons: string[] = [];
   let value = 0;
   if (isFortune500(company)) {
@@ -80,5 +104,6 @@ export function companyBoost(company: string, companyTier: string): CompanyBoost
     reasons.push(`Company tier ${tier}`);
     value = Math.max(value, tierBoost);
   }
+  if (rule === "boost") return { value: 1, reasons: [BOOSTED_BY_YOU, ...reasons] };
   return { value, reasons };
 }
