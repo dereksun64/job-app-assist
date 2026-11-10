@@ -1,0 +1,18 @@
+{
+  "name": "job-app-assist",
+  "owner": {
+    "name": "dereksun64",
+    "url": "https://github.com/dereksun64"
+  },
+  "metadata": {
+    "description": "The Job App Assist Toolkit for Claude Code."
+  },
+  "plugins": [
+    {
+      "name": "job-app-assist",
+      "source": "./plugin",
+      "description": "Your own Claude finds, prepares and fills job applications on demand, and keeps a private dashboard in your claude.ai account. You review and submit every application yourself.",
+      "category": "productivity"
+    }
+  ]
+}

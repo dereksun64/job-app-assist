@@ -1,0 +1,42 @@
+{
+  "name": "job-app-assist",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "node scripts/build.ts",
+    "check:dist": "node scripts/build.ts --check",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint . && prettier --check .",
+    "format": "prettier --write .",
+    "test": "vitest run",
+    "validate:plugin": "claude plugin validate . --strict && claude plugin validate plugin --strict",
+    "eval": "claude plugin eval plugin",
+    "ci": "npm run typecheck && npm run lint && npm test && npm run check:dist"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@testing-library/dom": "^10.4.2",
+    "@testing-library/jest-dom": "^7.0.1",
+    "@testing-library/preact": "^3.2.6",
+    "@testing-library/user-event": "^14.6.9",
+    "@types/node": "^26.6.6",
+    "esbuild": "^0.28.2",
+    "eslint": "^10.14.0",
+    "globals": "^17.14.0",
+    "happy-dom": "^21.0.4",
+    "prettier": "^3.9.10",
+    "typescript": "~6.0.3",
+    "typescript-eslint": "^8.72.2",
+    "vitest": "^4.1.12"
+  },
+  "dependencies": {
+    "preact": "^10.29.8",
+    "zod": "^4.6.7"
+  },
+  "overrides": {
+    "minimatch": "^11.0.6"
+  }
+}
