@@ -1,0 +1,13 @@
+{
+  "name": "job-app-assist",
+  "version": "0.1.0",
+  "description": "Your own Claude finds, prepares and fills job applications on demand, and keeps a private dashboard in your claude.ai account. You review and submit every application yourself.",
+  "author": {
+    "name": "dereksun64",
+    "url": "https://github.com/dereksun64"
+  },
+  "homepage": "https://github.com/dereksun64/job-app-assist",
+  "repository": "https://github.com/dereksun64/job-app-assist",
+  "license": "MIT",
+  "keywords": ["jobs", "applications", "job-search", "dashboard"]
+}
