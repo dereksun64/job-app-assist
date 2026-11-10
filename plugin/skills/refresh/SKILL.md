@@ -1,7 +1,7 @@
 ---
 name: refresh
-description: Refresh the Candidate's Job List, Queue and News Digest. Pulls Postings from the Candidate's enabled Sources (the Job Feed, their watchlist companies' job boards and Postings they added by URL), keeps the ones that match the Search Profile, ranks them, picks a Resume Variant for each, pre-queues the best ones up to the daily Queue target, drafts referral asks for the Candidate's connections at queued companies, writes them to the dashboard's Postings tab, builds the day's News Digest for the News tab and ends with a short summary in chat. Use when the Candidate asks to refresh, update their jobs, see today's Postings or catch up on the news.
-allowed-tools: Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs refresh .job-app-assist/refresh) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs refresh .job-app-assist/refresh --rerun) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs news plan .job-app-assist/refresh) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs news build .job-app-assist/refresh) WebSearch WebFetch(domain:news.ycombinator.com) Bash(rm -rf .job-app-assist/refresh/state .job-app-assist/refresh/out) Bash(mkdir -p .job-app-assist/refresh) Bash(cp ${CLAUDE_PLUGIN_ROOT}/dist/dashboard.html .job-app-assist/dashboard.html)
+description: Refresh the Candidate's Job List, Queue and News Digest. Pulls Postings from the Candidate's enabled Sources (the Job Feed, their watchlist companies' job boards and Postings they added by URL), keeps the ones that match the Search Profile, ranks them, picks a Resume Variant for each, pre-queues the best ones up to the daily Queue target, drafts referral asks for the Candidate's connections at queued companies, writes them to the dashboard's Postings tab, moves Progress board cards from the Candidate's Gmail replies when they opted in, builds the day's News Digest for the News tab and ends with a short summary in chat. Use when the Candidate asks to refresh, update their jobs, see today's Postings, check their applications' status or catch up on the news.
+allowed-tools: Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs refresh .job-app-assist/refresh) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs refresh .job-app-assist/refresh --rerun) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs news plan .job-app-assist/refresh) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs news build .job-app-assist/refresh) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs gmail plan .job-app-assist/refresh) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs gmail match .job-app-assist/refresh) WebSearch WebFetch(domain:news.ycombinator.com) Bash(rm -rf .job-app-assist/refresh/state .job-app-assist/refresh/out) Bash(mkdir -p .job-app-assist/refresh) Bash(cp ${CLAUDE_PLUGIN_ROOT}/dist/dashboard.html .job-app-assist/dashboard.html)
 ---
 
 # Refresh
@@ -9,9 +9,10 @@ allowed-tools: Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs refresh .job-app-ass
 Refresh rebuilds the Candidate's Job List: every Posting from their Sources that matches their Search Profile, ranked best first, on the Postings tab of their dashboard.
 It then tops up the Queue: the best-ranked Postings are pre-queued until the Queue holds the daily Queue target, higher Location Tiers first.
 Unsubmitted Queue items carry over and count toward the target, and a Posting the Candidate skipped is never pre-queued again.
+When the Candidate opted in, it reads their Gmail, read-only, and moves Progress board cards on replies from companies, keeping each email's company, date and subject as evidence.
 Last, it builds the day's News Digest on the News tab: hiring signals from the Job List, forum highlights, news about companies in the Queue, and 5 to 8 industry stories.
 When the Candidate imported their LinkedIn connections, queued Postings also get Referral Drafts: a short message asking a connection at the Posting's company for a referral, which the Candidate copies from the drawer and sends themselves.
-The ranking, filtering, dedupe, Resume Variant picks, pre-queueing and connection matching happen in `jaa refresh`, a deterministic program, and `jaa news` computes the hiring signals; your part is to hand them the dashboard state, review the picks `jaa refresh` is unsure about, write the Referral Drafts, gather the news in chat, apply what they produce, and tell the Candidate what changed.
+The ranking, filtering, dedupe, Resume Variant picks, pre-queueing and connection matching happen in `jaa refresh`, a deterministic program, `jaa gmail` matches emails to cards, and `jaa news` computes the hiring signals; your part is to hand them the dashboard state, review the picks `jaa refresh` is unsure about, write the Referral Drafts, gather the news in chat, apply what they produce, and tell the Candidate what changed.
 The current working directory is the Candidate folder.
 
 ## 1. Load the hard rules
@@ -63,8 +64,9 @@ Read with `ArtifactData`, saving the documents as files: pass `out_dir` as the a
   It holds the Referral Drafts earlier Refreshes wrote, and is empty until then.
 
 Each read reports a `version` for every document.
-Use the Write tool to save `.job-app-assist/refresh/versions.json` mapping each postings, news and referrals document you read to its version, for example `{ "postings/meta": 4, "postings/page-1": 4, "news/2026-11-09": 1, "referrals/0a1b2c3d4e5f": 2 }`, or `{}` when there were none.
-Cards and skips need no versions: Refresh only creates new cards and never changes a card or skip that exists.
+Use the Write tool to save `.job-app-assist/refresh/versions.json` mapping each postings, cards, news and referrals document you read to its version, for example `{ "postings/meta": 4, "postings/page-1": 4, "cards/0123456789ab": 2, "news/2026-11-09": 1, "referrals/0a1b2c3d4e5f": 2 }`, or `{}` when there were none.
+Card versions let Gmail tracking move a card without overwriting a move the Candidate makes at the same time; `jaa refresh` itself only creates new cards.
+Skips need no versions: Refresh never changes a skip.
 Do not open the saved files; `jaa refresh` reads them.
 
 ## 5. Build the Job List
@@ -168,7 +170,84 @@ For each batch, in order, call `ArtifactData` with `action: "batch"`, the dashbo
 
 Then read `postings/meta` with `action: "get"` and check that its `refreshedAt` is the one in `.job-app-assist/refresh/out/summary.json`.
 
-## 10. Build the News Digest
+## 10. Move cards from Gmail
+
+Hard rule 8 holds throughout: only search and read the Candidate's Gmail.
+
+```bash
+node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs gmail plan .job-app-assist/refresh
+```
+
+It says whether the Candidate opted in to Gmail tracking, gives the Gmail searches that cover every open card, and lists the Submitted cards with no reply in 14 days or more; keep that list for the summary.
+
+- When it says to skip reading Gmail, go on to step 11.
+- When this session has no Gmail tools from the Candidate's claude.ai Gmail connector (such as `search_threads`), Gmail is not connected: go on to step 11, and say in the summary how to connect it (claude.ai, Settings, Connectors, Gmail).
+- When there is nothing to search for, go on to step 11.
+
+### Search Gmail
+
+Run each listed query with the Gmail connector's search tool, reading every page of results.
+For each message in the threads found, note its Gmail message id, its sender (the From header, as given), when it arrived (ISO 8601 UTC), its subject and the short snippet Gmail gives.
+Leave out messages the Candidate sent.
+Open a thread only when the search results lack a message's sender, date or subject.
+Use the Write tool to save the emails to `.job-app-assist/refresh/out/gmail-gathered.json`:
+
+```json
+{
+  "emails": [
+    {
+      "id": "<Gmail message id>",
+      "from": "Acme Recruiting <jobs@acme.com>",
+      "receivedAt": "2026-11-09T14:02:00Z",
+      "subject": "Your interview with Acme",
+      "snippet": "Hi Sam, thanks for applying. We'd like to schedule..."
+    }
+  ]
+}
+```
+
+The file stays in the Candidate folder, so it may hold snippets; never copy a whole email body into it.
+
+### Match emails to cards
+
+```bash
+node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs gmail match .job-app-assist/refresh
+```
+
+It classifies each email (confirmation, assessment, interview, offer or rejection), matches it to a card by company, and moves the card forward when both are clear: a confirmation to Submitted, an assessment or interview to Interviewing, an offer to Offer and a rejection to Closed.
+An email never moves a card backward, and an email that moved a card once, even a move the Candidate undid, never moves a card again.
+If it lists problems with the emails file, fix those entries and run it again.
+
+### Judge unsure emails
+
+When it reports unsure emails, read `.job-app-assist/refresh/out/gmail-review.json`.
+Each entry holds the email's `emailId`, sender, date, subject and snippet, the `kinds` the rules saw, `why` the rules were unsure, and the `cards` it could be about.
+For each, decide which card it is about and what kind of email it is, judging from the sender, subject and snippet; you may read the thread with the Gmail connector when the snippet says too little.
+
+- A confirmation thanks the Candidate for applying; an assessment asks them to take an online test or take-home; an interview invites them to talk, at any round; an offer offers them the job; a rejection says the company will not move forward.
+- An email that only reschedules, follows up on, or answers a question about a step the card already shows changes nothing; so does a job alert, a newsletter, a recruiter reaching out about a different role, or an email about an application with no card.
+- When you cannot tell, leave it out: a wrong move costs the Candidate more than a missed one.
+
+Record every decision so the next Refresh does not ask again.
+Read `.job-app-assist/refresh/gmail-judgments.json` if it exists, add one entry per reviewed email, and save the whole file with the Write tool:
+
+```json
+{
+  "<emailId>": { "postingId": "<a postingId from that entry's cards>", "kind": "interview" },
+  "<another emailId>": { "ignore": true }
+}
+```
+
+`kind` is one of `confirmation`, `assessment`, `interview`, `offer` or `rejection`.
+Then run `jaa gmail match` again and use the summary it prints from here on.
+
+### Write the moves to the dashboard
+
+When `jaa gmail match` says there is nothing to write, go on to step 11.
+Otherwise send each batch in `.job-app-assist/refresh/out/gmail-writes.json` with `ArtifactData`, `action: "batch"`, exactly as listed, the same way as step 9.
+If a batch is refused because a card changed since step 4, the Candidate moved it meanwhile: read that card again with `action: "get"` and `out_dir` set to the absolute path of `.job-app-assist/refresh/state`, save its new version in `versions.json`, run `jaa gmail match` again, and send the new batches.
+
+## 11. Build the News Digest
 
 The digest has four sections.
 Hiring signals come from the Job List and are computed for you; you gather the other three in chat with web search and page reads.
@@ -258,7 +337,7 @@ Then send each batch in `news-writes.json` with `ArtifactData`, `action: "batch"
 The batch sets the day's digest (a second Refresh on the same day replaces it) and removes digests older than 90 days.
 If the news cannot be written, say so in the summary; the Job List is already saved.
 
-## 11. Summarize in chat
+## 12. Summarize in chat
 
 Finish with a short summary built from the `jaa refresh` output, in plain words:
 
@@ -268,11 +347,14 @@ Finish with a short summary built from the `jaa refresh` output, in plain words:
 - how many Postings got each Resume Variant, how many unsure picks you reviewed and how many you changed, and that the Candidate can change any Posting's Resume Variant in its detail drawer;
 - when the summary has a "Referral Drafts" line: how many drafts there are and at which companies, that they are in each queued Posting's drawer with a copy button, and that the Candidate sends each one themselves;
 - the top three to five Postings, each as company, title, location and a link to its apply URL;
+- Gmail tracking: each card an email moved, as company, title, the Stage it moved to, and the email's subject and date, plus how many unsure emails you judged; remind the Candidate that dragging a card back undoes a move.
+  When Gmail was skipped, say why in one line: tracking is off or not chosen yet (they can run `/job-app-assist:setup` to switch it on), or Gmail is not connected (how to connect it);
+- Submitted cards with no reply in 14 days or more, from the last `jaa gmail` output, so the Candidate can send a short follow-up themselves;
 - the News Digest: the biggest hiring signal and one or two headlines worth reading, plus any gap `jaa news build` reported;
 - every failing Source, said plainly: which Source (or which watchlist company), what went wrong, and that today's Job List may be incomplete because of it;
 - Postings the Candidate added by URL that were left out, and why, so they can fix the details in the Sources panel or tune their Search Profile;
 - Source documents the summary says do not match the dashboard contract, with a suggestion to switch that Source off and on again in the Sources panel;
 - Location Tier entries that matched no Posting location, if any, with a suggestion to reword them by rerunning `/job-app-assist:setup`;
-- links to the dashboard's Postings tab and News tab (the dashboard `url` followed by `#postings` or `#news`).
+- links to the dashboard's Postings, Progress and News tabs (the dashboard `url` followed by `#postings`, `#progress` or `#news`).
 
 Keep it to a few lines; the dashboard holds the detail.

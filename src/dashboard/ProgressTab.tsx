@@ -4,12 +4,16 @@
  * Moving a card to Closed first asks whether the Candidate was rejected or withdrew.
  * Once Fill has worked on a card, the card says how many fields to check (or that the site needs
  * a sign-in), and the drawer lists each flagged field with what to do.
+ * A card Refresh moved from Gmail shows the email behind the move; dragging it back undoes the move.
+ * A Submitted card with no reply for 14 days is flagged for follow-up.
  */
 import { useEffect, useId, useMemo, useRef, useState } from "preact/hooks";
 import {
   POSSIBLY_CLOSED_DAYS,
   STAGES,
   compareQueueOrder,
+  currentEvidence,
+  needsFollowUp,
   queueAgeDays,
   stageSince,
   type Card,
@@ -32,6 +36,8 @@ export interface ProgressTabProps extends ResumeVariantProps {
   /** Null when this view has no database to save moves to. */
   actions: QueueActions | null;
   now: number;
+  /** Whether the Candidate opted in to Refresh moving cards from their Gmail. */
+  gmailTracking: boolean;
 }
 
 /** Queued cards in Queue order; later Stages with the latest move first. */
@@ -46,6 +52,7 @@ export function ProgressTab({
   listed,
   actions,
   now,
+  gmailTracking,
   resumeVariants,
   overrides,
   onChooseVariant,
@@ -118,7 +125,7 @@ export function ProgressTab({
         {cards.size === 0
           ? "Postings you queue appear here and move through each Stage as you apply."
           : actions
-            ? "Drag a card to another column to change its Stage, or open it to change it there."
+            ? `Drag a card to another column to change its Stage, or open it to change it there.${gmailTracking ? " Refresh also moves cards from your Gmail replies; drag one back to undo." : ""}`
             : "Your board is read-only here, so cards can't be moved."}
       </p>
       {problem && (
@@ -213,11 +220,13 @@ export function ProgressTab({
             card={open}
             canMove={actions !== null}
             problem={problem}
+            now={now}
             onMove={(stage) => {
               request(open, stage);
             }}
           />
           {open.fill && <FillSection fill={open.fill} />}
+          <EvidenceSection card={open} canMove={actions !== null} />
         </PostingDrawer>
       )}
 
@@ -285,9 +294,16 @@ function BoardCard({
       );
     }
   }
+  if (needsFollowUp(card, now)) {
+    flags.push({
+      text: `No reply in ${count(queueAgeDays(stageSince(card), now), "day")}`,
+      warning: true,
+    });
+  }
   if (card.stage === "closed" && card.closedReason) {
     flags.push({ text: CLOSED_REASON_LABELS[card.closedReason] });
   }
+  const evidence = currentEvidence(card);
   const classes = ["board-card", dragging && "board-card-dragging", filling && "board-card-filling"]
     .filter(Boolean)
     .join(" ");
@@ -303,6 +319,14 @@ function BoardCard({
       <button type="button" class="board-card-open" onClick={onOpen}>
         <span class="board-card-company">{posting.company}</span>
         <span class="board-card-title">{posting.title}</span>
+        {evidence && (
+          <span class="board-card-evidence" title={evidence.subject}>
+            <span class="board-card-evidence-label">
+              Email, {formatMomentDay(evidence.receivedAt)}:
+            </span>{" "}
+            {evidence.subject}
+          </span>
+        )}
       </button>
       {(filling || flags.length > 0) && (
         <div class="flags board-card-flags">
@@ -327,11 +351,13 @@ function StageSection({
   card,
   canMove,
   problem,
+  now,
   onMove,
 }: {
   card: Card;
   canMove: boolean;
   problem: string | undefined;
+  now: number;
   onMove: (stage: Stage) => void;
 }) {
   const headingId = useId();
@@ -364,6 +390,12 @@ function StageSection({
       {card.closedReason && (
         <p class="variant-reason">
           {card.closedReason === "rejected" ? "The company said no." : "You withdrew."}
+        </p>
+      )}
+      {needsFollowUp(card, now) && (
+        <p class="variant-reason stage-follow-up">
+          No reply in {count(queueAgeDays(stageSince(card), now), "day")}. A short follow-up to the
+          recruiter can help.
         </p>
       )}
       {card.fillingSince !== undefined && (
@@ -445,6 +477,54 @@ function FillSection({ fill }: { fill: FillRecord }) {
           {fill.flags.length > 0
             ? "Check these in the application's tab in Helium, then submit it yourself."
             : "Nothing was flagged. Look the form over in its tab in Helium, then submit it yourself."}
+        </p>
+      )}
+    </section>
+  );
+}
+
+/** The emails behind the card's automatic moves, the latest first. */
+function EvidenceSection({ card, canMove }: { card: Card; canMove: boolean }) {
+  const headingId = useId();
+  const evidence = card.stageEvidence ?? [];
+  if (evidence.length === 0) return null;
+  const current = currentEvidence(card);
+  return (
+    <section class="drawer-section" aria-labelledby={headingId}>
+      <h3 class="drawer-heading" id={headingId}>
+        From your email
+      </h3>
+      <ul class="evidence-list">
+        {[...evidence].reverse().map((entry) => (
+          <li
+            key={`${entry.receivedAt} ${entry.subject}`}
+            class={
+              entry === current
+                ? "evidence evidence-current"
+                : entry.undoneAt === undefined
+                  ? "evidence"
+                  : "evidence evidence-undone"
+            }
+          >
+            <p class="evidence-move">
+              Moved to <strong>{STAGE_LABELS[entry.stage]}</strong> on{" "}
+              {formatMomentDay(entry.movedAt)}
+            </p>
+            <p class="evidence-email">
+              {entry.company}, {formatMomentDay(entry.receivedAt)}: {entry.subject}
+            </p>
+            {entry.undoneAt !== undefined && (
+              <p class="evidence-note">
+                You moved it back on {formatMomentDay(entry.undoneAt)}, so this email won't move it
+                again.
+              </p>
+            )}
+          </li>
+        ))}
+      </ul>
+      {current && canMove && (
+        <p class="variant-status">
+          Move the card back to undo a move from a misread email. That email won't move it again.
         </p>
       )}
     </section>

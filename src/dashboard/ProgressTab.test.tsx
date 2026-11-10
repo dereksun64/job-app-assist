@@ -2,7 +2,7 @@
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/preact";
 import { userEvent } from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { FillRecord, Posting } from "../contract/index.ts";
+import type { FillRecord, Posting, StageEvidence } from "../contract/index.ts";
 import { App } from "./App.tsx";
 import {
   NOW,
@@ -521,5 +521,105 @@ describe("opening a card", () => {
     await renderBoard({ ...cardDoc(acme, { fillingSince: NOW_ISO }) });
     const { drawer } = await openCard("Acme");
     expect(within(drawer).getByText(/Your Claude is filling this application now/)).toBeVisible();
+  });
+});
+
+describe("moves from Gmail", () => {
+  const emailed = (overrides: Partial<StageEvidence> = {}): StageEvidence => ({
+    company: "Acme",
+    receivedAt: "2026-11-09T14:00:00.000Z",
+    subject: "Acme interview invitation",
+    stage: "interviewing",
+    movedAt: REFRESHED,
+    ...overrides,
+  });
+  const interviewing = (evidence = [emailed()]) =>
+    cardDoc(acme, { stage: "interviewing", stageChangedAt: REFRESHED, stageEvidence: evidence });
+
+  it("shows the email behind an automatic move on the card", async () => {
+    await renderBoard(interviewing());
+    const evidence = cardOf("Acme").querySelector(".board-card-evidence");
+    expect(evidence).toHaveTextContent("Email, Nov 9: Acme interview invitation");
+    expect(evidence).toHaveAttribute("title", "Acme interview invitation");
+  });
+
+  it("lists every email move in the drawer, the latest first", async () => {
+    const user = userEvent.setup();
+    await renderBoard(
+      interviewing([
+        emailed({
+          stage: "submitted",
+          subject: "Thank you for applying to Acme",
+          receivedAt: "2026-10-30T12:00:00.000Z",
+          movedAt: "2026-10-30T14:00:00.000Z",
+        }),
+        emailed(),
+      ]),
+    );
+    await user.click(within(cardOf("Acme")).getByRole("button"));
+    const drawer = await screen.findByRole("dialog");
+    const section = within(drawer).getByRole("region", { name: "From your email" });
+    const items = within(section).getAllByRole("listitem");
+    expect(items.map((item) => item.className)).toEqual(["evidence evidence-current", "evidence"]);
+    expect(items.map((item) => item.textContent)).toEqual([
+      "Moved to Interviewing on Nov 10Acme, Nov 9: Acme interview invitation",
+      "Moved to Submitted on Oct 30Acme, Oct 30: Thank you for applying to Acme",
+    ]);
+    expect(within(section).getByText(/Move the card back to undo/)).toBeInTheDocument();
+  });
+
+  it("undoes the move when the Candidate drags the card back, so the email won't move it again", async () => {
+    const user = userEvent.setup();
+    const db = await renderBoard(interviewing());
+    drag("Acme", "Submitted");
+    await settle();
+    expect(dataOf(cardWrites(db)[0])).toMatchObject({
+      stage: "submitted",
+      stageEvidence: [{ ...emailed(), undoneAt: NOW_ISO }],
+    });
+    expect(cardOf("Acme").querySelector(".board-card-evidence")).toBeNull();
+    await user.click(within(cardOf("Acme")).getByRole("button"));
+    const drawer = await screen.findByRole("dialog");
+    expect(
+      within(drawer).getByText("You moved it back on Nov 10, so this email won't move it again."),
+    ).toBeInTheDocument();
+  });
+
+  it("says on the board that Refresh moves cards from Gmail when the Candidate opted in", async () => {
+    await renderBoard({ "settings/main": { ...settings, gmailTracking: true }, ...cardDoc(acme) });
+    expect(
+      screen.getByText(/Refresh also moves cards from your Gmail replies/),
+    ).toBeInTheDocument();
+  });
+
+  it("does not mention Gmail when the Candidate has not opted in", async () => {
+    await renderBoard({ ...cardDoc(acme) });
+    expect(screen.queryByText(/Gmail/)).not.toBeInTheDocument();
+  });
+});
+
+describe("following up", () => {
+  it("flags a Submitted card with no reply after 14 days", async () => {
+    await renderBoard({
+      ...cardDoc(acme, { stage: "submitted", stageChangedAt: daysAgo(14) }),
+      ...cardDoc(brainy, { stage: "submitted", stageChangedAt: daysAgo(13) }),
+      ...cardDoc(charlie, { stage: "interviewing", stageChangedAt: daysAgo(30) }),
+      ...cardDoc(delta, { stage: "submitted", stageChangedAt: daysAgo(21) }),
+    });
+    const flag = within(cardOf("Acme")).getByText("No reply in 14 days");
+    expect(within(cardOf("Delta")).getByText("No reply in 21 days")).toBeInTheDocument();
+    expect(flag).toHaveClass("flag-warning");
+    expect(within(cardOf("Brainy")).queryByText(/No reply/)).not.toBeInTheDocument();
+    expect(within(cardOf("Charlie")).queryByText(/No reply/)).not.toBeInTheDocument();
+  });
+
+  it("suggests a follow-up in the drawer", async () => {
+    const user = userEvent.setup();
+    await renderBoard({ ...cardDoc(acme, { stage: "submitted", stageChangedAt: daysAgo(20) }) });
+    await user.click(within(cardOf("Acme")).getByRole("button"));
+    const drawer = await screen.findByRole("dialog");
+    expect(
+      within(drawer).getByText("No reply in 20 days. A short follow-up to the recruiter can help."),
+    ).toBeInTheDocument();
   });
 });

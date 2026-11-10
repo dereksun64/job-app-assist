@@ -1,16 +1,22 @@
 import { describe, expect, it } from "vitest";
 import {
   CARDS_COLLECTION,
+  FOLLOW_UP_DAYS,
   POSSIBLY_CLOSED_DAYS,
   compareQueueOrder,
   finishFill,
+  currentEvidence,
+  hasEmail,
   moveCard,
+  moveCardByEmail,
+  needsFollowUp,
   queueAgeDays,
   stageSince,
   startFill,
   validateCard,
   type Card,
   type FillRecord,
+  type StageEvidence,
 } from "./cards.ts";
 import { validateDocument } from "./index.ts";
 import { samplePosting } from "./testing/fixtures.ts";
@@ -323,5 +329,143 @@ describe("startFill and finishFill", () => {
   it("replaces the record of an earlier Fill", () => {
     const done = finishFill(card({ fill: NEEDS_SIGN_IN }), FILLED);
     expect(done.fill).toEqual(FILLED);
+  });
+});
+
+describe("Stage evidence", () => {
+  const MOVED = "2026-11-12T10:00:00.000Z";
+  const evidence = (overrides: Partial<StageEvidence> = {}): StageEvidence => ({
+    company: "Acme",
+    receivedAt: "2026-11-12T08:30:00.000Z",
+    subject: "Your interview with Acme",
+    stage: "interviewing",
+    movedAt: MOVED,
+    ...overrides,
+  });
+
+  it("accepts the company, date and subject of the email behind an automatic move", () => {
+    const moved = card({
+      stage: "interviewing",
+      stageChangedAt: MOVED,
+      stageEvidence: [evidence()],
+    });
+    expect(validateCard(moved).ok).toBe(true);
+  });
+
+  it("holds nothing else from the email, so no body can reach the database", () => {
+    const withBody = card({
+      stageEvidence: [{ ...evidence(), body: "Hi Sam, we'd love to talk." } as StageEvidence],
+    });
+    expect(issuesFor(withBody)).toEqual(['stageEvidence.0: Unrecognized key: "body"']);
+    const withSnippet = card({
+      stageEvidence: [{ ...evidence(), snippet: "we'd love to talk" } as StageEvidence],
+    });
+    expect(issuesFor(withSnippet)).toEqual(['stageEvidence.0: Unrecognized key: "snippet"']);
+  });
+
+  it("keeps the subject short, as a subject line", () => {
+    expect(issuesFor(card({ stageEvidence: [evidence({ subject: "x".repeat(301) })] }))).toEqual([
+      "stageEvidence.0.subject: must be 300 characters or fewer",
+    ]);
+  });
+
+  it("only records moves an email can make", () => {
+    expect(
+      issuesFor(card({ stageEvidence: [evidence({ stage: "ready_for_review" as "offer" })] }))[0],
+    ).toMatch(/^stageEvidence\.0\.stage: /);
+  });
+});
+
+describe("moveCardByEmail", () => {
+  const AT = "2026-11-12T10:00:00.000Z";
+  const email = {
+    company: "Acme",
+    receivedAt: "2026-11-12T08:30:00.000Z",
+    subject: "Next steps: interview with Acme",
+  };
+
+  it("moves the card and records the email as evidence", () => {
+    const moved = moveCardByEmail(card({ stage: "submitted" }), "interviewing", email, AT);
+    expect(moved).toEqual({
+      ...card(),
+      stage: "interviewing",
+      stageChangedAt: AT,
+      updatedAt: AT,
+      stageEvidence: [{ ...email, stage: "interviewing", movedAt: AT }],
+    });
+    expect(validateCard(moved).ok).toBe(true);
+    expect(currentEvidence(moved)).toEqual({ ...email, stage: "interviewing", movedAt: AT });
+  });
+
+  it("closes a card as rejected", () => {
+    const moved = moveCardByEmail(card({ stage: "submitted" }), "closed", email, AT);
+    expect(moved).toMatchObject({ stage: "closed", closedReason: "rejected" });
+    expect(validateCard(moved).ok).toBe(true);
+  });
+
+  it("adds to the evidence a card already has", () => {
+    const first = moveCardByEmail(card(), "submitted", { ...email, subject: "Thanks" }, AT);
+    const second = moveCardByEmail(first, "offer", email, "2026-11-20T10:00:00.000Z");
+    expect(second.stageEvidence?.map((e) => e.stage)).toEqual(["submitted", "offer"]);
+  });
+
+  it("knows the emails a card has already been moved by", () => {
+    const moved = moveCardByEmail(card(), "submitted", email, AT);
+    expect(hasEmail(moved, email)).toBe(true);
+    expect(hasEmail(moved, { ...email, subject: "Another email" })).toBe(false);
+    expect(hasEmail(card(), email)).toBe(false);
+  });
+});
+
+describe("dragging a card back", () => {
+  const AT = "2026-11-12T10:00:00.000Z";
+  const LATER = "2026-11-13T09:00:00.000Z";
+  const email = {
+    company: "Acme",
+    receivedAt: "2026-11-12T08:30:00.000Z",
+    subject: "Unfortunately",
+  };
+
+  it("undoes the automatic move, and keeps the email so it does not move the card again", () => {
+    const closed = moveCardByEmail(card({ stage: "submitted" }), "closed", email, AT);
+    const back = moveCard(closed, "submitted", LATER);
+    expect(back.stage).toBe("submitted");
+    expect(back.stageEvidence).toEqual([
+      { ...email, stage: "closed", movedAt: AT, undoneAt: LATER },
+    ]);
+    expect(currentEvidence(back)).toBeUndefined();
+    expect(hasEmail(back, email)).toBe(true);
+    expect(validateCard(back).ok).toBe(true);
+  });
+
+  it("does not undo the move when the Candidate moves the card further on", () => {
+    const interviewing = moveCardByEmail(card({ stage: "submitted" }), "interviewing", email, AT);
+    const offer = moveCard(interviewing, "offer", LATER);
+    expect(offer.stageEvidence?.[0]).not.toHaveProperty("undoneAt");
+    expect(currentEvidence(offer)).toBeUndefined();
+  });
+
+  it("leaves evidence alone once the card has moved on since", () => {
+    const interviewing = moveCardByEmail(card({ stage: "submitted" }), "interviewing", email, AT);
+    const offer = moveCard(interviewing, "offer", LATER);
+    const back = moveCard(offer, "submitted", "2026-11-14T09:00:00.000Z");
+    expect(back.stageEvidence?.[0]).not.toHaveProperty("undoneAt");
+  });
+});
+
+describe("needsFollowUp", () => {
+  const DAY = 86_400_000;
+  const submitted = card({ stage: "submitted", stageChangedAt: "2026-10-20T12:00:00.000Z" });
+  const since = Date.parse("2026-10-20T12:00:00.000Z");
+
+  it(`flags a Submitted card with no reply after ${String(FOLLOW_UP_DAYS)} days`, () => {
+    expect(needsFollowUp(submitted, since + (FOLLOW_UP_DAYS - 1) * DAY)).toBe(false);
+    expect(needsFollowUp(submitted, since + FOLLOW_UP_DAYS * DAY)).toBe(true);
+  });
+
+  it("never flags a card in another Stage", () => {
+    const later = since + 30 * DAY;
+    expect(needsFollowUp({ ...submitted, stage: "interviewing" }, later)).toBe(false);
+    expect(needsFollowUp({ ...submitted, stage: "queued" }, later)).toBe(false);
   });
 });

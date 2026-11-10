@@ -336,6 +336,20 @@ describe("ranking settings", () => {
   });
 });
 
+describe("Gmail tracking in the settings document", () => {
+  it.each([true, false])("records the Candidate's choice, %s", (gmailTracking) => {
+    expect(validateSettings({ ...validSettings(), gmailTracking }).ok).toBe(true);
+  });
+
+  it("leaves it out until the Candidate has chosen", () => {
+    expect(validateSettings(validSettings()).ok).toBe(true);
+  });
+
+  it("is a yes or no", () => {
+    expect(issuesFor({ ...validSettings(), gmailTracking: "yes" })[0]).toMatch(/^gmailTracking: /);
+  });
+});
+
 describe("validateDocument", () => {
   it("validates the settings document by collection and id", () => {
     expect(validateDocument("settings", SETTINGS_DOC_ID, validSettings()).ok).toBe(true);

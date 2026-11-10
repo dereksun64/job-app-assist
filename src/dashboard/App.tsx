@@ -214,6 +214,7 @@ export function App({ db, pageVersion, now }: AppProps) {
               listed={listed}
               actions={actions}
               now={now ?? Date.now()}
+              gmailTracking={settings.kind === "ready" && settings.settings.gmailTracking === true}
               resumeVariants={resumeVariants}
               overrides={overrides}
               onChooseVariant={choose}

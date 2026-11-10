@@ -204,6 +204,11 @@ const settings = z
         ),
       DEFAULT_FRESHNESS_WEIGHT,
     ),
+    /**
+     * Whether Refresh reads the Candidate's Gmail, read-only, to move board cards. Absent until
+     * the Candidate chooses in Setup, which counts as off.
+     */
+    gmailTracking: z.optional(z.boolean()),
     updatedAt: z.iso.datetime({ error: "must be an ISO 8601 timestamp" }),
   })
   .check(

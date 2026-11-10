@@ -107,6 +107,10 @@ describe("jaa usage", () => {
     [["news", "publish", "dir"]],
     [["news", "plan"]],
     [["news", "build", "dir", "extra"]],
+    [["gmail"]],
+    [["gmail", "send", "dir"]],
+    [["gmail", "match"]],
+    [["gmail", "plan", "dir", "extra"]],
   ])("prints usage and exits 2 for %j", async (argv) => {
     const cli = io();
     expect(await runCli(argv, cli)).toBe(2);
@@ -119,6 +123,13 @@ describe("jaa usage", () => {
     expect(cli.out).toContain("Usage: jaa validate");
     expect(cli.out).toContain("jaa refresh <dir>");
     expect(cli.out).toContain("jaa news plan <dir>");
+    expect(cli.out).toContain("jaa gmail plan <dir>");
+  });
+
+  it("runs gmail plan and reports missing settings", async () => {
+    const cli = io();
+    expect(await runCli(["gmail", "plan", "some/dir"], cli)).toBe(1);
+    expect(cli.err).toContain("No settings at");
   });
 
   it("runs news build and asks for the plan first", async () => {
