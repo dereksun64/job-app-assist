@@ -58,6 +58,15 @@ Each Source has an on/off switch, and Refresh reads only the ones that are on.
 
 A job listed by several Sources appears once, with every Source it came from.
 
+## Progress
+
+The Progress tab is a board with a column for each Stage: Queued, Ready for Review, Submitted, Interviewing, Offer and Closed, each with its count.
+Every queued Posting has a card there, and the Queued column is your Queue in the order Claude fills it.
+While Claude fills an application, its card shows a spinner.
+Drag a card to another column to record where it stands, or drag it back to undo a move.
+Moving a card to Closed asks whether you were rejected or withdrew, and the card keeps the answer.
+Click a card to open the same details as on the Postings tab, where you can also change its Stage.
+
 ## Developing
 
 The plugin lives in `plugin/`, and the TypeScript source for the dashboard page, the dashboard contract and the `jaa` CLI lives in `src/`.

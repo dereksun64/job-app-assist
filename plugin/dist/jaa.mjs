@@ -2196,6 +2196,7 @@ var STAGES = [
   "offer",
   "closed"
 ];
+var CLOSED_REASONS = ["rejected", "withdrawn"];
 var QUEUED_BY = ["refresh", "candidate"];
 var POSSIBLY_CLOSED_DAYS = 5;
 var DAY_MS = 864e5;
@@ -2214,15 +2215,47 @@ function snapshotMatches(kind) {
     }
   });
 }
+var stageRules = superRefine((value, ctx) => {
+  if (value.stage === "closed" && value.closedReason === void 0) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["closedReason"],
+      message: "a Closed card says whether the Candidate was rejected or withdrew",
+      input: value.closedReason
+    });
+  }
+  if (value.stage !== "closed" && value.closedReason !== void 0) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["closedReason"],
+      message: "only a Closed card has a closedReason",
+      input: value.closedReason
+    });
+  }
+  if (value.stage !== "queued" && value.fillingSince !== void 0) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["fillingSince"],
+      message: "only a Queued card can be filling",
+      input: value.fillingSince
+    });
+  }
+});
 var card = strictObject({
   schemaVersion: literal(1),
   postingId: postingIdSchema,
   stage: _enum(STAGES),
+  /** Present exactly when the Stage is Closed. */
+  closedReason: optional(_enum(CLOSED_REASONS)),
+  /** The filling marker: when Fill started filling this Queued card's Posting. */
+  fillingSince: optional(timestampSchema),
   queuedAt: timestampSchema,
   queuedBy: _enum(QUEUED_BY),
+  /** When the card entered its Stage; absent until it first moves, so `queuedAt` stands in. */
+  stageChangedAt: optional(timestampSchema),
   posting: postingSchema,
   updatedAt: timestampSchema
-}).check(snapshotMatches("card"));
+}).check(snapshotMatches("card"), stageRules);
 function validateCard(input) {
   return validateWith(card, input);
 }

@@ -61,11 +61,11 @@ describe("dashboard tabs", () => {
 
     await user.click(screen.getByRole("tab", { name: "Progress" }));
     const progress = screen.getByRole("tabpanel", { name: "Progress" });
-    expect(progress).toHaveTextContent("Nothing in progress yet");
+    const board = await within(progress).findByRole("region", { name: "Progress board" });
     expect(
-      within(progress)
-        .getAllByRole("listitem")
-        .map((li) => li.textContent),
+      within(board)
+        .getAllByRole("region")
+        .map((column) => column.getAttribute("aria-label")),
     ).toEqual(["Queued", "Ready for Review", "Submitted", "Interviewing", "Offer", "Closed"]);
   });
 

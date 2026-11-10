@@ -1,4 +1,10 @@
-import type { SearchProfile, Seniority, SkipReason, Stage } from "../contract/index.ts";
+import type {
+  ClosedReason,
+  SearchProfile,
+  Seniority,
+  SkipReason,
+  Stage,
+} from "../contract/index.ts";
 
 export const STAGE_LABELS: Record<Stage, string> = {
   queued: "Queued",
@@ -7,6 +13,12 @@ export const STAGE_LABELS: Record<Stage, string> = {
   interviewing: "Interviewing",
   offer: "Offer",
   closed: "Closed",
+};
+
+/** How a Closed card names its reason, from the Candidate's side. */
+export const CLOSED_REASON_LABELS: Record<ClosedReason, string> = {
+  rejected: "Rejected",
+  withdrawn: "Withdrew",
 };
 
 export const SKIP_REASON_LABELS: Record<SkipReason, string> = {
@@ -55,6 +67,15 @@ export function formatMoment(iso: string): string {
     hour: "numeric",
     minute: "2-digit",
   });
+}
+
+/** A number with its noun: "1 Posting", "1,204 Postings". */
+export const count = (n: number, one: string, many = `${one}s`) =>
+  `${n.toLocaleString("en-US")} ${n === 1 ? one : many}`;
+
+/** A moment as "Nov 10" in the viewer's own time zone. */
+export function formatMomentDay(iso: string): string {
+  return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
 const DAY_MS = 86_400_000;
