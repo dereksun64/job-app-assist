@@ -10,6 +10,7 @@ import type { DashboardDb } from "./db.ts";
 import { formatSeniority, formatStartWindow } from "./format.ts";
 import { NewsTab } from "./NewsTab.tsx";
 import { PostingsTab } from "./PostingsTab.tsx";
+import { SettingsPanel } from "./SettingsPanel.tsx";
 import { SourcesPanel } from "./SourcesPanel.tsx";
 import { ProgressTab } from "./ProgressTab.tsx";
 import { useHashTab } from "./useHashTab.ts";
@@ -54,6 +55,7 @@ export function App({ db, pageVersion, now }: AppProps) {
   const actions = useMemo(() => (db ? queueActions(db, () => now ?? Date.now()) : null), [db, now]);
   const sources = useSources(db);
   const [sourcesOpen, setSourcesOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const roleTypeOrder = useMemo(
     () =>
       settings.kind === "ready" ? settings.settings.searchProfile.roleTypes.map((r) => r.name) : [],
@@ -129,6 +131,54 @@ export function App({ db, pageVersion, now }: AppProps) {
             </svg>
             <span class="bar-button-label">Sources</span>
           </button>
+          <button
+            type="button"
+            class="bar-button"
+            aria-haspopup="dialog"
+            onClick={() => {
+              setSettingsOpen(true);
+            }}
+          >
+            <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+              <path
+                d="M3 2.5v11M8 2.5v11M13 2.5v11"
+                stroke="currentColor"
+                stroke-width="1.5"
+                stroke-linecap="round"
+              />
+              <rect
+                x="1.25"
+                y="8.5"
+                width="3.5"
+                height="2.5"
+                rx="1"
+                fill="var(--surface)"
+                stroke="currentColor"
+                stroke-width="1.5"
+              />
+              <rect
+                x="6.25"
+                y="4"
+                width="3.5"
+                height="2.5"
+                rx="1"
+                fill="var(--surface)"
+                stroke="currentColor"
+                stroke-width="1.5"
+              />
+              <rect
+                x="11.25"
+                y="9.5"
+                width="3.5"
+                height="2.5"
+                rx="1"
+                fill="var(--surface)"
+                stroke="currentColor"
+                stroke-width="1.5"
+              />
+            </svg>
+            <span class="bar-button-label">Settings</span>
+          </button>
         </div>
         <section
           class="panel"
@@ -169,6 +219,16 @@ export function App({ db, pageVersion, now }: AppProps) {
         </section>
       </main>
       <footer class="colophon">Toolkit page {pageVersion}</footer>
+      {settingsOpen && (
+        <SettingsPanel
+          db={db}
+          state={settings}
+          now={now ?? Date.now()}
+          onClose={() => {
+            setSettingsOpen(false);
+          }}
+        />
+      )}
       {sourcesOpen && (
         <SourcesPanel
           db={db}

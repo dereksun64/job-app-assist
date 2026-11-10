@@ -62,6 +62,33 @@ var captureStackTrace = "captureStackTrace" in Error ? Error.captureStackTrace :
 function isObject(data) {
   return typeof data === "object" && data !== null && !Array.isArray(data);
 }
+function isPlainObject(o) {
+  if (isObject(o) === false)
+    return false;
+  const ctor = o.constructor;
+  if (ctor === void 0)
+    return true;
+  if (typeof ctor !== "function")
+    return true;
+  const prot = ctor.prototype;
+  if (isObject(prot) === false)
+    return false;
+  if (Object.prototype.hasOwnProperty.call(prot, "isPrototypeOf") === false) {
+    return false;
+  }
+  return true;
+}
+function shallowClone(o) {
+  if (isPlainObject(o))
+    return { ...o };
+  if (Array.isArray(o))
+    return [...o];
+  if (o instanceof Map)
+    return new Map(o);
+  if (o instanceof Set)
+    return new Set(o);
+  return o;
+}
 var propertyKeyTypes = /* @__PURE__ */ new Set(["string", "number", "symbol"]);
 function escapeRegex(str) {
   return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -235,29 +262,29 @@ function issue(...args) {
   return { ...iss };
 }
 function members(proto, table) {
-  for (const key in table) {
-    const desc = Object.getOwnPropertyDescriptor(table, key);
+  for (const key2 in table) {
+    const desc = Object.getOwnPropertyDescriptor(table, key2);
     if (desc.get)
-      Object.defineProperty(proto, key, { ...desc, enumerable: false });
+      Object.defineProperty(proto, key2, { ...desc, enumerable: false });
     else
-      defineBound(proto, key, desc.value);
+      defineBound(proto, key2, desc.value);
   }
 }
-function own(inst, key, value, enumerable = true) {
-  Object.defineProperty(inst, key, { configurable: true, writable: true, enumerable, value });
+function own(inst, key2, value, enumerable = true) {
+  Object.defineProperty(inst, key2, { configurable: true, writable: true, enumerable, value });
   return value;
 }
-function hide(inst, key, value) {
-  return own(inst, key, value, false);
+function hide(inst, key2, value) {
+  return own(inst, key2, value, false);
 }
-function defineBound(proto, key, fn) {
-  Object.defineProperty(proto, key, {
+function defineBound(proto, key2, fn) {
+  Object.defineProperty(proto, key2, {
     configurable: true,
     get() {
-      return this == null ? fn : own(this, key, fn.bind(this));
+      return this == null ? fn : own(this, key2, fn.bind(this));
     },
     set(value) {
-      own(this, key, value);
+      own(this, key2, value);
     }
   });
 }
@@ -274,53 +301,53 @@ var breaker = {
     return void 0;
   }
 };
-function defineLazyInternal(inst, key, compute) {
+function defineLazyInternal(inst, key2, compute) {
   const proto = Object.getPrototypeOf(inst._zod);
-  if (key in proto && installing !== inst._zod) {
+  if (key2 in proto && installing !== inst._zod) {
     installing = void 0;
     return;
   }
   installing = inst._zod;
-  Object.defineProperty(proto, key, {
+  Object.defineProperty(proto, key2, {
     configurable: true,
     get() {
-      Object.defineProperty(this, key, breaker);
+      Object.defineProperty(this, key2, breaker);
       const outer = broke;
       broke = false;
       try {
         const value = compute(this);
         if (broke)
-          delete this[key];
+          delete this[key2];
         else
-          Object.defineProperty(this, key, { configurable: true, writable: true, value });
+          Object.defineProperty(this, key2, { configurable: true, writable: true, value });
         broke = broke || outer;
         return value;
       } catch (err) {
-        delete this[key];
+        delete this[key2];
         broke = broke || outer;
         throw err;
       }
     },
     set(value) {
-      Object.defineProperty(this, key, { configurable: true, writable: true, value });
+      Object.defineProperty(this, key2, { configurable: true, writable: true, value });
     }
   });
 }
-function installLazyProp(inst, key, make, enumerable) {
-  const proto = claim(inst, key);
+function installLazyProp(inst, key2, make, enumerable) {
+  const proto = claim(inst, key2);
   if (!proto)
     return;
-  Object.defineProperty(proto, key, {
+  Object.defineProperty(proto, key2, {
     configurable: true,
     get() {
       const desc = { configurable: true, writable: true, enumerable, value: void 0 };
-      Object.defineProperty(this, key, desc);
+      Object.defineProperty(this, key2, desc);
       desc.value = make(this);
-      Object.defineProperty(this, key, desc);
+      Object.defineProperty(this, key2, desc);
       return desc.value;
     },
     set(value) {
-      Object.defineProperty(this, key, { configurable: true, writable: true, enumerable, value });
+      Object.defineProperty(this, key2, { configurable: true, writable: true, enumerable, value });
     }
   });
 }
@@ -1100,8 +1127,8 @@ var $ZodArray = /* @__PURE__ */ $constructor("$ZodArray", (inst, def) => {
   };
   capSize(inst, arraySize);
 });
-function handlePropertyResult(result, final, key, input, optin, optout) {
-  const isPresent = key in input;
+function handlePropertyResult(result, final, key2, input, optin, optout) {
+  const isPresent = key2 in input;
   const isOptionalOut = optout === "optional";
   if (!isPresent && isOptionalOut && optin === "optional") {
     return;
@@ -1110,7 +1137,7 @@ function handlePropertyResult(result, final, key, input, optin, optout) {
     if (optin !== void 0 && isOptionalOut && !isPresent) {
       return;
     }
-    final.issues.push(...prefixIssues(key, result.issues));
+    final.issues.push(...prefixIssues(key2, result.issues));
   }
   if (!isPresent && optin === void 0) {
     if (!result.issues.length) {
@@ -1118,17 +1145,17 @@ function handlePropertyResult(result, final, key, input, optin, optout) {
         code: "invalid_type",
         expected: "nonoptional",
         input: void 0,
-        path: [key]
+        path: [key2]
       });
     }
     return;
   }
   if (result.value === void 0) {
     if (isPresent || optin === "defaulted" && !isOptionalOut) {
-      final.value[key] = void 0;
+      final.value[key2] = void 0;
     }
   } else {
-    final.value[key] = result.value;
+    final.value[key2] = result.value;
   }
 }
 var NO_SYMBOL_KEYS = [];
@@ -1161,28 +1188,28 @@ function handleCatchall(proms, input, payload, ctx, def, inst, abortEarly) {
   const optin = _catchall.optin;
   const optout = _catchall.optout;
   let seen = 0;
-  for (const key in input) {
+  for (const key2 in input) {
     if (abortEarly && payload.issues.length !== seen) {
       if (aborted(payload, seen))
         break;
       seen = payload.issues.length;
     }
-    if (keySet.has(key))
+    if (keySet.has(key2))
       continue;
-    if (key === "__proto__") {
+    if (key2 === "__proto__") {
       if (t === "never")
-        unrecognized.push(key);
+        unrecognized.push(key2);
       continue;
     }
     if (t === "never") {
-      unrecognized.push(key);
+      unrecognized.push(key2);
       continue;
     }
-    const r = _catchall.run({ value: input[key], issues: [] }, ctx);
+    const r = _catchall.run({ value: input[key2], issues: [] }, ctx);
     if (r instanceof Promise) {
-      proms.push(r.then((r2) => handlePropertyResult(r2, payload, key, input, optin, optout)));
+      proms.push(r.then((r2) => handlePropertyResult(r2, payload, key2, input, optin, optout)));
     } else {
-      handlePropertyResult(r, payload, key, input, optin, optout);
+      handlePropertyResult(r, payload, key2, input, optin, optout);
     }
   }
   if (unrecognized.length) {
@@ -1219,16 +1246,16 @@ var $ZodObject = /* @__PURE__ */ $constructor("$ZodObject", (inst, def) => {
   defineLazyInternal(inst, "propValues", (zod) => {
     const shape = zod.def.shape;
     const propValues = {};
-    for (const key in shape) {
-      const field = shape[key]._zod;
+    for (const key2 in shape) {
+      const field = shape[key2]._zod;
       if (field.values) {
-        if (!Object.prototype.hasOwnProperty.call(propValues, key)) {
-          assignProp(propValues, key, /* @__PURE__ */ new Set());
+        if (!Object.prototype.hasOwnProperty.call(propValues, key2)) {
+          assignProp(propValues, key2, /* @__PURE__ */ new Set());
         }
         for (const v of field.values)
-          propValues[key].add(v);
+          propValues[key2].add(v);
         if (field.optin !== void 0)
-          propValues[key].add(void 0);
+          propValues[key2].add(void 0);
       }
     }
     return propValues;
@@ -1255,22 +1282,22 @@ var $ZodObject = /* @__PURE__ */ $constructor("$ZodObject", (inst, def) => {
     const shape = value.shape;
     const abortEarly = ctx?.abortEarly;
     let seen = payload.issues.length;
-    for (const key of value.allKeys) {
+    for (const key2 of value.allKeys) {
       if (abortEarly && payload.issues.length !== seen) {
         if (aborted(payload, seen))
           break;
         seen = payload.issues.length;
       }
-      if (key === "__proto__")
+      if (key2 === "__proto__")
         continue;
-      const el = shape[key];
+      const el = shape[key2];
       const optin = el._zod.optin;
       const optout = el._zod.optout;
-      const r = el._zod.run({ value: input[key], issues: [] }, ctx);
+      const r = el._zod.run({ value: input[key2], issues: [] }, ctx);
       if (r instanceof Promise) {
-        proms.push(r.then((r2) => handlePropertyResult(r2, payload, key, input, optin, optout)));
+        proms.push(r.then((r2) => handlePropertyResult(r2, payload, key2, input, optin, optout)));
       } else {
-        handlePropertyResult(r, payload, key, input, optin, optout);
+        handlePropertyResult(r, payload, key2, input, optin, optout);
       }
     }
     if (!catchall) {
@@ -1352,6 +1379,31 @@ var $ZodOptional = /* @__PURE__ */ $constructor("$ZodOptional", (inst, def) => {
     return def.innerType._zod.run(payload, ctx);
   };
 });
+var $ZodDefault = /* @__PURE__ */ $constructor("$ZodDefault", (inst, def) => {
+  $ZodType.init(inst, def);
+  inst._zod.optin = "defaulted";
+  defineLazyInternal(inst, "values", (zod) => zod.def.innerType._zod.values);
+  inst._zod.parse = (payload, ctx) => {
+    if (ctx.direction === "backward") {
+      return def.innerType._zod.run(payload, ctx);
+    }
+    if (payload.value === void 0) {
+      payload.value = def.defaultValue;
+      return payload;
+    }
+    const result = def.innerType._zod.run(payload, ctx);
+    if (result instanceof Promise) {
+      return result.then((result2) => handleDefaultResult(result2, def));
+    }
+    return handleDefaultResult(result, def);
+  };
+});
+function handleDefaultResult(payload, def) {
+  if (payload.value === void 0) {
+    payload.value = def.defaultValue;
+  }
+  return payload;
+}
 var $ZodCustom = /* @__PURE__ */ $constructor("$ZodCustom", (inst, def) => {
   $ZodCheck.init(inst, def);
   $ZodType.init(inst, def);
@@ -1641,6 +1693,10 @@ function _trim() {
   return /* @__PURE__ */ _overwrite((input) => input.trim());
 }
 // @__NO_SIDE_EFFECTS__
+function _toLowerCase() {
+  return /* @__PURE__ */ _overwrite((input) => input.toLowerCase());
+}
+// @__NO_SIDE_EFFECTS__
 function _refine(Class, fn, _params) {
   const schema = new Class({
     type: "custom",
@@ -1835,6 +1891,20 @@ function optional(innerType) {
     innerType
   });
 }
+var ZodMiniDefault = /* @__PURE__ */ $constructor("ZodMiniDefault", (inst, def) => {
+  $ZodDefault.init(inst, def);
+  ZodMiniType.init(inst, def);
+});
+// @__NO_SIDE_EFFECTS__
+function _default(innerType, defaultValue) {
+  return new ZodMiniDefault({
+    type: "default",
+    innerType,
+    get defaultValue() {
+      return typeof defaultValue === "function" ? defaultValue() : shallowClone(defaultValue);
+    }
+  });
+}
 var ZodMiniCustom = /* @__PURE__ */ $constructor("ZodMiniCustom", (inst, def) => {
   $ZodCustom.init(inst, def);
   ZodMiniType.init(inst, def);
@@ -1918,12 +1988,13 @@ var label = string2().check(
   _maxLength(120, "must be 120 characters or fewer")
 );
 function duplicates(values) {
-  const seen = /* @__PURE__ */ new Set();
+  const first = /* @__PURE__ */ new Map();
   const repeated = /* @__PURE__ */ new Map();
   for (const value of values) {
-    const key = value.toLowerCase();
-    if (seen.has(key) && !repeated.has(key)) repeated.set(key, value);
-    seen.add(key);
+    const key2 = value.toLowerCase();
+    const earlier = first.get(key2);
+    if (earlier === void 0) first.set(key2, value);
+    else if (!repeated.has(key2)) repeated.set(key2, earlier);
   }
   return [...repeated.values()];
 }
@@ -1997,6 +2068,31 @@ var resumeVariant = strictObject({
     )
   )
 });
+var COMPANY_RULES = ["boost", "lower", "block"];
+var companyNames = array(label).check(_maxLength(200, "list at most 200 companies"));
+var companies = strictObject({
+  /** Ranked as high as a top company tier. */
+  boost: companyNames,
+  /** Ranked below companies with no rule. */
+  lower: companyNames,
+  /** Left out of the Job List. */
+  block: companyNames
+}).check(
+  noRepeats(
+    (lists) => COMPANY_RULES.flatMap((rule) => lists[rule]),
+    (company) => `${company} is listed more than once; each company has one rule`
+  )
+);
+var applySite = string2().check(
+  _trim(),
+  _toLowerCase(),
+  _regex(
+    /^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/,
+    "must be a site's host name, such as myworkdayjobs.com"
+  )
+);
+var DEFAULT_FRESHNESS_WEIGHT = 20;
+var MAX_FRESHNESS_WEIGHT = 50;
 var settings = strictObject({
   schemaVersion: literal(1),
   searchProfile,
@@ -2013,6 +2109,30 @@ var settings = strictObject({
     )
   ),
   dailyQueueTarget: int({ error: "must be a whole number" }).check(_gte(1, "must be at least 1"), _lte(100, "must be at most 100")),
+  /** Company boosts and blocks the Candidate chose; the Fortune 500 and company tiers still count. */
+  companies: _default(companies, () => ({ boost: [], lower: [], block: [] })),
+  /** Postings whose only apply URLs are on these sites are left out of the Job List. */
+  blockedApplySites: _default(
+    array(applySite).check(
+      _maxLength(50, "list at most 50 sites"),
+      noRepeats(
+        (sites) => sites,
+        (site) => `${site} is listed more than once`
+      )
+    ),
+    () => []
+  ),
+  /**
+   * How much freshness counts in a Posting's score, in percent. Role type priority and company
+   * boosts share the rest, five parts to three.
+   */
+  freshnessWeight: _default(
+    int({ error: "must be a whole number" }).check(
+      _gte(0, "must be at least 0"),
+      _lte(MAX_FRESHNESS_WEIGHT, `must be at most ${String(MAX_FRESHNESS_WEIGHT)}`)
+    ),
+    DEFAULT_FRESHNESS_WEIGHT
+  ),
   updatedAt: iso_exports.datetime({ error: "must be an ISO 8601 timestamp" })
 }).check(
   superRefine((value, ctx) => {
@@ -2553,8 +2673,8 @@ function canonicalApplyUrl(url) {
   let path = parsed.pathname.replace(/\/+$/, "");
   if (host === "jobs.lever.co") path = path.replace(/\/apply$/, "");
   if (host === "jobs.ashbyhq.com") path = path.replace(/\/application$/, "");
-  const params = [...parsed.searchParams].filter(([key]) => {
-    const name = key.toLowerCase();
+  const params = [...parsed.searchParams].filter(([key2]) => {
+    const name = key2.toLowerCase();
     if (name.startsWith("utm_") || TRACKING_PARAMS.has(name)) return false;
     return !(name === "s" && SHORT_LINK_HOSTS.has(host));
   }).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0);
@@ -2606,11 +2726,11 @@ var addedPosting = strictObject({
   location: text3(200),
   addedAt: timestamp
 });
-function noRepeats2(key, message) {
+function noRepeats2(key2, message) {
   return superRefine((entries, ctx) => {
     const seen = /* @__PURE__ */ new Set();
     for (const entry of entries) {
-      const k = key(entry);
+      const k = key2(entry);
       if (seen.has(k)) ctx.addIssue({ code: "custom", message: message(entry), input: entry });
       seen.add(k);
     }
@@ -2748,6 +2868,173 @@ function validateVariantOverrideDocument(docId, input) {
     };
   }
   return validateVariantOverride(input);
+}
+
+// src/contract/settings-diff.ts
+var SENIORITY_WORDS = {
+  intern: "intern",
+  new_grad: "new grad",
+  junior: "junior"
+};
+var BOOKKEEPING = /* @__PURE__ */ new Set(["schemaVersion", "updatedAt"]);
+var DESCRIBED = /* @__PURE__ */ new Set([
+  "searchProfile",
+  "dailyQueueTarget",
+  "companies",
+  "blockedApplySites",
+  "freshnessWeight",
+  "resumeVariants"
+]);
+var SEARCH_PROFILE_FIELDS = /* @__PURE__ */ new Set([
+  "roleTypes",
+  "seniority",
+  "startWindow",
+  "locationTiers"
+]);
+var key = (name) => name.toLowerCase();
+var same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+function roleTypeChanges(before, after) {
+  const old = new Map(before.map((r) => [key(r.name), r]));
+  const now = new Map(after.map((r) => [key(r.name), r]));
+  const lines = [];
+  for (const role of after) {
+    if (!old.has(key(role.name))) lines.push(`added ${role.name} at ${role.priority} priority`);
+  }
+  for (const role of before) {
+    if (!now.has(key(role.name))) lines.push(`removed ${role.name}`);
+  }
+  for (const role of after) {
+    const was = old.get(key(role.name));
+    if (was && was.priority !== role.priority)
+      lines.push(`${role.name} from ${was.priority} to ${role.priority} priority`);
+  }
+  const kept = (list, other) => list.filter((r) => other.has(key(r.name))).map((r) => key(r.name));
+  if (!same(kept(before, now), kept(after, old)))
+    lines.push(`order is now ${after.map((r) => r.name).join(", ")}`);
+  return lines.map((line) => `Role types: ${line}`);
+}
+function startWindowText({ earliest, latest }) {
+  if (earliest && latest) return `${earliest} to ${latest}`;
+  if (earliest) return `from ${earliest}`;
+  if (latest) return `by ${latest}`;
+  return "any time";
+}
+function locationChanges(before, after) {
+  const tierOf = (tiers) => {
+    const map = /* @__PURE__ */ new Map();
+    tiers.forEach((tier, index) => {
+      for (const name of tier.locations) map.set(key(name), { name, tier: index + 1 });
+    });
+    return map;
+  };
+  const old = tierOf(before);
+  const now = tierOf(after);
+  const added = [];
+  const removed = [];
+  const moved = [];
+  for (const [id, { name, tier }] of now) {
+    const was = old.get(id);
+    if (!was) added.push(`added ${name} to Tier ${String(tier)}`);
+    else if (was.tier !== tier)
+      moved.push(`moved ${name} from Tier ${String(was.tier)} to Tier ${String(tier)}`);
+  }
+  for (const [id, { name, tier }] of old) {
+    if (!now.has(id)) removed.push(`removed ${name} from Tier ${String(tier)}`);
+  }
+  return [...added, ...removed, ...moved].map((line) => `Location Tiers: ${line}`);
+}
+function companyChanges(before, after) {
+  const ruleOf = (lists) => {
+    const map = /* @__PURE__ */ new Map();
+    for (const rule of COMPANY_RULES)
+      for (const name of lists[rule]) map.set(key(name), { name, rule });
+    return map;
+  };
+  const old = ruleOf(before);
+  const now = ruleOf(after);
+  const added = [];
+  const changed = [];
+  const removed = [];
+  for (const [id, { name, rule }] of now) {
+    const was = old.get(id);
+    if (!was) added.push(`${rule} ${name}`);
+    else if (was.rule !== rule) changed.push(`${name} from ${was.rule} to ${rule}`);
+  }
+  for (const [id, { name, rule }] of old) {
+    if (!now.has(id)) removed.push(`no rule for ${name} (was ${rule})`);
+  }
+  return [...added, ...changed, ...removed].map((line) => `Companies: ${line}`);
+}
+function siteChanges(before, after) {
+  return [
+    ...after.filter((site) => !before.includes(site)).map((site) => `added ${site}`),
+    ...before.filter((site) => !after.includes(site)).map((site) => `removed ${site}`)
+  ].map((line) => `Blocked apply sites: ${line}`);
+}
+function variantChanges(before, after) {
+  const old = new Map(before.map((v) => [key(v.name), v]));
+  const now = new Map(after.map((v) => [key(v.name), v]));
+  const lines = [];
+  for (const variant of after) if (!old.has(key(variant.name))) lines.push(`added ${variant.name}`);
+  for (const variant of before)
+    if (!now.has(key(variant.name))) lines.push(`removed ${variant.name}`);
+  for (const variant of after) {
+    const was = old.get(key(variant.name));
+    if (was && !same([was.roleTypes, was.keywords], [variant.roleTypes, variant.keywords]))
+      lines.push(`${variant.name} now picked by different rules`);
+  }
+  const kept = (list, other) => list.filter((v) => other.has(key(v.name))).map((v) => key(v.name));
+  if (!same(kept(before, now), kept(after, old)))
+    lines.push(`order is now ${after.map((v) => v.name).join(", ")} (the first is the default)`);
+  return lines.map((line) => `Resume Variants: ${line}`);
+}
+function diffSettings(before, after) {
+  const changes = [];
+  const add = (section, texts2) => {
+    for (const text7 of texts2) changes.push({ section, text: text7 });
+  };
+  const a = before.searchProfile;
+  const b = after.searchProfile;
+  if (before.dailyQueueTarget !== after.dailyQueueTarget)
+    add("queue", [
+      `Daily Queue target: ${String(before.dailyQueueTarget)} \u2192 ${String(after.dailyQueueTarget)}`
+    ]);
+  add("roleTypes", roleTypeChanges(a.roleTypes, b.roleTypes));
+  if (!same(a.seniority, b.seniority)) {
+    const words = (levels) => levels.map((level) => SENIORITY_WORDS[level]).join(", ");
+    add("seniority", [`Seniority: ${words(a.seniority)} \u2192 ${words(b.seniority)}`]);
+  }
+  if (startWindowText(a.startWindow) !== startWindowText(b.startWindow))
+    add("startWindow", [
+      `Start window: ${startWindowText(a.startWindow)} \u2192 ${startWindowText(b.startWindow)}`
+    ]);
+  add("locationTiers", locationChanges(a.locationTiers, b.locationTiers));
+  add("companies", companyChanges(before.companies, after.companies));
+  add("applySites", siteChanges(before.blockedApplySites, after.blockedApplySites));
+  if (before.freshnessWeight !== after.freshnessWeight)
+    add("freshness", [
+      `Freshness weight: ${String(before.freshnessWeight)}% \u2192 ${String(after.freshnessWeight)}%`
+    ]);
+  add("resumeVariants", variantChanges(before.resumeVariants, after.resumeVariants));
+  const record = (s) => s;
+  const profile = (s) => s.searchProfile;
+  const names = (o) => Object.keys(o);
+  const others = /* @__PURE__ */ new Set([...names(record(before)), ...names(record(after))]);
+  for (const field of [...others].sort()) {
+    if (BOOKKEEPING.has(field) || DESCRIBED.has(field)) continue;
+    if (!same(record(before)[field], record(after)[field])) add("other", [`${field} changed`]);
+  }
+  const profileFields = /* @__PURE__ */ new Set([...names(profile(before)), ...names(profile(after))]);
+  for (const field of [...profileFields].sort()) {
+    if (SEARCH_PROFILE_FIELDS.has(field)) continue;
+    if (!same(profile(before)[field], profile(after)[field]))
+      add("other", [`searchProfile.${field} changed`]);
+  }
+  return changes;
+}
+function formatSettingsDiff(changes) {
+  if (changes.length === 0) return "No changes.";
+  return changes.map((change) => `- ${change.text}`).join("\n");
 }
 
 // src/contract/index.ts
@@ -3564,8 +3851,8 @@ function companyKey(name) {
 var FORTUNE_500_KEYS = new Set(FORTUNE_500.map(companyKey));
 var BRAND_KEYS = new Set(Object.keys(FORTUNE_500_BRANDS).map(companyKey));
 function isFortune500(name) {
-  const key = companyKey(name);
-  return FORTUNE_500_KEYS.has(key) || BRAND_KEYS.has(key);
+  const key2 = companyKey(name);
+  return FORTUNE_500_KEYS.has(key2) || BRAND_KEYS.has(key2);
 }
 var FORTUNE_500_BOOST = 0.8;
 var TIER_BOOSTS = {
@@ -3575,7 +3862,17 @@ var TIER_BOOSTS = {
   "3": 0.5,
   "4": 0.3
 };
-function companyBoost(company, companyTier) {
+var NO_COMPANY_RULES = { boost: [], lower: [], block: [] };
+function companyRuleOf(company, rules) {
+  const key2 = companyKey(company);
+  if (key2 === "") return void 0;
+  return COMPANY_RULES.find((rule) => rules[rule].some((name) => companyKey(name) === key2));
+}
+var BOOSTED_BY_YOU = "Boosted by you";
+var LOWERED_BY_YOU = "Lowered by you";
+function companyBoost(company, companyTier, rules = NO_COMPANY_RULES) {
+  const rule = companyRuleOf(company, rules);
+  if (rule === "lower") return { value: -1, reasons: [LOWERED_BY_YOU] };
   const reasons = [];
   let value = 0;
   if (isFortune500(company)) {
@@ -3588,6 +3885,7 @@ function companyBoost(company, companyTier) {
     reasons.push(`Company tier ${tier}`);
     value = Math.max(value, tierBoost);
   }
+  if (rule === "boost") return { value: 1, reasons: [BOOSTED_BY_YOU, ...reasons] };
   return { value, reasons };
 }
 
@@ -3611,8 +3909,8 @@ function hiringSignals(thisWeek) {
   const byCompany = /* @__PURE__ */ new Map();
   for (const posting of thisWeek) {
     if (!posting.boosts.some((boost) => !MINOR_BOOSTS.test(boost))) continue;
-    const key = companyKey(posting.company);
-    byCompany.set(key, [...byCompany.get(key) ?? [], posting]);
+    const key2 = companyKey(posting.company);
+    byCompany.set(key2, [...byCompany.get(key2) ?? [], posting]);
   }
   return [...byCompany.values()].map((postings) => {
     const newest = [...postings].sort(
@@ -3640,9 +3938,9 @@ function queueCompanies(cards) {
   const queued = cards.filter((card2) => card2.stage === "queued").sort((a, b) => a.queuedAt.localeCompare(b.queuedAt));
   for (const { posting } of queued) {
     const name = displayCompany(posting.company);
-    const key = companyKey(name);
-    if (name === UNKNOWN_COMPANY || key === "" || names.has(key)) continue;
-    names.set(key, name);
+    const key2 = companyKey(name);
+    if (name === UNKNOWN_COMPANY || key2 === "" || names.has(key2)) continue;
+    names.set(key2, name);
   }
   return [...names.values()].sort((a, b) => a.localeCompare(b));
 }
@@ -3678,12 +3976,12 @@ function buildDigest(plan2, gathered, builtAt) {
     };
   }
   const extra = Object.keys(gathered).filter(
-    (key) => !GATHERED_SECTIONS.includes(key)
+    (key2) => !GATHERED_SECTIONS.includes(key2)
   );
   if (extra.length > 0) {
     return {
       ok: false,
-      issues: extra.map((key) => `${key}: is not a news section; write only ${SECTION_LIST}`)
+      issues: extra.map((key2) => `${key2}: is not a news section; write only ${SECTION_LIST}`)
     };
   }
   const sections = gathered;
@@ -3859,6 +4157,27 @@ async function readForums(io) {
 
 // src/refresh/run.ts
 import { join, resolve } from "node:path";
+
+// src/engine/apply-sites.ts
+function onBlockedSite(url, sites) {
+  if (sites.length === 0) return false;
+  let host;
+  try {
+    host = new URL(url).hostname.toLowerCase();
+  } catch {
+    return false;
+  }
+  return sites.some((site) => host === site || host.endsWith(`.${site}`));
+}
+function applySiteOf(url) {
+  let host;
+  try {
+    host = new URL(url).hostname.toLowerCase();
+  } catch {
+    return void 0;
+  }
+  return host.split(".").slice(-2).join(".");
+}
 
 // src/engine/freshness.ts
 var DAY_MS3 = 864e5;
@@ -4426,12 +4745,12 @@ var REGIONS = {
 };
 function matcherFor(entry) {
   const written = entry.toLowerCase().replace(/^(the )?(rest of (the )?|greater |anywhere in (the )?)/, "").trim();
-  const key = REGIONS[written] ? written : written.replace(/ (area|metro|region)$/, "");
-  const region = REGIONS[key];
+  const key2 = REGIONS[written] ? written : written.replace(/ (area|metro|region)$/, "");
+  const region = REGIONS[key2];
   if (region) return region;
-  const state = STATE_BY_NAME.get(key) ?? (/^[a-z]{2}$/.test(key) && key.toUpperCase() in US_STATES ? key.toUpperCase() : void 0);
+  const state = STATE_BY_NAME.get(key2) ?? (/^[a-z]{2}$/.test(key2) && key2.toUpperCase() in US_STATES ? key2.toUpperCase() : void 0);
   if (state) return inStates([state]);
-  const country = COUNTRIES[key];
+  const country = COUNTRIES[key2];
   if (country) return (place) => place.country === country;
   const [parsed] = parseLocations(entry);
   if (parsed?.remote) {
@@ -4443,7 +4762,7 @@ function matcherFor(entry) {
     const { region: within, country: inCountry } = parsed;
     return (place) => place.city?.toLowerCase() === city && (within === void 0 || place.region === within) && (inCountry === void 0 || place.country === inCountry);
   }
-  return (place) => place.city?.toLowerCase() === key || place.label.toLowerCase() === key;
+  return (place) => place.city?.toLowerCase() === key2 || place.label.toLowerCase() === key2;
 }
 var matcherCache = /* @__PURE__ */ new Map();
 function cachedMatcher(entry) {
@@ -4756,10 +5075,11 @@ function pickResumeVariant(posting, variants) {
 var MAX_JUDGMENT_REASON = 280;
 var MAX_VARIANT_REVIEW = 25;
 var FIT = { high: 1, medium: 0.6, low: 0.25 };
-var WEIGHTS = { fit: 0.5, boost: 0.3, freshness: 0.2 };
-function score2(priority, boost, postedOn, now) {
-  const value = WEIGHTS.fit * FIT[priority] + WEIGHTS.boost * boost + WEIGHTS.freshness * freshness(postedOn, now);
-  return Math.round(100 * value);
+function score2(priority, boost, postedOn, now, settings2) {
+  const freshnessWeight = settings2.freshnessWeight / 100;
+  const rest = 1 - freshnessWeight;
+  const value = rest * 5 / 8 * FIT[priority] + rest * 3 / 8 * boost + freshnessWeight * freshness(postedOn, now);
+  return Math.min(100, Math.max(0, Math.round(100 * value)));
 }
 function evaluate(listing, result, generatedAt, settings2, places) {
   const { searchProfile: searchProfile2 } = settings2;
@@ -4827,7 +5147,14 @@ function reportOf(source) {
   return source.ok ? { ...report, ok: true, postings: source.postings.length } : { ...report, ok: false, postings: 0, error: source.error };
 }
 function match(input, resolvedLinks) {
-  const filteredOut = { location: 0, seniority: 0, startWindow: 0, roleType: 0 };
+  const filteredOut = {
+    location: 0,
+    seniority: 0,
+    startWindow: 0,
+    roleType: 0,
+    company: 0,
+    applySite: 0
+  };
   const addedLeftOut = [];
   const candidates = [];
   const placesByText = /* @__PURE__ */ new Map();
@@ -4904,19 +5231,19 @@ function groupDuplicates(candidates) {
     return root;
   };
   const owner = /* @__PURE__ */ new Map();
-  const join3 = (key, i) => {
-    const other = owner.get(key);
-    if (other === void 0) owner.set(key, i);
+  const join4 = (key2, i) => {
+    const other = owner.get(key2);
+    if (other === void 0) owner.set(key2, i);
     else parent[find(i)] = find(other);
   };
   candidates.forEach((candidate, i) => {
-    join3(`url:${candidate.canonicalUrl}`, i);
+    join4(`url:${candidate.canonicalUrl}`, i);
     const textKey = [
       companyKey(candidate.listing.company),
       titleKey(candidate.listing.title),
       [...new Set(candidate.places.map(placeKey))].sort().join(";")
     ].join("|");
-    join3(`text:${textKey}`, i);
+    join4(`text:${textKey}`, i);
   });
   const groups = /* @__PURE__ */ new Map();
   candidates.forEach((candidate, i) => {
@@ -4968,12 +5295,21 @@ function withResumeVariant(base, evidence, settings2, judgments) {
   const { pick: pick2, confident } = pickResumeVariant(evidence, settings2.resumeVariants);
   return { posting: { ...base, resumeVariant: pick2 }, unsure: !confident };
 }
-function merge2(group, tiers, now) {
+function screen(group, settings2) {
+  if (group.some((c) => companyRuleOf(c.listing.company, settings2.companies) === "block"))
+    return { reason: "company" };
+  const open = group.filter((c) => !onBlockedSite(c.canonicalUrl, settings2.blockedApplySites));
+  return open.length === 0 ? { reason: "applySite" } : { group: open };
+}
+function merge2(group, settings2, now) {
+  const tiers = settings2.searchProfile.locationTiers;
   const [representative] = [...group].sort(
     (a, b) => Number(a.unresolved) - Number(b.unresolved) || a.order - b.order
   );
   if (!representative) throw new Error("A duplicate group cannot be empty.");
-  const boosts = group.map((c) => companyBoost(c.listing.company, c.listing.companyTier));
+  const boosts = group.map(
+    (c) => companyBoost(c.listing.company, c.listing.companyTier, settings2.companies)
+  );
   const boost = boosts.reduce((best2, next) => next.value > best2.value ? next : best2);
   const postedOn = group.map((c) => c.postedOn).sort()[0] ?? representative.postedOn;
   const best = [...group].sort((a, b) => a.locationTier - b.locationTier)[0] ?? representative;
@@ -4992,7 +5328,7 @@ function merge2(group, tiers, now) {
     level: representative.level,
     postedOn,
     sources: mergeSources(group.map((c) => c.source)),
-    score: score2(representative.priority, boost.value, postedOn, now),
+    score: score2(representative.priority, boost.value, postedOn, now, settings2),
     boosts: boost.reasons
   };
   const short = excerpt2(description);
@@ -5015,24 +5351,25 @@ function carryOver(current, failed, settings2, now) {
     const locationTier2 = locationTierOf(posting.locations.flatMap(parseLocations), locationTiers);
     const roleType2 = matchRoleType(posting.title, "", roleTypes);
     if (locationTier2 === void 0 || !roleType2 || !seniority.includes(posting.level)) return [];
+    if (companyRuleOf(posting.company, settings2.companies) === "block") return [];
+    if (onBlockedSite(posting.applyUrl, settings2.blockedApplySites)) return [];
+    const tier = posting.boosts.map((reason) => /^Company tier (.+)$/.exec(reason)?.[1]).find(Boolean);
+    const boost = companyBoost(
+      posting.company,
+      tier === void 0 ? "" : `Tier ${tier}`,
+      settings2.companies
+    );
     const kept = {
       ...posting,
       locationTier: locationTier2,
       roleType: roleType2.name,
-      score: score2(roleType2.priority, companyBoostFromReasons(posting), posting.postedOn, now)
+      score: score2(roleType2.priority, boost.value, posting.postedOn, now, settings2),
+      boosts: boost.reasons
     };
     const evidence = { title: kept.title, roleType: kept.roleType };
     if (kept.description !== void 0) evidence.description = kept.description;
     return [{ posting: kept, evidence }];
   });
-}
-function companyBoostFromReasons(posting) {
-  const tier = posting.boosts.map((reason) => /^Company tier (.+)$/.exec(reason)?.[1]).find(Boolean);
-  const fromTier = tier === void 0 ? 0 : companyBoost("", `Tier ${tier}`).value;
-  return Math.max(
-    posting.boosts.includes("Fortune 500") ? companyBoost("Walmart", "").value : 0,
-    fromTier
-  );
 }
 function compareRank(a, b) {
   return a.locationTier - b.locationTier || b.score - a.score || compareText(b.postedOn, a.postedOn) || compareText(companyKey(a.company), companyKey(b.company)) || compareText(a.title, b.title) || compareText(a.id, b.id);
@@ -5042,9 +5379,20 @@ function runRefresh(input) {
   const matching = match(input, input.resolvedLinks ?? {});
   const judgments = input.variantJudgments ?? {};
   const pick2 = ({ posting, evidence }) => withResumeVariant(posting, evidence, settings2, judgments);
-  const fresh = groupDuplicates(matching.candidates).map(
-    (group) => pick2(merge2(group, settings2.searchProfile.locationTiers, now))
-  );
+  const fresh = [];
+  for (const group of groupDuplicates(matching.candidates)) {
+    const screened = screen(group, settings2);
+    if (!("reason" in screened)) {
+      fresh.push(pick2(merge2(screened.group, settings2, now)));
+      continue;
+    }
+    matching.filteredOut[screened.reason] += 1;
+    for (const { listing, source } of group) {
+      if (source.name !== ADDED_BY_URL_SOURCE) continue;
+      const { applyUrl: url, company, title } = listing;
+      matching.addedLeftOut.push({ url, company, title, reason: screened.reason });
+    }
+  }
   const freshIds = new Set(fresh.map((p) => p.posting.id));
   const freshUrls = new Set(fresh.map((p) => p.posting.applyUrl));
   const carriedPicks = carryOver(current, matching.failed, settings2, now).filter(({ posting: p }) => !freshIds.has(p.id) && !freshUrls.has(p.applyUrl)).map(pick2);
@@ -5254,18 +5602,18 @@ async function readJobBoard(fetch2, company, now) {
   }));
   return { ...scope, ok: true, listsEveryLevel: true, fetchedAt: now, postings };
 }
-async function readWatchlist(fetch2, companies, now) {
-  const results = new Array(companies.length);
+async function readWatchlist(fetch2, companies2, now) {
+  const results = new Array(companies2.length);
   let next = 0;
   const worker = async () => {
-    while (next < companies.length) {
+    while (next < companies2.length) {
       const index = next++;
-      const company = companies[index];
+      const company = companies2[index];
       if (company === void 0) break;
       results[index] = await readJobBoard(fetch2, company, now);
     }
   };
-  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, companies.length) }, worker));
+  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, companies2.length) }, worker));
   return results;
 }
 
@@ -5538,7 +5886,9 @@ var LEFT_OUT_REASONS = {
   location: "outside your Location Tiers",
   seniority: "asks for more experience",
   startWindow: "outside your start window",
-  roleType: "not one of your role types"
+  roleType: "not one of your role types",
+  company: "at a company you blocked",
+  applySite: "only on an apply site you blocked"
 };
 function formatSources(summary) {
   const lines = [];
@@ -5599,10 +5949,14 @@ function formatSummary(summary, paths, batches, sourceIssues = []) {
       `Kept ${number2(summary.carriedOver)} Postings from the last Refresh because their Source failed.`
     );
   }
-  const { location, seniority, startWindow: startWindow2, roleType: roleType2 } = summary.filteredOut;
+  const { location, seniority, startWindow: startWindow2, roleType: roleType2, company, applySite: applySite2 } = summary.filteredOut;
   if (summary.sources.some((source) => source.ok)) {
+    const blocked = [
+      company > 0 ? `, ${number2(company)} at companies you blocked` : "",
+      applySite2 > 0 ? `, ${number2(applySite2)} only on apply sites you blocked` : ""
+    ].join("");
     lines.push(
-      `Left out: ${number2(location)} outside your Location Tiers, ${number2(seniority)} at another seniority, ${number2(startWindow2)} outside your start window, ${number2(roleType2)} in other roles.`
+      `Left out: ${number2(location)} outside your Location Tiers, ${number2(seniority)} at another seniority, ${number2(startWindow2)} outside your start window, ${number2(roleType2)} in other roles${blocked}.`
     );
   }
   if (summary.addedLeftOut.length > 0) {
@@ -5998,15 +6352,15 @@ var manifest = strictObject({
     superRefine((variants, ctx) => {
       const seen = /* @__PURE__ */ new Set();
       for (const { name } of variants) {
-        const key = name.toLowerCase();
-        if (seen.has(key)) {
+        const key2 = name.toLowerCase();
+        if (seen.has(key2)) {
           ctx.addIssue({
             code: "custom",
             message: `${name} is listed more than once`,
             input: name
           });
         }
-        seen.add(key);
+        seen.add(key2);
       }
     })
   )
@@ -6077,12 +6431,342 @@ function messageOf(error2) {
   return error2 instanceof Error ? error2.message : String(error2);
 }
 
+// src/tune/run.ts
+import { join as join3 } from "node:path";
+
+// src/engine/skip-patterns.ts
+var COMPANY_THRESHOLD = 2;
+var THRESHOLD = 3;
+var LIST_LIMIT = 50;
+var LOWER = {
+  high: "medium",
+  medium: "low",
+  low: void 0
+};
+var LEVEL_WORDS = {
+  intern: "intern",
+  new_grad: "new grad",
+  junior: "junior"
+};
+var times = (n) => `${String(n)} ${n === 1 ? "time" : "times"}`;
+var Tally = class {
+  entries = /* @__PURE__ */ new Map();
+  add(key2, value) {
+    const entry = this.entries.get(key2);
+    if (entry) entry.count += 1;
+    else this.entries.set(key2, { value, count: 1 });
+  }
+  sorted() {
+    return [...this.entries.values()].sort((a, b) => b.count - a.count);
+  }
+};
+function skipPatterns(allSkips, settings2, options = {}) {
+  const since = options.since;
+  const skips = allSkips.filter((s) => since === void 0 || s.skippedAt >= since);
+  const byReason = Object.fromEntries(SKIP_REASONS.map((r) => [r, 0]));
+  const companies2 = /* @__PURE__ */ new Map();
+  const roleTypes = new Tally();
+  const locations = new Tally();
+  const levels = new Tally();
+  const sites = new Tally();
+  for (const { reason, posting } of skips) {
+    byReason[reason] += 1;
+    const key2 = companyKey(posting.company) || posting.company;
+    const company = companies2.get(key2) ?? { company: posting.company, skips: 0, reasons: {} };
+    company.skips += 1;
+    company.reasons[reason] = (company.reasons[reason] ?? 0) + 1;
+    companies2.set(key2, company);
+    if (reason === "wrong_role") roleTypes.add(posting.roleType.toLowerCase(), posting.roleType);
+    const [location = "Unknown"] = posting.locations;
+    if (reason === "wrong_location")
+      locations.add(`${String(posting.locationTier)}|${location.toLowerCase()}`, {
+        location,
+        locationTier: posting.locationTier
+      });
+    if (reason === "too_senior") levels.add(posting.level, posting.level);
+    const site = applySiteOf(posting.applyUrl);
+    if (site !== void 0) sites.add(site, site);
+  }
+  const priorityOf = (name) => settings2.searchProfile.roleTypes.find((r) => r.name.toLowerCase() === name.toLowerCase())?.priority;
+  const report = {
+    total: skips.length,
+    byReason,
+    companies: [...companies2.values()].sort((a, b) => b.skips - a.skips).slice(0, LIST_LIMIT),
+    roleTypes: roleTypes.sorted().slice(0, LIST_LIMIT).map(({ value, count: count3 }) => {
+      const priority = priorityOf(value);
+      return priority === void 0 ? { roleType: value, skips: count3 } : { roleType: value, skips: count3, priority };
+    }),
+    locations: locations.sorted().slice(0, LIST_LIMIT).map(({ value, count: count3 }) => ({ ...value, skips: count3 })),
+    levels: levels.sorted().map(({ value, count: count3 }) => ({ level: value, skips: count3 })),
+    applySites: sites.sorted().slice(0, LIST_LIMIT).map(({ value, count: count3 }) => ({ site: value, skips: count3 })),
+    suggestions: []
+  };
+  report.suggestions = suggest(report, settings2);
+  return report;
+}
+function suggest(report, settings2) {
+  const suggestions = [];
+  for (const { company, reasons } of report.companies) {
+    const evidence = reasons.wrong_company ?? 0;
+    if (evidence < COMPANY_THRESHOLD || companyRuleOf(company, settings2.companies) === "block")
+      continue;
+    suggestions.push({
+      kind: "block_company",
+      target: company,
+      evidence,
+      text: `Block ${company}: skipped ${times(evidence)} as the wrong company.`
+    });
+  }
+  for (const { roleType: roleType2, skips, priority } of report.roleTypes) {
+    if (skips < THRESHOLD || priority === void 0) continue;
+    const lower = LOWER[priority];
+    suggestions.push(
+      lower === void 0 ? {
+        kind: "remove_role_type",
+        target: roleType2,
+        evidence: skips,
+        text: `Remove the role type ${roleType2} (low priority): skipped ${times(skips)} as the wrong role.`
+      } : {
+        kind: "lower_role_type",
+        target: roleType2,
+        evidence: skips,
+        text: `Lower ${roleType2} from ${priority} to ${lower} priority: skipped ${times(skips)} as the wrong role.`
+      }
+    );
+  }
+  for (const { location, locationTier: locationTier2, skips } of report.locations) {
+    if (skips < THRESHOLD) continue;
+    suggestions.push({
+      kind: "reconsider_location",
+      target: location,
+      evidence: skips,
+      text: `Move or remove the Tier ${String(locationTier2)} entry that matches ${location}: skipped ${times(skips)} as the wrong location.`
+    });
+  }
+  const { seniority } = settings2.searchProfile;
+  for (const { level, skips } of report.levels) {
+    if (skips < THRESHOLD || !seniority.includes(level) || seniority.length === 1) continue;
+    suggestions.push({
+      kind: "drop_seniority",
+      target: level,
+      evidence: skips,
+      text: `Drop ${LEVEL_WORDS[level]} from your seniority: ${String(skips)} ${LEVEL_WORDS[level]} Postings skipped as too senior.`
+    });
+  }
+  return suggestions.sort((a, b) => b.evidence - a.evidence);
+}
+
+// src/tune/run.ts
+var SKIP_WINDOW_DAYS = 90;
+var DAY_MS4 = 864e5;
+var COMPANY_LIMIT = 300;
+var REASON_WORDS = {
+  wrong_role: "wrong role",
+  wrong_location: "wrong location",
+  wrong_company: "wrong company",
+  too_senior: "too senior",
+  other: "other"
+};
+var RULE_WORDS = { boost: "boosted", lower: "lowered", block: "blocked" };
+var TuneError = class extends Error {
+};
+async function readJsonFile(io, path) {
+  let text7;
+  try {
+    text7 = path === "-" ? await io.readStdin() : await io.readFile(path);
+  } catch {
+    throw new TuneError(`Could not read ${path}.`);
+  }
+  try {
+    return JSON.parse(text7);
+  } catch {
+    throw new TuneError(`${path} is not valid JSON.`);
+  }
+}
+async function readSettingsFile(io, path, what) {
+  const result = validateSettings(await readJsonFile(io, path));
+  if (!result.ok) {
+    throw new TuneError(
+      `${what} does not match the dashboard contract:
+` + result.issues.map((issue2) => `- ${issue2}`).join("\n")
+    );
+  }
+  return result.value;
+}
+async function jsonFiles(io, folder) {
+  return (await io.readDir(folder)).filter((name) => name.endsWith(".json")).sort();
+}
+async function readSkips(io, dir) {
+  const folder = join3(dir, "state", SKIPS_COLLECTION);
+  const skips = [];
+  for (const file of await jsonFiles(io, folder)) {
+    const docId = file.slice(0, -".json".length);
+    let body;
+    try {
+      body = JSON.parse(await io.readFile(join3(folder, file)));
+    } catch {
+      continue;
+    }
+    const result = validateSkipDocument(docId, body);
+    if (result.ok) skips.push(result.value);
+  }
+  return skips;
+}
+async function readJobList2(io, dir) {
+  const folder = join3(dir, "state", POSTINGS_COLLECTION);
+  let meta3;
+  const pages = [];
+  for (const file of await jsonFiles(io, folder)) {
+    const docId = file.slice(0, -".json".length);
+    let body;
+    try {
+      body = JSON.parse(await io.readFile(join3(folder, file)));
+    } catch {
+      continue;
+    }
+    const result = validatePostingsDocument(docId, body);
+    if (!result.ok) continue;
+    if (docId === "meta") meta3 = result.value;
+    else pages.push(result.value);
+  }
+  return pages.filter((page2) => !meta3 || page2.refreshedAt === meta3.refreshedAt).sort((a, b) => a.page - b.page).flatMap((page2) => page2.postings);
+}
+var number4 = (n) => n.toLocaleString("en-US");
+var plural = (n, one, many = `${one}s`) => `${number4(n)} ${n === 1 ? one : many}`;
+function settingsLine(settings2) {
+  const { companies: companies2 } = settings2;
+  return [
+    `Settings now: daily Queue target ${String(settings2.dailyQueueTarget)}`,
+    `freshness weight ${String(settings2.freshnessWeight)}%`,
+    plural(settings2.searchProfile.roleTypes.length, "role type"),
+    plural(settings2.searchProfile.locationTiers.length, "Location Tier"),
+    `${number4(companies2.boost.length)} boosted, ${number4(companies2.lower.length)} lowered and ${number4(companies2.block.length)} blocked companies`,
+    `${plural(settings2.blockedApplySites.length, "blocked apply site")}.`
+  ].join("; ");
+}
+function formatTuneReport(settings2, skips, jobList, now) {
+  const since = new Date(Date.parse(now) - SKIP_WINDOW_DAYS * DAY_MS4).toISOString();
+  const patterns = skipPatterns(skips, settings2, { since });
+  const lines = [settingsLine(settings2), ""];
+  const reasons = SKIP_REASONS.filter((r) => patterns.byReason[r] > 0).map((r) => `${REASON_WORDS[r]} ${number4(patterns.byReason[r])}`).join(", ");
+  lines.push(
+    patterns.total === 0 ? `Skips: none in the last ${String(SKIP_WINDOW_DAYS)} days.` : `Skips: ${plural(patterns.total, "skip")} in the last ${String(SKIP_WINDOW_DAYS)} days (${reasons}).`
+  );
+  if (patterns.total > 0) {
+    lines.push("", "Suggestions from skip reasons:");
+    if (patterns.suggestions.length === 0) lines.push("- none yet");
+    for (const suggestion of patterns.suggestions) lines.push(`- ${suggestion.text}`);
+    lines.push("", "Skipped companies, most skipped first:");
+    for (const { company, skips: n, reasons: by } of patterns.companies) {
+      const why = SKIP_REASONS.filter((r) => (by[r] ?? 0) > 0).map((r) => `${REASON_WORDS[r]} ${number4(by[r] ?? 0)}`).join(", ");
+      const rule = companyRuleOf(company, settings2.companies);
+      lines.push(`- ${company}: ${number4(n)} (${why})${rule ? `; ${RULE_WORDS[rule]}` : ""}`);
+    }
+    const section = (title, entries) => {
+      if (entries.length === 0) return;
+      lines.push("", title);
+      for (const entry of entries) lines.push(`- ${entry}`);
+    };
+    section(
+      "Role types skipped as the wrong role:",
+      patterns.roleTypes.map(
+        (r) => `${r.roleType}: ${number4(r.skips)}${r.priority ? ` (${r.priority} priority)` : " (no longer in the Search Profile)"}`
+      )
+    );
+    section(
+      "Locations skipped as the wrong location:",
+      patterns.locations.map(
+        (l) => `${l.location} (Tier ${String(l.locationTier)}): ${number4(l.skips)}`
+      )
+    );
+    section(
+      "Seniorities skipped as too senior:",
+      patterns.levels.map((l) => `${l.level}: ${number4(l.skips)}`)
+    );
+    section(
+      "Apply sites of skipped Postings:",
+      patterns.applySites.map((s) => `${s.site}: ${number4(s.skips)}`)
+    );
+  }
+  lines.push("");
+  if (jobList.length === 0) {
+    lines.push("Job List: empty, so there are no companies to name yet.");
+  } else {
+    const companies2 = /* @__PURE__ */ new Map();
+    const sites = /* @__PURE__ */ new Map();
+    for (const posting of jobList) {
+      const key2 = companyKey(posting.company) || posting.company;
+      const entry = companies2.get(key2) ?? { name: posting.company, count: 0 };
+      entry.count += 1;
+      companies2.set(key2, entry);
+      const site = applySiteOf(posting.applyUrl);
+      if (site !== void 0) sites.set(site, (sites.get(site) ?? 0) + 1);
+    }
+    const ranked = [...companies2.values()].sort(
+      (a, b) => b.count - a.count || a.name.localeCompare(b.name)
+    );
+    lines.push(
+      `Job List companies (${plural(jobList.length, "Posting")} at ${plural(ranked.length, "company", "companies")}, most Postings first${ranked.length > COMPANY_LIMIT ? `, first ${String(COMPANY_LIMIT)}` : ""}):`
+    );
+    lines.push(
+      ranked.slice(0, COMPANY_LIMIT).map(({ name, count: count3 }) => {
+        const rule = companyRuleOf(name, settings2.companies);
+        return `${name} ${number4(count3)}${rule ? ` (${RULE_WORDS[rule]})` : ""}`;
+      }).join("; ")
+    );
+    lines.push(
+      "",
+      "Job List apply sites:",
+      [...sites].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([site, n]) => `${site} ${number4(n)}`).join("; ")
+    );
+  }
+  return `${lines.join("\n")}
+`;
+}
+async function runTuneReport(dir, io) {
+  try {
+    const settings2 = await readSettingsFile(
+      io,
+      join3(dir, "state", "settings", "main.json"),
+      "The saved settings document"
+    );
+    const [skips, jobList] = await Promise.all([readSkips(io, dir), readJobList2(io, dir)]);
+    io.stdout(formatTuneReport(settings2, skips, jobList, io.now()));
+    return 0;
+  } catch (error2) {
+    if (!(error2 instanceof TuneError)) throw error2;
+    io.stderr(`${error2.message}
+`);
+    return 1;
+  }
+}
+async function runSettingsDiff(currentPath, proposedPath, io) {
+  try {
+    const current = await readSettingsFile(io, currentPath, "The current settings document");
+    const proposed = await readSettingsFile(io, proposedPath, "The proposed settings document");
+    const changes = diffSettings(current, proposed);
+    io.stdout(
+      changes.length === 0 ? "No changes: the proposed settings match the current ones.\n" : `${plural(changes.length, "change")} to your settings:
+${formatSettingsDiff(changes)}
+`
+    );
+    return 0;
+  } catch (error2) {
+    if (!(error2 instanceof TuneError)) throw error2;
+    io.stderr(`${error2.message}
+`);
+    return 1;
+  }
+}
+
 // src/cli/jaa.ts
 var USAGE = `Usage: jaa validate <collection> <doc-id> <file|->
        jaa refresh <dir> [--feed <url|file> | --rerun]
        jaa news plan <dir>
        jaa news build <dir>
        jaa check-resumes <manifest> [--settings <file|->]
+       jaa tune-report <dir>
+       jaa settings-diff <current-file> <proposed-file|->
 
 validate       Checks one dashboard document (JSON, from a file or from stdin with -)
                against the dashboard contract. Exits 0 when it matches, 1 when it does not.
@@ -6097,6 +6781,11 @@ news           After refresh, in the same <dir>: plan computes the hiring signal
 check-resumes  Checks that every Resume Variant file the manifest lists is in the Candidate
                folder, and with --settings that the settings document names the same
                Resume Variants in the same order.
+tune-report    Prints the settings, patterns in skip reasons with the changes they suggest,
+               and the Job List's companies and apply sites, from the state saved in
+               <dir>/state.
+settings-diff  Checks a proposed settings document against the dashboard contract and
+               prints every change from the current one. Writes nothing.
 `;
 async function runCli(argv, io) {
   if (argv[0] === "--help" || argv[0] === "-h") {
@@ -6131,6 +6820,22 @@ async function runCli(argv, io) {
       return 2;
     }
     return runNewsCommand(step, dir, io);
+  }
+  if (argv[0] === "tune-report") {
+    const [, dir, ...rest2] = argv;
+    if (!dir || dir.startsWith("--") || rest2.length > 0) {
+      io.stderr(USAGE);
+      return 2;
+    }
+    return runTuneReport(dir, io);
+  }
+  if (argv[0] === "settings-diff") {
+    const [, current, proposed, ...rest2] = argv;
+    if (!current || !proposed || current === "-" || rest2.length > 0) {
+      io.stderr(USAGE);
+      return 2;
+    }
+    return runSettingsDiff(current, proposed, io);
   }
   const [command, collection, docId, file, ...rest] = argv;
   if (command !== "validate" || !collection || !docId || !file || rest.length > 0) {
