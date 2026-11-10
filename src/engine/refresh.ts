@@ -186,7 +186,7 @@ type Evaluation =
 
 function evaluate(
   listing: SourcePosting,
-  result: { name: string; list?: string },
+  result: { name: string; list?: string; listsEveryLevel?: boolean },
   generatedAt: string,
   settings: Settings,
   places: Place[],
@@ -194,7 +194,9 @@ function evaluate(
   const { searchProfile } = settings;
   const locationTier = locationTierOf(places, searchProfile.locationTiers);
   if (locationTier === undefined) return { reason: "location" };
-  const level = levelOf(listing.title, listing.jobType);
+  const level = levelOf(listing.title, listing.jobType, {
+    stated: result.listsEveryLevel === true,
+  });
   if (level === undefined || !searchProfile.seniority.includes(level))
     return { reason: "seniority" };
   if (!withinStartWindow(listing.title, searchProfile.startWindow))

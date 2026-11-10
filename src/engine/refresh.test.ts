@@ -830,11 +830,16 @@ describe("Sources", () => {
     };
   }
 
-  function board(company: WatchedCompany, postings: SourcePosting[]): SourceResult {
+  function board(
+    company: WatchedCompany,
+    postings: SourcePosting[],
+    { listsEveryLevel = false } = {},
+  ): SourceResult {
     return {
       name: "Watchlist",
       list: company.name,
       ok: true,
+      listsEveryLevel,
       fetchedAt: NOW,
       postings: postings.map((p) => ({ ...p, company: company.name, list: company.name })),
     };
@@ -879,6 +884,31 @@ describe("Sources", () => {
     });
     expect(watchlistOff.jobList.map((p) => p.company)).toEqual(["From the feed"]);
     expect(watchlistOff.meta.sources.map((s) => s.name)).toEqual(["Job Feed"]);
+  });
+
+  it("keeps only watchlist jobs whose title or job type says they are entry level", () => {
+    const stripeBoard = board(
+      stripe,
+      [
+        listed({ title: "Software Engineer, Payments", jobType: "" }),
+        listed({ title: "Software Engineer, New Grad", jobType: "" }),
+        listed({ title: "Software Engineer, Data Connectors", jobType: "Internship" }),
+      ],
+      { listsEveryLevel: true },
+    );
+    const { jobList, summary } = runRefresh({
+      now: NOW,
+      queue: EMPTY_QUEUE,
+      settings,
+      current: empty,
+      sources: [stripeBoard],
+      sourceSettings: sourceSettings(),
+    });
+    expect(jobList.map((p) => [p.title, p.level]).sort()).toEqual([
+      ["Software Engineer, Data Connectors", "intern"],
+      ["Software Engineer, New Grad", "new_grad"],
+    ]);
+    expect(summary.filteredOut.seniority).toBe(1);
   });
 
   it("ignores job boards of companies no longer on the watchlist", () => {

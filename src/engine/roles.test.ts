@@ -20,6 +20,16 @@ describe("levelOf", () => {
     expect(levelOf(title, jobType)).toBe(level);
   });
 
+  it("asks for a stated level when the Source lists jobs at every level", () => {
+    const stated = { stated: true };
+    expect(levelOf("Software Engineer, Agent Platform", "", stated)).toBeUndefined();
+    expect(levelOf("Backend Engineer", "full-time", stated)).toBeUndefined();
+    expect(levelOf("Software Engineer, New Grad", "", stated)).toBe("new_grad");
+    expect(levelOf("Software Engineer I", "", stated)).toBe("junior");
+    expect(levelOf("Software Engineer, Data Connectors", "Internship", stated)).toBe("intern");
+    expect(levelOf("Research Engineer", "Intern", stated)).toBe("intern");
+  });
+
   it("trusts the title over a Source that mislabels a new-grad role as an internship", () => {
     expect(levelOf("Engineer 2 New Grad - Multiple Teams", "internship")).toBe("new_grad");
     expect(levelOf("Software Engineer Intern", "full-time")).toBe("intern");

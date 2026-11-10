@@ -124,6 +124,7 @@ describe("readJobBoard", () => {
       name: "Watchlist",
       list: "Stripe",
       ok: true,
+      listsEveryLevel: true,
       fetchedAt: NOW,
       postings: [
         {

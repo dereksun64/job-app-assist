@@ -8,7 +8,7 @@ var __export = (target, all) => {
 
 // src/cli/main.ts
 import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
-import { text as text3 } from "node:stream/consumers";
+import { text as text5 } from "node:stream/consumers";
 
 // node_modules/zod/v4/core/util.js
 function getEnumValues(entries) {
@@ -2118,6 +2118,8 @@ var page = strictObject({
 });
 var sourceReport = strictObject({
   name: text(80),
+  /** The part of the Source this report covers, for example one watchlist company. */
+  list: optional(text(200)),
   ok: boolean2(),
   /** How many Postings the Source listed, before the Search Profile filtered them. */
   postings: int().check(_gte(0)),
@@ -2132,7 +2134,8 @@ var meta2 = strictObject({
   total: int().check(_gte(0), _lte(MAX_JOB_LIST)),
   /** Postings that matched the Search Profile, before the Job List kept the best `total`. */
   matched: int().check(_gte(0)),
-  sources: array(sourceReport).check(_maxLength(50))
+  /** One report per Source read; the watchlist reports each company on its own. */
+  sources: array(sourceReport).check(_maxLength(250))
 }).check(
   superRefine((value, ctx) => {
     if (value.total > value.matched) {
@@ -2268,6 +2271,217 @@ function validateSkipDocument(docId, input) {
   return result;
 }
 
+// src/contract/apply-urls.ts
+var SHORT_LINK_HOSTS = /* @__PURE__ */ new Set(["go.vansh.nyc"]);
+var TRACKING_PARAMS = /* @__PURE__ */ new Set([
+  "ref",
+  "refs",
+  "referrer",
+  "source",
+  "src",
+  "gh_src",
+  "lever-source",
+  "lever-origin",
+  "iis",
+  "iisn",
+  "trk",
+  "campaign",
+  "medium",
+  "embed"
+]);
+var HOST_ALIASES = {
+  "boards.greenhouse.io": "job-boards.greenhouse.io"
+};
+function parse2(url) {
+  try {
+    const parsed = new URL(url.trim());
+    return parsed.protocol === "http:" || parsed.protocol === "https:" ? parsed : void 0;
+  } catch {
+    return void 0;
+  }
+}
+function isShortLink(url) {
+  const parsed = parse2(url);
+  return parsed !== void 0 && SHORT_LINK_HOSTS.has(parsed.hostname.toLowerCase());
+}
+function canonicalApplyUrl(url) {
+  const parsed = parse2(url);
+  if (!parsed) return url.trim();
+  let host = parsed.hostname.toLowerCase().replace(/^www\./, "");
+  host = HOST_ALIASES[host] ?? host;
+  let path = parsed.pathname.replace(/\/+$/, "");
+  if (host === "jobs.lever.co") path = path.replace(/\/apply$/, "");
+  if (host === "jobs.ashbyhq.com") path = path.replace(/\/application$/, "");
+  const params = [...parsed.searchParams].filter(([key]) => {
+    const name = key.toLowerCase();
+    if (name.startsWith("utm_") || TRACKING_PARAMS.has(name)) return false;
+    return !(name === "s" && SHORT_LINK_HOSTS.has(host));
+  }).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0);
+  const query = params.length === 0 ? "" : `?${new URLSearchParams(params).toString()}`;
+  const port = parsed.port === "" ? "" : `:${parsed.port}`;
+  return `https://${host}${port}${path}${query}`;
+}
+
+// src/contract/sources.ts
+var SOURCES_COLLECTION = "sources";
+var JOB_FEED_SOURCE_ID = "job-feed";
+var WATCHLIST_SOURCE_ID = "watchlist";
+var ADDED_BY_URL_SOURCE_ID = "added-by-url";
+var WATCHLIST_SOURCE = "Watchlist";
+var ADDED_BY_URL_SOURCE = "Added by URL";
+var JOB_BOARDS = ["greenhouse", "lever", "ashby"];
+var JOB_BOARD_NAMES = {
+  greenhouse: "Greenhouse",
+  lever: "Lever",
+  ashby: "Ashby"
+};
+var MAX_WATCHLIST = 200;
+var MAX_ADDED_POSTINGS = 200;
+var text2 = (max) => string2().check(
+  _trim(),
+  _minLength(1, "must not be blank"),
+  _maxLength(max, `must be ${String(max)} characters or fewer`)
+);
+var webAddress2 = string2().check(
+  _trim(),
+  _maxLength(2e3, "must be 2000 characters or fewer"),
+  _regex(/^https?:\/\/[^\s/]+\.[^\s]*$/, "must be an http or https web address")
+);
+var timestamp = iso_exports.datetime({ error: "must be an ISO 8601 timestamp" });
+var SLUG = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
+var watchedCompany = strictObject({
+  /** The company's name as the Candidate wants it shown. */
+  name: text2(200),
+  board: _enum(JOB_BOARDS),
+  /** The company's name in its job board link, for example `stripe`. */
+  slug: string2().check(_regex(SLUG, "must be the company's name in its job board link, for example stripe"))
+});
+var addedPosting = strictObject({
+  /** The URL the Candidate pasted; Refresh uses it as the apply URL. */
+  url: webAddress2,
+  company: text2(200),
+  title: text2(300),
+  /** Where the job is, as the Candidate typed it, for example "New York, NY" or "Remote". */
+  location: text2(200),
+  addedAt: timestamp
+});
+function noRepeats2(key, message) {
+  return superRefine((entries, ctx) => {
+    const seen = /* @__PURE__ */ new Set();
+    for (const entry of entries) {
+      const k = key(entry);
+      if (seen.has(k)) ctx.addIssue({ code: "custom", message: message(entry), input: entry });
+      seen.add(k);
+    }
+  });
+}
+var jobFeedSource = strictObject({
+  schemaVersion: literal(1),
+  enabled: boolean2(),
+  updatedAt: timestamp
+});
+var watchlistSource = strictObject({
+  schemaVersion: literal(1),
+  enabled: boolean2(),
+  companies: array(watchedCompany).check(
+    _maxLength(MAX_WATCHLIST, `the watchlist holds at most ${String(MAX_WATCHLIST)} companies`),
+    noRepeats2(
+      (company) => `${company.board}/${company.slug.toLowerCase()}`,
+      (company) => `${company.name} is already on the watchlist`
+    )
+  ),
+  updatedAt: timestamp
+});
+var addedByUrlSource = strictObject({
+  schemaVersion: literal(1),
+  enabled: boolean2(),
+  postings: array(addedPosting).check(
+    _maxLength(MAX_ADDED_POSTINGS, `at most ${String(MAX_ADDED_POSTINGS)} Postings can be added`),
+    noRepeats2(
+      (posting) => canonicalApplyUrl(posting.url),
+      (posting) => `${posting.url} is already added`
+    )
+  ),
+  updatedAt: timestamp
+});
+function validateJobFeedSource(input) {
+  return validateWith(jobFeedSource, input);
+}
+function validateWatchlistSource(input) {
+  return validateWith(watchlistSource, input);
+}
+function validateAddedByUrlSource(input) {
+  return validateWith(addedByUrlSource, input);
+}
+function validateSourceDocument(docId, input) {
+  switch (docId) {
+    case JOB_FEED_SOURCE_ID:
+      return validateJobFeedSource(input);
+    case WATCHLIST_SOURCE_ID:
+      return validateWatchlistSource(input);
+    case ADDED_BY_URL_SOURCE_ID:
+      return validateAddedByUrlSource(input);
+    default:
+      return {
+        ok: false,
+        issues: [
+          `The sources collection holds "${JOB_FEED_SOURCE_ID}", "${WATCHLIST_SOURCE_ID}" and "${ADDED_BY_URL_SOURCE_ID}".`
+        ]
+      };
+  }
+}
+function defaultSourceSettings() {
+  return {
+    jobFeed: { enabled: true },
+    watchlist: { enabled: true, companies: [] },
+    addedByUrl: { enabled: true, postings: [] }
+  };
+}
+function readSourceSettings(docs) {
+  const settings2 = defaultSourceSettings();
+  const issues = [];
+  const report = (id, found) => {
+    issues.push(...found.map((issue2) => `${SOURCES_COLLECTION}/${id}: ${issue2}`));
+  };
+  for (const { id, data } of docs) {
+    if (id === JOB_FEED_SOURCE_ID) {
+      const result = validateJobFeedSource(data);
+      if (result.ok) settings2.jobFeed = { enabled: result.value.enabled };
+      else {
+        settings2.jobFeed = { enabled: false };
+        report(id, result.issues);
+      }
+    } else if (id === WATCHLIST_SOURCE_ID) {
+      const result = validateWatchlistSource(data);
+      if (result.ok) {
+        settings2.watchlist = { enabled: result.value.enabled, companies: result.value.companies };
+      } else {
+        settings2.watchlist = { enabled: false, companies: [] };
+        report(id, result.issues);
+      }
+    } else if (id === ADDED_BY_URL_SOURCE_ID) {
+      const result = validateAddedByUrlSource(data);
+      if (result.ok) {
+        settings2.addedByUrl = { enabled: result.value.enabled, postings: result.value.postings };
+      } else {
+        settings2.addedByUrl = { enabled: false, postings: [] };
+        report(id, result.issues);
+      }
+    }
+  }
+  return { settings: settings2, issues };
+}
+function jobBoardUrl({ board, slug }) {
+  switch (board) {
+    case "greenhouse":
+      return `https://job-boards.greenhouse.io/${slug}`;
+    case "lever":
+      return `https://jobs.lever.co/${slug}`;
+    case "ashby":
+      return `https://jobs.ashbyhq.com/${slug}`;
+  }
+}
+
 // src/contract/variant-overrides.ts
 var VARIANT_OVERRIDES_COLLECTION = "variantOverrides";
 var override = strictObject({
@@ -2304,7 +2518,8 @@ var collections = {
   [POSTINGS_COLLECTION]: validatePostingsDocument,
   [CARDS_COLLECTION]: validateCardDocument,
   [SKIPS_COLLECTION]: validateSkipDocument,
-  [VARIANT_OVERRIDES_COLLECTION]: validateVariantOverrideDocument
+  [VARIANT_OVERRIDES_COLLECTION]: validateVariantOverrideDocument,
+  [SOURCES_COLLECTION]: validateSourceDocument
 };
 var CONTRACT_COLLECTIONS = Object.keys(collections);
 function validateDocument(collection, docId, input) {
@@ -3143,13 +3358,13 @@ function isoDay2(time3) {
 }
 function postedOnFrom(age, generatedAt) {
   const reference = Date.parse(generatedAt);
-  const text4 = age.trim().toLowerCase();
-  const relative = /^(\d+)\s*(h|d|w|mo|y)$/.exec(text4);
+  const text6 = age.trim().toLowerCase();
+  const relative = /^(\d+)\s*(h|d|w|mo|y)$/.exec(text6);
   if (relative) {
     const days = Number(relative[1]) * (UNIT_DAYS[relative[2] ?? "d"] ?? 1);
     return isoDay2(reference - Math.floor(days) * DAY_MS2);
   }
-  const absolute = /^([a-z]{3})[a-z]*\.?\s+(\d{1,2})$/.exec(text4);
+  const absolute = /^([a-z]{3})[a-z]*\.?\s+(\d{1,2})$/.exec(text6);
   const month = absolute ? MONTHS.indexOf(absolute[1] ?? "") : -1;
   if (absolute && month !== -1) {
     const now = new Date(reference);
@@ -3280,12 +3495,45 @@ var SHORTHAND = {
   LA: { city: "Los Angeles", region: "CA" },
   DC: { city: "Washington", region: "DC" }
 };
+var BARE_CITIES = {
+  "New York City": { city: "New York", region: "NY" },
+  "New York": { city: "New York", region: "NY" },
+  Manhattan: { city: "New York", region: "NY" },
+  Brooklyn: { city: "Brooklyn", region: "NY" },
+  "San Francisco": { city: "San Francisco", region: "CA" },
+  "San Jose": { city: "San Jose", region: "CA" },
+  "Palo Alto": { city: "Palo Alto", region: "CA" },
+  "Mountain View": { city: "Mountain View", region: "CA" },
+  Sunnyvale: { city: "Sunnyvale", region: "CA" },
+  "Menlo Park": { city: "Menlo Park", region: "CA" },
+  "Redwood City": { city: "Redwood City", region: "CA" },
+  "Santa Clara": { city: "Santa Clara", region: "CA" },
+  Cupertino: { city: "Cupertino", region: "CA" },
+  Oakland: { city: "Oakland", region: "CA" },
+  Berkeley: { city: "Berkeley", region: "CA" },
+  "Los Angeles": { city: "Los Angeles", region: "CA" },
+  "Santa Monica": { city: "Santa Monica", region: "CA" },
+  "San Diego": { city: "San Diego", region: "CA" },
+  Irvine: { city: "Irvine", region: "CA" },
+  Seattle: { city: "Seattle", region: "WA" },
+  Bellevue: { city: "Bellevue", region: "WA" },
+  Redmond: { city: "Redmond", region: "WA" },
+  Boston: { city: "Boston", region: "MA" },
+  Chicago: { city: "Chicago", region: "IL" },
+  Austin: { city: "Austin", region: "TX" },
+  Denver: { city: "Denver", region: "CO" },
+  Atlanta: { city: "Atlanta", region: "GA" },
+  Pittsburgh: { city: "Pittsburgh", region: "PA" },
+  Philadelphia: { city: "Philadelphia", region: "PA" },
+  Miami: { city: "Miami", region: "FL" },
+  "Salt Lake City": { city: "Salt Lake City", region: "UT" }
+};
 var CITY_ALIASES = {
   "new york city": "New York",
   manhattan: "New York",
   "san fransisco": "San Francisco"
 };
-var escape = (text4) => text4.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+var escape = (text6) => text6.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 var longestFirst = (names) => [...names].sort((a, b) => b.length - a.length).map(escape).join("|");
 var COUNTRY_NAMES = longestFirst(
   Object.keys(COUNTRIES).map(
@@ -3317,6 +3565,14 @@ var PATTERNS = [
     re: new RegExp(`(${longestFirst(Object.keys(SHORTHAND))})(?!\\p{Ll})`, "uy"),
     read: (m) => {
       const { city, region } = SHORTHAND[m[1] ?? ""] ?? { city: "", region: "" };
+      return usCity(city, region);
+    }
+  },
+  {
+    // Before state names, so "New York" alone reads as the city.
+    re: new RegExp(`(${longestFirst(Object.keys(BARE_CITIES))})(?!\\p{L})`, "uy"),
+    read: (m) => {
+      const { city, region } = BARE_CITIES[m[1] ?? ""] ?? { city: "", region: "" };
       return usCity(city, region);
     }
   },
@@ -3380,18 +3636,18 @@ function cityInCountry(city, country) {
   return place;
 }
 function parseLocations(raw) {
-  const text4 = raw.replace(/^\s*\d+\s+locations?/i, "").replace(/\s*\+\d+\s*$/, "").replace(/\bD\.C\./g, "DC").replace(/\s+/g, " ").trim();
+  const text6 = raw.replace(/^\s*\d+\s+locations?/i, "").replace(/\s*\+\d+\s*$/, "").replace(/\bD\.C\./g, "DC").replace(/\s+/g, " ").trim();
   const places = [];
   let at = 0;
-  while (at < text4.length) {
-    if (" ;|/,-()".includes(text4[at] ?? "")) {
+  while (at < text6.length) {
+    if (" ;|/,-()".includes(text6[at] ?? "")) {
       at += 1;
       continue;
     }
     let matched = false;
     for (const { re, read } of PATTERNS) {
       re.lastIndex = at;
-      const m = re.exec(text4);
+      const m = re.exec(text6);
       if (m && m[0].length > 0) {
         places.push(read(m));
         at += m[0].length;
@@ -3400,7 +3656,7 @@ function parseLocations(raw) {
       }
     }
     if (!matched) {
-      places.push({ label: text4.slice(at).trim(), remote: false });
+      places.push({ label: text6.slice(at).trim(), remote: false });
       break;
     }
   }
@@ -3735,16 +3991,17 @@ var INTERN = /\bintern(ship)?s?\b|\bco-?op\b|\bapprentice(ship)?\b/;
 var NEW_GRAD = /\bnew (college )?grad(uate)?s?\b|\bgraduate\b|\buniversity\b|\bcollege\b|\bcampus\b|\bentry[- ]level\b|\bearly[- ]career\b|\bncg\b|\brotational\b|\bresidency\b/;
 var JUNIOR = /\bjunior\b|\bjr\.?(?=\s|$)|\bassociate\b|\b(engineer|developer|scientist|sde|swe|analyst|programmer)\s+(i|1)\b/;
 var SENIOR = /\bsenior\b|\bsr\.?(?=\s|$)|\bstaff (?!intern)(?=\w)|\bprincipal\b|\blead (engineer|developer|scientist|software|data|machine)|\b(engineer|developer|scientist|sde|swe|programmer),?\s+(ii|iii|iv|2|3|4)\b|\bdirector\b|\bhead of\b|\barchitect\b|\bexperienced\b|\bmid[- ]level\b|\bengineering manager\b|\bmanager,? (software|engineering)\b/;
-function normalize(text4) {
-  return ` ${text4.toLowerCase().replace(/[\u2013\u2014]/g, "-").replace(/\s+/g, " ")} `;
+function normalize(text6) {
+  return ` ${text6.toLowerCase().replace(/[\u2013\u2014]/g, "-").replace(/\s+/g, " ")} `;
 }
-function levelOf(title, jobType) {
-  const text4 = normalize(title);
-  if (INTERN.test(text4)) return "intern";
-  if (NEW_GRAD.test(text4)) return "new_grad";
-  if (JUNIOR.test(text4)) return "junior";
-  if (SENIOR.test(text4)) return void 0;
-  return /intern/i.test(jobType) ? "intern" : "new_grad";
+function levelOf(title, jobType, { stated = false } = {}) {
+  const text6 = normalize(title);
+  if (INTERN.test(text6)) return "intern";
+  if (NEW_GRAD.test(text6)) return "new_grad";
+  if (JUNIOR.test(text6)) return "junior";
+  if (SENIOR.test(text6)) return void 0;
+  if (/intern/i.test(jobType)) return "intern";
+  return stated ? void 0 : "new_grad";
 }
 var FAMILIES = {
   software: /\bsoftware\b|\bswe\b|\bsdes?\b|\bdevelopers?\b|\bfull[- ]?stack\b|\bback[- ]?end\b|\bfront[- ]?end\b|\bmobile\b|\bios\b|\bandroid\b|\bweb\b|\bplatform engineer|\binfrastructure engineer|\bmember of technical staff\b|\bdevops\b|\bsite reliability\b|\bsre\b|\bcloud engineer|\bforward deployed\b|\bprogrammer\b|\bapplications? engineer|\bgeneralist\b/,
@@ -3763,8 +4020,8 @@ var CATEGORY_FAMILIES = [
   [/quant/i, ["quant"]],
   [/hardware/i, ["hardware"]]
 ];
-function familiesOf(text4) {
-  const normalized = normalize(text4);
+function familiesOf(text6) {
+  const normalized = normalize(text6);
   return new Set(
     Object.entries(FAMILIES).filter(([, re]) => re.test(normalized)).map(([family]) => family)
   );
@@ -3813,9 +4070,9 @@ var VAGUE_WORDS = /* @__PURE__ */ new Set([
 function significantWords(name) {
   return normalize(name).replace(/\(.*?\)/g, " ").split(/[^a-z0-9+#]+/).filter((word) => word !== "" && !/^\d+$/.test(word) && !GENERIC_WORDS.has(word));
 }
-function hasWord(text4, word) {
+function hasWord(text6, word) {
   const stem = word.length > 5 ? word.slice(0, -2) : word;
-  return new RegExp(`\\b${stem.replace(/[+#]/g, "\\$&")}`).test(text4);
+  return new RegExp(`\\b${stem.replace(/[+#]/g, "\\$&")}`).test(text6);
 }
 function matchRoleType(title, category, roleTypes) {
   let titleFamilies = familiesOf(title);
@@ -3824,7 +4081,7 @@ function matchRoleType(title, category, roleTypes) {
       CATEGORY_FAMILIES.filter(([re]) => re.test(category)).flatMap(([, families]) => families)
     );
   }
-  const text4 = normalize(title);
+  const text6 = normalize(title);
   const ordered = ROLE_TYPE_PRIORITIES.flatMap(
     (priority) => roleTypes.filter((roleType2) => roleType2.priority === priority)
   );
@@ -3832,7 +4089,7 @@ function matchRoleType(title, category, roleTypes) {
     const families = familiesOf(roleType2.name);
     if (families.size > 0) return [...families].some((family) => titleFamilies.has(family));
     const words = significantWords(roleType2.name);
-    return words.length > 0 && words.every((word) => hasWord(text4, word));
+    return words.length > 0 && words.every((word) => hasWord(text6, word));
   });
 }
 var SEASONS = {
@@ -3843,13 +4100,13 @@ var SEASONS = {
   autumn: ["08", "12"]
 };
 function startWindowOf(title) {
-  const text4 = title.toLowerCase();
-  const years = [...text4.matchAll(/(?<!\d)(20[2-4]\d)(?![\d])/g)].map((m) => Number(m[1]));
+  const text6 = title.toLowerCase();
+  const years = [...text6.matchAll(/(?<!\d)(20[2-4]\d)(?![\d])/g)].map((m) => Number(m[1]));
   if (years.length === 0) return void 0;
   const first = Math.min(...years);
   const last = Math.max(...years);
   if (first !== last) return { from: `${String(first)}-01`, to: `${String(last)}-12` };
-  const seasons = [...text4.matchAll(/\b(winter|spring|summer|fall|autumn)\b/g)].map((m) => SEASONS[m[1] ?? ""]).filter((months) => months !== void 0);
+  const seasons = [...text6.matchAll(/\b(winter|spring|summer|fall|autumn)\b/g)].map((m) => SEASONS[m[1] ?? ""]).filter((months) => months !== void 0);
   if (seasons.length === 0) return { from: `${String(first)}-01`, to: `${String(first)}-12` };
   const from = seasons.map(([start]) => start).sort()[0] ?? "01";
   const to = seasons.map(([, end]) => end).sort().at(-1) ?? "12";
@@ -3865,55 +4122,6 @@ function withinStartWindow(title, window) {
 
 // src/engine/urls.ts
 import { createHash } from "node:crypto";
-var SHORT_LINK_HOSTS = /* @__PURE__ */ new Set(["go.vansh.nyc"]);
-var TRACKING_PARAMS = /* @__PURE__ */ new Set([
-  "ref",
-  "refs",
-  "referrer",
-  "source",
-  "src",
-  "gh_src",
-  "lever-source",
-  "lever-origin",
-  "iis",
-  "iisn",
-  "trk",
-  "campaign",
-  "medium",
-  "embed"
-]);
-var HOST_ALIASES = {
-  "boards.greenhouse.io": "job-boards.greenhouse.io"
-};
-function parse2(url) {
-  try {
-    const parsed = new URL(url.trim());
-    return parsed.protocol === "http:" || parsed.protocol === "https:" ? parsed : void 0;
-  } catch {
-    return void 0;
-  }
-}
-function isShortLink(url) {
-  const parsed = parse2(url);
-  return parsed !== void 0 && SHORT_LINK_HOSTS.has(parsed.hostname.toLowerCase());
-}
-function canonicalApplyUrl(url) {
-  const parsed = parse2(url);
-  if (!parsed) return url.trim();
-  let host = parsed.hostname.toLowerCase().replace(/^www\./, "");
-  host = HOST_ALIASES[host] ?? host;
-  let path = parsed.pathname.replace(/\/+$/, "");
-  if (host === "jobs.lever.co") path = path.replace(/\/apply$/, "");
-  if (host === "jobs.ashbyhq.com") path = path.replace(/\/application$/, "");
-  const params = [...parsed.searchParams].filter(([key]) => {
-    const name = key.toLowerCase();
-    if (name.startsWith("utm_") || TRACKING_PARAMS.has(name)) return false;
-    return !(name === "s" && SHORT_LINK_HOSTS.has(host));
-  }).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0);
-  const query = params.length === 0 ? "" : `?${new URLSearchParams(params).toString()}`;
-  const port = parsed.port === "" ? "" : `:${parsed.port}`;
-  return `https://${host}${port}${path}${query}`;
-}
 function postingId(canonicalUrl) {
   return createHash("sha256").update(canonicalUrl).digest("hex").slice(0, 12);
 }
@@ -3934,13 +4142,13 @@ var FAMILY_LABELS = {
   hardware: "hardware",
   security: "security"
 };
-function escape2(text4) {
-  return text4.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+function escape2(text6) {
+  return text6.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
-function mentions(text4, keyword) {
+function mentions(text6, keyword) {
   const words = keyword.trim().toLowerCase().split(/[\s-]+/).map(escape2);
   const phrase = words.join("[\\s-]+");
-  return new RegExp(`(?<![\\p{L}\\p{N}])${phrase}(?![\\p{L}\\p{N}+#])`, "u").test(text4);
+  return new RegExp(`(?<![\\p{L}\\p{N}])${phrase}(?![\\p{L}\\p{N}+#])`, "u").test(text6);
 }
 function quoteList(words) {
   const quoted = words.slice(0, SHOWN_KEYWORDS).map((word) => `"${word}"`);
@@ -3952,11 +4160,11 @@ function nameList(names) {
   return `${names.slice(0, -1).join(", ")} and ${names.at(-1) ?? ""}`;
 }
 function sentence(parts) {
-  const text4 = parts.join("; ");
-  return `${text4.charAt(0).toUpperCase()}${text4.slice(1)}.`;
+  const text6 = parts.join("; ");
+  return `${text6.charAt(0).toUpperCase()}${text6.slice(1)}.`;
 }
-function fit(text4) {
-  return text4.length <= MAX_REASON ? text4 : `${text4.slice(0, MAX_REASON - 1).trimEnd()}\u2026`;
+function fit(text6) {
+  return text6.length <= MAX_REASON ? text6 : `${text6.slice(0, MAX_REASON - 1).trimEnd()}\u2026`;
 }
 function score(variant, index, posting, title, listing, titleFamilies) {
   const evidence = [];
@@ -4042,20 +4250,23 @@ function score2(priority, boost, postedOn, now) {
   const value = WEIGHTS.fit * FIT[priority] + WEIGHTS.boost * boost + WEIGHTS.freshness * freshness(postedOn, now);
   return Math.round(100 * value);
 }
-function evaluate(listing, sourceName, generatedAt, settings2, places) {
+function evaluate(listing, result, generatedAt, settings2, places) {
   const { searchProfile: searchProfile2 } = settings2;
   const locationTier2 = locationTierOf(places, searchProfile2.locationTiers);
   if (locationTier2 === void 0) return { reason: "location" };
-  const level = levelOf(listing.title, listing.jobType);
+  const level = levelOf(listing.title, listing.jobType, {
+    stated: result.listsEveryLevel === true
+  });
   if (level === void 0 || !searchProfile2.seniority.includes(level))
     return { reason: "seniority" };
   if (!withinStartWindow(listing.title, searchProfile2.startWindow))
     return { reason: "startWindow" };
   const roleType2 = matchRoleType(listing.title, listing.category, searchProfile2.roleTypes);
   if (!roleType2) return { reason: "roleType" };
-  const source = { name: sourceName };
-  const list = listing.list?.trim();
+  const source = { name: result.name };
+  const list = (listing.list ?? result.list)?.trim();
   if (list) source.list = list;
+  const postedAt = listing.postedAt === void 0 ? Number.NaN : Date.parse(listing.postedAt);
   return {
     candidate: {
       listing,
@@ -4065,33 +4276,79 @@ function evaluate(listing, sourceName, generatedAt, settings2, places) {
       level,
       roleType: roleType2.name,
       priority: roleType2.priority,
-      postedOn: postedOnFrom(listing.age, generatedAt)
+      postedOn: Number.isNaN(postedAt) ? postedOnFrom(listing.age, generatedAt) : isoDay2(postedAt)
     }
   };
 }
+function activeSources(sources, sourceSettings, now) {
+  const watched = new Set(sourceSettings.watchlist.companies.map((company) => company.name));
+  const active = sources.filter((source) => {
+    if (source.name === JOB_FEED_SOURCE) return sourceSettings.jobFeed.enabled;
+    if (source.name === WATCHLIST_SOURCE) {
+      return sourceSettings.watchlist.enabled && source.list !== void 0 && watched.has(source.list);
+    }
+    return source.name !== ADDED_BY_URL_SOURCE;
+  });
+  const { addedByUrl } = sourceSettings;
+  if (addedByUrl.enabled && addedByUrl.postings.length > 0) {
+    active.push({
+      name: ADDED_BY_URL_SOURCE,
+      ok: true,
+      fetchedAt: now,
+      postings: addedByUrl.postings.map((posting) => ({
+        applyUrl: posting.url,
+        company: posting.company,
+        title: posting.title,
+        location: posting.location,
+        jobType: "",
+        age: "",
+        postedAt: posting.addedAt,
+        category: "",
+        companyTier: ""
+      }))
+    });
+  }
+  return active;
+}
+function reportOf(source) {
+  const report = { name: source.name };
+  if (source.list !== void 0) report.list = source.list;
+  return source.ok ? { ...report, ok: true, postings: source.postings.length } : { ...report, ok: false, postings: 0, error: source.error };
+}
 function match(input, resolvedLinks) {
   const filteredOut = { location: 0, seniority: 0, startWindow: 0, roleType: 0 };
+  const addedLeftOut = [];
   const candidates = [];
   const placesByText = /* @__PURE__ */ new Map();
   const sourceReports = [];
-  const failedSources = /* @__PURE__ */ new Set();
+  const failed = [];
+  const sources = activeSources(
+    input.sources,
+    input.sourceSettings ?? defaultSourceSettings(),
+    input.now
+  );
   let order = 0;
-  for (const source of input.sources) {
+  for (const source of sources) {
+    sourceReports.push(reportOf(source));
     if (!source.ok) {
-      failedSources.add(source.name);
-      sourceReports.push({ name: source.name, ok: false, postings: 0, error: source.error });
+      failed.push(
+        source.list === void 0 ? { name: source.name } : { name: source.name, list: source.list }
+      );
       continue;
     }
-    sourceReports.push({ name: source.name, ok: true, postings: source.postings.length });
     for (const listing of source.postings) {
       let places = placesByText.get(listing.location);
       if (!places) {
         places = parseLocations(listing.location);
         placesByText.set(listing.location, places);
       }
-      const result = evaluate(listing, source.name, source.fetchedAt, input.settings, places);
+      const result = evaluate(listing, source, source.fetchedAt, input.settings, places);
       if ("reason" in result) {
         filteredOut[result.reason] += 1;
+        if (source.name === ADDED_BY_URL_SOURCE) {
+          const { applyUrl: url, company, title } = listing;
+          addedLeftOut.push({ url, company, title, reason: result.reason });
+        }
         continue;
       }
       const rawUrl = listing.applyUrl.trim();
@@ -4109,9 +4366,10 @@ function match(input, resolvedLinks) {
   return {
     candidates,
     filteredOut,
+    addedLeftOut,
     allPlaces: [...placesByText.values()].flat(),
     sourceReports,
-    failedSources
+    failed
   };
 }
 function shortLinksToResolve(input) {
@@ -4172,15 +4430,15 @@ function mergeSources(sources) {
   return [...unique.values()].sort((a, b) => compareText(sourceKey(a), sourceKey(b)));
 }
 function excerpt(description) {
-  const text4 = description?.replace(/\s+/g, " ").trim();
-  if (!text4) return void 0;
-  if (text4.length <= POSTING_DESCRIPTION_MAX) return text4;
-  const cut = text4.slice(0, POSTING_DESCRIPTION_MAX);
+  const text6 = description?.replace(/\s+/g, " ").trim();
+  if (!text6) return void 0;
+  if (text6.length <= POSTING_DESCRIPTION_MAX) return text6;
+  const cut = text6.slice(0, POSTING_DESCRIPTION_MAX);
   const atWord = cut.slice(0, cut.lastIndexOf(" ")).replace(/[\s,;:.-]+$/, "");
   return `${atWord}\u2026`;
 }
-function lowerFirst(text4) {
-  return /^[A-Z][a-z]/.test(text4) ? `${text4.charAt(0).toLowerCase()}${text4.slice(1)}` : text4;
+function lowerFirst(text6) {
+  return /^[A-Z][a-z]/.test(text6) ? `${text6.charAt(0).toLowerCase()}${text6.slice(1)}` : text6;
 }
 function withResumeVariant(base, evidence, settings2, judgments) {
   const judgment = Object.hasOwn(judgments, base.id) ? judgments[base.id] : void 0;
@@ -4211,7 +4469,7 @@ function merge2(group, tiers, now) {
   const named = group.find((c) => companyKnown(c.listing.company)) ?? representative;
   const tierOfPlace = (place) => locationTierOf([place], tiers) ?? Number.MAX_SAFE_INTEGER;
   const places = representative.places.map((place, index) => ({ place, index, tier: tierOfPlace(place) })).sort((a, b) => a.tier - b.tier || a.index - b.index).map(({ place }) => place);
-  const description = group.map((c) => c.listing.description).find((text4) => text4?.trim());
+  const description = group.map((c) => c.listing.description).find((text6) => text6?.trim());
   const posting = {
     id: postingId(representative.canonicalUrl),
     applyUrl: representative.canonicalUrl,
@@ -4237,9 +4495,12 @@ function merge2(group, tiers, now) {
   return { posting, evidence };
 }
 function carryOver(current, failed, settings2, now) {
-  if (failed.size === 0) return [];
+  if (failed.length === 0) return [];
   const { roleTypes, seniority, locationTiers } = settings2.searchProfile;
-  return current.pages.flatMap((page2) => page2.postings).filter((posting) => posting.sources.some((source) => failed.has(source.name))).flatMap((posting) => {
+  const isFailed = (source) => failed.some(
+    (scope) => scope.name === source.name && (scope.list === void 0 || scope.list === source.list)
+  );
+  return current.pages.flatMap((page2) => page2.postings).map((posting) => ({ ...posting, sources: posting.sources.filter(isFailed) })).filter((posting) => posting.sources.length > 0).flatMap((posting) => {
     const locationTier2 = locationTierOf(posting.locations.flatMap(parseLocations), locationTiers);
     const roleType2 = matchRoleType(posting.title, "", roleTypes);
     if (locationTier2 === void 0 || !roleType2 || !seniority.includes(posting.level)) return [];
@@ -4275,7 +4536,7 @@ function runRefresh(input) {
   );
   const freshIds = new Set(fresh.map((p) => p.posting.id));
   const freshUrls = new Set(fresh.map((p) => p.posting.applyUrl));
-  const carriedPicks = carryOver(current, matching.failedSources, settings2, now).filter(({ posting: p }) => !freshIds.has(p.id) && !freshUrls.has(p.applyUrl)).map(pick2);
+  const carriedPicks = carryOver(current, matching.failed, settings2, now).filter(({ posting: p }) => !freshIds.has(p.id) && !freshUrls.has(p.applyUrl)).map(pick2);
   const carried = carriedPicks.map((p) => p.posting);
   const rankedPicks = [...fresh, ...carriedPicks].sort((a, b) => compareRank(a.posting, b.posting));
   const ranked = rankedPicks.map((p) => p.posting);
@@ -4357,6 +4618,7 @@ function runRefresh(input) {
         reason: p.resumeVariant.reason
       }))
     },
+    addedLeftOut: matching.addedLeftOut,
     top: jobList.slice(0, 5).map(({ company, title, locations, locationTier: locationTier2, score: s, applyUrl }) => ({
       company,
       title,
@@ -4370,47 +4632,173 @@ function runRefresh(input) {
   return { jobList, meta: meta3, preQueued: queue.cards, changeSet, summary };
 }
 
-// src/refresh/job-feed.ts
-var JOB_FEED_URL = "https://raw.githubusercontent.com/dereksun64/yet-another-job-repo/main/data/jobs.json";
-var FEED_TIMEOUT_MS = 6e4;
+// src/refresh/job-boards.ts
+var BOARD_TIMEOUT_MS = 3e4;
+var CONCURRENCY = 6;
+function jobBoardApiUrl({ board, slug }) {
+  const name = encodeURIComponent(slug);
+  switch (board) {
+    case "greenhouse":
+      return `https://boards-api.greenhouse.io/v1/boards/${name}/jobs`;
+    case "lever":
+      return `https://api.lever.co/v0/postings/${name}?mode=json`;
+    case "ashby":
+      return `https://api.ashbyhq.com/posting-api/job-board/${name}`;
+  }
+}
 function isRecord(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
-var text2 = (value) => typeof value === "string" ? value : "";
+var text3 = (value) => typeof value === "string" ? value.trim() : "";
+var texts = (value) => Array.isArray(value) ? value.map(text3).filter((item) => item !== "") : [];
+function greenhouseJobs(json) {
+  if (!isRecord(json) || !Array.isArray(json.jobs)) return void 0;
+  return json.jobs.filter(isRecord).map((job) => ({
+    applyUrl: text3(job.absolute_url),
+    title: text3(job.title),
+    location: isRecord(job.location) ? text3(job.location.name) : "",
+    jobType: "",
+    postedAt: text3(job.first_published) || text3(job.updated_at)
+  }));
+}
+function leverJobs(json) {
+  if (!Array.isArray(json)) return void 0;
+  return json.filter(isRecord).map((job) => {
+    const categories = isRecord(job.categories) ? job.categories : {};
+    const locations = texts(categories.allLocations);
+    const location = locations.length > 0 ? locations.join("; ") : text3(categories.location);
+    const created = typeof job.createdAt === "number" ? new Date(job.createdAt) : void 0;
+    return {
+      applyUrl: text3(job.hostedUrl),
+      title: text3(job.text),
+      location: location || (text3(job.workplaceType) === "remote" ? "Remote" : ""),
+      jobType: text3(categories.commitment),
+      postedAt: created && !Number.isNaN(created.getTime()) ? created.toISOString() : ""
+    };
+  });
+}
+function ashbyJobs(json) {
+  if (!isRecord(json) || !Array.isArray(json.jobs)) return void 0;
+  return json.jobs.filter(isRecord).filter((job) => job.isListed !== false).map((job) => {
+    const secondary = Array.isArray(job.secondaryLocations) ? job.secondaryLocations.map((place) => isRecord(place) ? text3(place.location) : "") : [];
+    let location = [text3(job.location), ...secondary].filter(Boolean).join("; ");
+    if (text3(job.workplaceType) === "Remote" && !/remote/i.test(location)) {
+      location = location ? `Remote in ${location}` : "Remote";
+    }
+    return {
+      applyUrl: text3(job.jobUrl),
+      title: text3(job.title),
+      location,
+      jobType: text3(job.employmentType),
+      postedAt: text3(job.publishedAt)
+    };
+  });
+}
+var PARSERS = { greenhouse: greenhouseJobs, lever: leverJobs, ashby: ashbyJobs };
+function describe2(error2) {
+  if (error2 instanceof Error) {
+    if (error2.name === "TimeoutError") return "it took too long to answer";
+    const cause = error2.cause;
+    return cause instanceof Error ? cause.message : error2.message;
+  }
+  return String(error2);
+}
+async function readJobBoard(fetch2, company, now) {
+  const scope = { name: WATCHLIST_SOURCE, list: company.name };
+  const board = `${company.name}'s ${JOB_BOARD_NAMES[company.board]} job board`;
+  const fail2 = (error2) => ({ ...scope, ok: false, error: error2 });
+  let response;
+  try {
+    response = await fetch2(jobBoardApiUrl(company), {
+      signal: AbortSignal.timeout(BOARD_TIMEOUT_MS)
+    });
+  } catch (error2) {
+    return fail2(`${board} could not be reached: ${describe2(error2)}.`);
+  }
+  if (response.status === 404) {
+    return fail2(
+      `${company.name} has no public ${JOB_BOARD_NAMES[company.board]} job board at ${jobBoardUrl(company)}. Check its link on the watchlist.`
+    );
+  }
+  if (!response.ok) return fail2(`${board} answered HTTP ${String(response.status)}.`);
+  let json;
+  try {
+    json = await response.json();
+  } catch {
+    json = void 0;
+  }
+  const jobs = PARSERS[company.board](json);
+  if (!jobs) return fail2(`${board} sent data in an unexpected format.`);
+  const postings = jobs.filter((job) => job.applyUrl !== "" && job.title !== "").map((job) => ({
+    applyUrl: job.applyUrl,
+    company: company.name,
+    title: job.title,
+    location: job.location,
+    jobType: job.jobType,
+    age: "",
+    ...job.postedAt ? { postedAt: job.postedAt } : {},
+    category: "",
+    companyTier: "",
+    list: company.name
+  }));
+  return { ...scope, ok: true, listsEveryLevel: true, fetchedAt: now, postings };
+}
+async function readWatchlist(fetch2, companies, now) {
+  const results = new Array(companies.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < companies.length) {
+      const index = next++;
+      const company = companies[index];
+      if (company === void 0) break;
+      results[index] = await readJobBoard(fetch2, company, now);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, companies.length) }, worker));
+  return results;
+}
+
+// src/refresh/job-feed.ts
+var JOB_FEED_URL = "https://raw.githubusercontent.com/dereksun64/yet-another-job-repo/main/data/jobs.json";
+var FEED_TIMEOUT_MS = 6e4;
+function isRecord2(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+var text4 = (value) => typeof value === "string" ? value : "";
 function parseJobFeed(json, fallbackTime) {
-  if (!isRecord(json) || !Array.isArray(json.jobs)) {
+  if (!isRecord2(json) || !Array.isArray(json.jobs)) {
     return {
       name: JOB_FEED_SOURCE,
       ok: false,
       error: "The Job Feed's data is not in the expected format (no jobs list)."
     };
   }
-  const generated = text2(json.generatedAt) || text2(json.fetchedAt);
+  const generated = text4(json.generatedAt) || text4(json.fetchedAt);
   const fetchedAt = Number.isNaN(Date.parse(generated)) ? fallbackTime : new Date(generated).toISOString();
   const postings = [];
   for (const job of json.jobs) {
-    if (!isRecord(job)) continue;
-    const applyUrl = text2(job.applyUrl).trim();
-    const company = text2(job.company).trim();
-    const title = text2(job.title).trim();
+    if (!isRecord2(job)) continue;
+    const applyUrl = text4(job.applyUrl).trim();
+    const company = text4(job.company).trim();
+    const title = text4(job.title).trim();
     if (!applyUrl || !company || !title) continue;
     const posting = {
       applyUrl,
       company,
       title,
-      location: text2(job.location),
-      jobType: text2(job.jobType),
-      age: text2(job.age),
-      category: text2(job.category),
-      companyTier: text2(job.companyTier)
+      location: text4(job.location),
+      jobType: text4(job.jobType),
+      age: text4(job.age),
+      category: text4(job.category),
+      companyTier: text4(job.companyTier)
     };
-    const list = text2(job.source).trim();
+    const list = text4(job.source).trim();
     if (list) posting.list = list;
     postings.push(posting);
   }
   return { name: JOB_FEED_SOURCE, ok: true, fetchedAt, postings };
 }
-function describe2(error2) {
+function describe3(error2) {
   if (error2 instanceof Error) {
     if (error2.name === "TimeoutError") return "it took too long to answer";
     const cause = error2.cause;
@@ -4426,7 +4814,7 @@ async function readJobFeed(fetch2, now, url = JOB_FEED_URL) {
     return {
       name: JOB_FEED_SOURCE,
       ok: false,
-      error: `The Job Feed could not be reached: ${describe2(error2)}.`
+      error: `The Job Feed could not be reached: ${describe3(error2)}.`
     };
   }
   if (!response.ok) {
@@ -4503,14 +4891,14 @@ var BATCH_MAX_BYTES = 900 * 1024;
 var RefreshError = class extends Error {
 };
 async function readJson(io, path) {
-  let text4;
+  let text6;
   try {
-    text4 = await io.readFile(path);
+    text6 = await io.readFile(path);
   } catch {
     return void 0;
   }
   try {
-    return JSON.parse(text4);
+    return JSON.parse(text6);
   } catch {
     throw new RefreshError(`${path} is not valid JSON.`);
   }
@@ -4551,6 +4939,21 @@ async function readQueue(io, dir) {
   const skippedIds = await savedIds(io, join(dir, "state", SKIPS_COLLECTION));
   return { cards, cardIds, skippedIds };
 }
+async function readSources(io, dir) {
+  const folder = join(dir, "state", SOURCES_COLLECTION);
+  const docs = [];
+  for (const id of await savedIds(io, folder)) {
+    docs.push({ id, data: await readJson(io, join(folder, `${id}.json`)) });
+  }
+  return readSourceSettings(docs);
+}
+async function readEnabledSources(io, now, sources, feed) {
+  const [jobFeed, watchlist] = await Promise.all([
+    sources.jobFeed.enabled ? readFeed(io, now, feed).then((result) => [result]) : [],
+    sources.watchlist.enabled ? readWatchlist(io.fetch, sources.watchlist.companies, now) : []
+  ]);
+  return [...jobFeed, ...watchlist];
+}
 async function readVersions(io, dir) {
   const json = await readJson(io, join(dir, "versions.json"));
   if (json === void 0) return {};
@@ -4571,7 +4974,8 @@ async function readVersions(io, dir) {
 async function readFeed(io, now, feed) {
   if (feed === void 0 || /^https?:\/\//.test(feed)) return readJobFeed(io.fetch, now, feed);
   const json = await readJson(io, feed);
-  if (json === void 0) return { name: "Job Feed", ok: false, error: `Could not read ${feed}.` };
+  if (json === void 0)
+    return { name: JOB_FEED_SOURCE, ok: false, error: `Could not read ${feed}.` };
   return parseJobFeed(json, now);
 }
 async function readJudgments(io, dir) {
@@ -4619,7 +5023,40 @@ function batchesOf(writes) {
 }
 var number2 = (n) => n.toLocaleString("en-US");
 var count = (n, one, many = `${one}s`) => `${number2(n)} ${n === 1 ? one : many}`;
-function formatSummary(summary, paths, batches) {
+var LEFT_OUT_REASONS = {
+  location: "outside your Location Tiers",
+  seniority: "asks for more experience",
+  startWindow: "outside your start window",
+  roleType: "not one of your role types"
+};
+function formatSources(summary) {
+  const lines = [];
+  const watchlist = summary.sources.filter((source) => source.name === WATCHLIST_SOURCE);
+  const others = summary.sources.filter((source) => source.name !== WATCHLIST_SOURCE);
+  for (const source of others) {
+    if (!source.ok) {
+      lines.push(`- ${source.name}: FAILED. ${source.error ?? "No reason given."}`);
+    } else if (source.name === ADDED_BY_URL_SOURCE) {
+      lines.push(`- ${source.name}: ${number2(source.postings)} Postings.`);
+    } else {
+      lines.push(`- ${source.name}: read ${number2(source.postings)} Postings.`);
+    }
+  }
+  if (watchlist.length > 0) {
+    const read = watchlist.filter((source) => source.ok);
+    const postings = read.reduce((sum, source) => sum + source.postings, 0);
+    lines.push(
+      `- ${WATCHLIST_SOURCE}: read ${number2(postings)} Postings from ${number2(read.length)} of ${number2(watchlist.length)} companies.`
+    );
+    for (const source of watchlist.filter((s) => !s.ok)) {
+      lines.push(
+        `- ${WATCHLIST_SOURCE}, ${source.list ?? "a company"}: FAILED. ${source.error ?? "No reason given."}`
+      );
+    }
+  }
+  return lines;
+}
+function formatSummary(summary, paths, batches, sourceIssues = []) {
   const { writes: writesPath, review: reviewPath } = paths;
   const lines = [];
   const tiers = summary.byTier.map((count2, i) => `Tier ${String(i + 1)}: ${number2(count2)}`).join(", ");
@@ -4632,11 +5069,19 @@ function formatSummary(summary, paths, batches) {
       `${number2(summary.matched)} Postings matched; the Job List keeps the best ${number2(summary.total)}.`
     );
   }
-  lines.push("Sources:");
-  for (const source of summary.sources) {
+  if (summary.sources.length === 0) {
     lines.push(
-      source.ok ? `- ${source.name}: read ${number2(source.postings)} Postings.` : `- ${source.name}: FAILED. ${source.error ?? "No reason given."}`
+      "Every Source is switched off or empty, so the Job List is empty. Switch a Source on in the dashboard's Sources panel."
     );
+  } else {
+    lines.push("Sources:");
+    lines.push(...formatSources(summary));
+  }
+  if (sourceIssues.length > 0) {
+    lines.push(
+      "Some Source documents do not match the dashboard contract, so those Sources were skipped:"
+    );
+    lines.push(...sourceIssues.map((issue2) => `- ${issue2}`));
   }
   if (summary.carriedOver > 0) {
     lines.push(
@@ -4648,6 +5093,12 @@ function formatSummary(summary, paths, batches) {
     lines.push(
       `Left out: ${number2(location)} outside your Location Tiers, ${number2(seniority)} at another seniority, ${number2(startWindow2)} outside your start window, ${number2(roleType2)} in other roles.`
     );
+  }
+  if (summary.addedLeftOut.length > 0) {
+    const leftOut = summary.addedLeftOut.map(
+      (posting) => `${posting.company}: ${posting.title} (${LEFT_OUT_REASONS[posting.reason]})`
+    );
+    lines.push(`Added by URL but left out of the Job List: ${leftOut.join("; ")}.`);
   }
   if (summary.unresolvedLinks > 0) {
     lines.push(
@@ -4722,6 +5173,7 @@ ${settings2.issues.map((i) => `- ${i}`).join("\n")}`
         `versions.json has no version for ${missing.map((id) => `${POSTINGS_COLLECTION}/${id}`).join(", ")}. Add the version ArtifactData reported for each document read.`
       );
     }
+    const sourceSettings = await readSources(io, dir);
     const judgments = await readJudgments(io, dir);
     const queue = await readQueue(io, dir);
     const out = join(dir, "out");
@@ -4742,8 +5194,15 @@ ${settings2.issues.map((i) => `- ${i}`).join("\n")}`
       sources = saved.sources;
       resolved = cache;
     } else {
-      sources = [await readFeed(io, now, options.feed)];
-      const base = { now, settings: settings2.value, sources, current, queue };
+      sources = await readEnabledSources(io, now, sourceSettings.settings, options.feed);
+      const base = {
+        now,
+        settings: settings2.value,
+        sourceSettings: sourceSettings.settings,
+        sources,
+        current,
+        queue
+      };
       resolved = (await resolveShortLinks(shortLinksToResolve(base), { fetch: io.fetch, cache })).resolved;
       await io.writeFile(cachePath, `${JSON.stringify({ ...cache, ...resolved }, null, 2)}
 `);
@@ -4751,6 +5210,7 @@ ${settings2.issues.map((i) => `- ${i}`).join("\n")}`
     const { jobList, changeSet, summary } = runRefresh({
       now,
       settings: settings2.value,
+      sourceSettings: sourceSettings.settings,
       sources,
       current,
       queue,
@@ -4784,13 +5244,13 @@ ${check.issues.map((i) => `- ${i}`).join("\n")}`
         );
       }
       const filePath = join(out, collection, `${docId}.json`);
-      const text4 = `${JSON.stringify(data)}
+      const text6 = `${JSON.stringify(data)}
 `;
-      await io.writeFile(filePath, text4);
+      await io.writeFile(filePath, text6);
       const write = { op: "set", collection, doc_id: docId, file_path: filePath };
       const version2 = versionOf(collection, docId);
       if (version2 !== void 0) write.if_version = version2;
-      writes.push({ write, bytes: Buffer.byteLength(text4) });
+      writes.push({ write, bytes: Buffer.byteLength(text6) });
     }
     const written = new Set(
       changeSet.set.filter((w) => w.collection === POSTINGS_COLLECTION).map((w) => w.docId)
@@ -4815,7 +5275,14 @@ ${check.issues.map((i) => `- ${i}`).join("\n")}`
     const review = { variants: settings2.value.resumeVariants, ...summary.variantReview };
     await io.writeFile(reviewPath, `${JSON.stringify(review, null, 2)}
 `);
-    io.stdout(formatSummary(summary, { writes: writesPath, review: reviewPath }, batches.length));
+    io.stdout(
+      formatSummary(
+        summary,
+        { writes: writesPath, review: reviewPath },
+        batches.length,
+        sourceSettings.issues
+      )
+    );
     return 0;
   } catch (error2) {
     if (error2 instanceof RefreshError) {
@@ -4867,8 +5334,8 @@ var manifest = strictObject({
   )
 });
 async function readJson2(io, source) {
-  const text4 = source === "-" ? await io.readStdin() : await io.readFile(source);
-  return JSON.parse(text4);
+  const text6 = source === "-" ? await io.readStdin() : await io.readFile(source);
+  return JSON.parse(text6);
 }
 function fail(io, lines) {
   io.stderr(lines.map((line) => `${line}
@@ -4978,9 +5445,9 @@ async function runCli(argv, io) {
     io.stderr(USAGE);
     return 2;
   }
-  let text4;
+  let text6;
   try {
-    text4 = file === "-" ? await io.readStdin() : await io.readFile(file);
+    text6 = file === "-" ? await io.readStdin() : await io.readFile(file);
   } catch (error2) {
     io.stderr(`Could not read ${file}: ${messageOf2(error2)}
 `);
@@ -4988,7 +5455,7 @@ async function runCli(argv, io) {
   }
   let document;
   try {
-    document = JSON.parse(text4);
+    document = JSON.parse(text6);
   } catch (error2) {
     io.stderr(`The document is not valid JSON: ${messageOf2(error2)}
 `);
@@ -5022,7 +5489,7 @@ process.exitCode = await runCli(process.argv.slice(2), {
   removeDir: (path) => rm(path, { recursive: true, force: true }),
   fetch: (url, init) => fetch(url, init),
   now: () => (/* @__PURE__ */ new Date()).toISOString(),
-  readStdin: () => text3(process.stdin),
+  readStdin: () => text5(process.stdin),
   fileSize: (path) => stat(path).then(
     (info) => info.isFile() ? info.size : void 0,
     () => void 0

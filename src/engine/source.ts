@@ -35,6 +35,11 @@ export type SourceResult =
       name: string;
       list?: string;
       ok: true;
+      /**
+       * The Source lists jobs at every level, like a company's own job board, so a Posting
+       * counts only when its title or job type says it is intern, new grad or junior.
+       */
+      listsEveryLevel?: boolean;
       /** When the Source's data was generated; Posting ages count back from here. */
       fetchedAt: string;
       postings: readonly SourcePosting[];

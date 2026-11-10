@@ -186,6 +186,42 @@ describe("Postings tab", () => {
     );
   });
 
+  it("shows a watchlist Posting as found in the Watchlist, not under its own company", async () => {
+    await renderPostings(
+      jobListDocs([
+        posting({
+          company: "Stripe",
+          sources: [
+            { name: "Job Feed", list: "Simplify New Grad" },
+            { name: "Watchlist", list: "Stripe" },
+          ],
+        }),
+        posting({ company: "Tiny", sources: [{ name: "Added by URL" }] }),
+      ]),
+    );
+    const [stripe, tiny] = rows();
+    expect(stripe?.querySelector(".posting-sources")).toHaveTextContent(
+      "Found in Simplify New Grad, Watchlist",
+    );
+    expect(tiny?.querySelector(".posting-sources")).toHaveTextContent("Found in Added by URL");
+  });
+
+  it("names each watchlist company whose job board could not be read", async () => {
+    await renderPostings(
+      jobListDocs(standard, {
+        sources: [
+          { name: "Watchlist", list: "Stripe", ok: false, postings: 0, error: "It timed out." },
+          { name: "Watchlist", list: "Ramp", ok: false, postings: 0 },
+        ],
+      }),
+    );
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveTextContent(
+      "The last Refresh couldn't read Stripe's job board, so it kept the Postings found there before. It timed out.",
+    );
+    expect(alert).toHaveTextContent("couldn't read Ramp's job board");
+  });
+
   it("explains an empty Job List after a Refresh", async () => {
     await renderPostings(jobListDocs([]));
     expect(

@@ -146,7 +146,7 @@ export async function readJobBoard(
       companyTier: "",
       list: company.name,
     }));
-  return { ...scope, ok: true, fetchedAt: now, postings };
+  return { ...scope, ok: true, listsEveryLevel: true, fetchedAt: now, postings };
 }
 
 /** Reads every watchlist company's board, a few at a time, in watchlist order. */
