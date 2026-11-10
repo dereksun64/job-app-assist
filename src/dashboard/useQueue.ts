@@ -2,12 +2,15 @@ import { useEffect, useState } from "preact/hooks";
 import {
   CARDS_COLLECTION,
   SKIPS_COLLECTION,
+  moveCard,
   validateCardDocument,
   validateSkipDocument,
   type Card,
+  type ClosedReason,
   type Posting,
   type Skip,
   type SkipReason,
+  type Stage,
   type Validation,
 } from "../contract/index.ts";
 import type { DashboardDb, DbError, QuerySnapshot } from "./db.ts";
@@ -61,7 +64,7 @@ export function useQueue(db: DashboardDb | null | undefined): QueueState {
   return { kind: "ready", cards, skips };
 }
 
-/** The Candidate's own Queue changes. Each resolves once the store has accepted every write. */
+/** The Candidate's own Queue and board changes. Each resolves once the store accepts its writes. */
 export interface QueueActions {
   /** Puts a Posting in the Queue, lifting its skip when `skipped` says it has one. */
   tick(posting: Posting, skipped: boolean): Promise<void>;
@@ -69,6 +72,8 @@ export interface QueueActions {
   skip(posting: Posting, reason: SkipReason): Promise<void>;
   /** Lifts a skip, so the Posting is back in the Job List, unqueued. */
   unskip(postingId: string): Promise<void>;
+  /** Moves a card to another Stage; Closed needs the reason. */
+  move(card: Card, stage: Stage, closedReason?: ClosedReason): Promise<void>;
 }
 
 /**
@@ -112,6 +117,13 @@ export function queueActions(db: DashboardDb, clock: () => number): QueueActions
     },
     async unskip(postingId) {
       await db.collection(SKIPS_COLLECTION).doc(postingId).delete();
+    },
+    async move(card, stage, closedReason) {
+      const moved = moveCard(card, stage, stamp(), closedReason);
+      await db
+        .collection(CARDS_COLLECTION)
+        .doc(card.postingId)
+        .set(checked(CARDS_COLLECTION, validateCardDocument, moved));
     },
   };
 }

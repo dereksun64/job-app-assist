@@ -13,8 +13,10 @@ import {
   type VariantOverride,
 } from "../contract/index.ts";
 import {
+  CLOSED_REASON_LABELS,
   SKIP_REASON_LABELS,
   STAGE_LABELS,
+  count,
   daysSincePosted,
   formatLevel,
   formatMoment,
@@ -62,9 +64,6 @@ const NO_FILTERS: Filters = {
   posted: "",
 };
 const LIST_SEPARATOR = "\u0000";
-
-const count = (n: number, one: string, many = `${one}s`) =>
-  `${n.toLocaleString("en-US")} ${n === 1 ? one : many}`;
 
 /** What the Postings tab needs to show and change each Posting's Resume Variant. */
 export interface ResumeVariantProps {
@@ -756,7 +755,11 @@ function PostingRow({ entry, actions, save, now, variant, onOpen }: PostingRowPr
 function QueueFlags({ entry, age }: { entry: Entry; age: number }) {
   const { card, rank } = entry;
   const flags: { text: string; warning?: boolean }[] = [];
-  if (card && card.stage !== "queued") flags.push({ text: STAGE_LABELS[card.stage] });
+  if (card?.stage === "closed" && card.closedReason) {
+    flags.push({ text: `Closed: ${CLOSED_REASON_LABELS[card.closedReason]}` });
+  } else if (card && card.stage !== "queued") {
+    flags.push({ text: STAGE_LABELS[card.stage] });
+  }
   if (isQueued(entry)) {
     if (rank === undefined) flags.push({ text: "No longer in your Job List", warning: true });
     if (age >= 1) flags.push({ text: `${count(age, "day")} in Queue` });

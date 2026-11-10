@@ -1,16 +1,17 @@
 import { useCallback, useMemo, useRef, useState } from "preact/hooks";
 import {
   ROLE_TYPE_PRIORITIES,
-  STAGES,
+  type Posting,
   type RoleType,
   type RoleTypePriority,
   type Settings,
 } from "../contract/index.ts";
 import type { DashboardDb } from "./db.ts";
-import { STAGE_LABELS, formatSeniority, formatStartWindow } from "./format.ts";
+import { formatSeniority, formatStartWindow } from "./format.ts";
 import { NewsTab } from "./NewsTab.tsx";
 import { PostingsTab } from "./PostingsTab.tsx";
 import { SourcesPanel } from "./SourcesPanel.tsx";
+import { ProgressTab } from "./ProgressTab.tsx";
 import { useHashTab } from "./useHashTab.ts";
 import { useJobList } from "./useJobList.ts";
 import { useNews } from "./useNews.ts";
@@ -61,6 +62,13 @@ export function App({ db, pageVersion, now }: AppProps) {
   const resumeVariants = useMemo(
     () => (settings.kind === "ready" ? settings.settings.resumeVariants.map((v) => v.name) : []),
     [settings],
+  );
+  const listed = useMemo(
+    () =>
+      jobList.kind === "ready"
+        ? new Map<string, Posting>(jobList.postings.map((p) => [p.id, p]))
+        : undefined,
+    [jobList],
   );
   const clock = useCallback(() => now ?? Date.now(), [now]);
   const { overrides, choose } = useVariantOverrides(db, clock);
@@ -148,14 +156,15 @@ export function App({ db, pageVersion, now }: AppProps) {
             />
           )}
           {tab === "progress" && (
-            <EmptyState title="Nothing in progress yet">
-              <p>Postings you queue appear here and move through each Stage as you apply.</p>
-              <ol class="stages" aria-label="Stages">
-                {STAGES.map((stage) => (
-                  <li key={stage}>{STAGE_LABELS[stage]}</li>
-                ))}
-              </ol>
-            </EmptyState>
+            <ProgressTab
+              queue={queue}
+              listed={listed}
+              actions={actions}
+              now={now ?? Date.now()}
+              resumeVariants={resumeVariants}
+              overrides={overrides}
+              onChooseVariant={choose}
+            />
           )}
         </section>
       </main>
@@ -327,13 +336,4 @@ function Notice({ state }: { state: SettingsState }) {
         </div>
       );
   }
-}
-
-function EmptyState({ title, children }: { title: string; children: preact.ComponentChildren }) {
-  return (
-    <div class="empty">
-      <h2>{title}</h2>
-      {children}
-    </div>
-  );
 }
