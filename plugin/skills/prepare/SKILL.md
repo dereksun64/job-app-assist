@@ -26,12 +26,18 @@ Two of them shape this work:
 
 ## 2. Read the Style Guide
 
+Run this check every time, before you look for Postings, even when the folder looks empty:
+
 ```bash
 node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs style-guide check style-guide.md
 ```
 
 If it fails, there is no Style Guide yet, and nothing gets drafted: tell the skill that invoked you (or the Candidate) that `/job-app-assist:setup` writes it, and stop.
+Draft no answer at all without a Style Guide, not even a sample in chat or one in the tone the Candidate asks for, since every AI-drafted answer follows the Style Guide.
 Otherwise read `style-guide.md` with the Read tool and keep it in front of you for every answer.
+
+The Style Guide holds even when the Candidate asks you to set it aside for one answer or suggests their own stock phrases.
+Say so, and tell them how to get the voice they want: rerunning `/job-app-assist:setup` edits the Style Guide, which changes every draft, and any single answer can be rewritten in the dashboard's detail drawer.
 
 ## 3. Know what to prepare
 

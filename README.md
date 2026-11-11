@@ -208,5 +208,6 @@ npm run eval
 
 `npm run ci` typechecks, lints, runs the tests and checks that `plugin/dist/` is up to date.
 `npm run eval` runs the plugin eval suite in `plugin/evals/` with `claude plugin eval`.
+It grants Bash, WebSearch and WebFetch, so each case gets the tools it lists in `allowed_tools`, and the cases that check a tool is never used, such as a LinkedIn fetch, test a model that could use it.
 
 Domain language is in [CONTEXT.md](CONTEXT.md), and design decisions are in [docs/adr/](docs/adr/).
