@@ -1,15 +1,15 @@
 ---
 name: setup
-description: Set up Job App Assist. Drafts the Candidate's Search Profile from a plain-language description, records their labeled Resume Variants, asks whether Refresh may read their Gmail to track applications, saves it all once they confirm, publishes their private dashboard, optionally imports their LinkedIn connections export for Referral Drafts, and creates the private file of sensitive answers Fill uses. Use when the Candidate wants to get started, change their Search Profile, add or change their resumes, switch Gmail tracking on or off, create their dashboard, import their LinkedIn connections, or set up their private answers.
+description: Set up Job App Assist. Drafts the Candidate's Search Profile from a plain-language description, records their labeled Resume Variants, asks whether Refresh may read their Gmail to track applications, saves it all once they confirm, publishes their private dashboard, optionally imports their LinkedIn connections export for Referral Drafts, creates the private file of sensitive answers Fill uses, and writes the Style Guide every AI-drafted answer follows. Use when the Candidate wants to get started, change their Search Profile, add or change their resumes, switch Gmail tracking on or off, create their dashboard, import their LinkedIn connections, set up their private answers, or change how their drafted answers sound.
 argument-hint: "[the jobs you want, in your own words]"
-allowed-tools: Bash(node --version) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs validate *) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs check-resumes *) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs import-connections *) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs private-answers init private-answers.md) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs private-answers check private-answers.md) Bash(mkdir -p .job-app-assist) Bash(cp ${CLAUDE_PLUGIN_ROOT}/dist/dashboard.html .job-app-assist/dashboard.html) Bash(date -u *)
+allowed-tools: Bash(node --version) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs validate *) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs check-resumes *) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs import-connections *) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs private-answers init private-answers.md) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs private-answers check private-answers.md) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs style-guide init style-guide.md) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs style-guide check style-guide.md) Bash(mkdir -p .job-app-assist) Bash(cp ${CLAUDE_PLUGIN_ROOT}/dist/dashboard.html .job-app-assist/dashboard.html) Bash(date -u *)
 ---
 
 # Setup
 
 Setup turns the Candidate's own words into a Search Profile, records their Resume Variants, asks whether Refresh may read their Gmail, saves it all only after they confirm it, and gives them their private dashboard: a claude.ai Artifact in their own account with News, Postings and Progress tabs.
 It can also import the Candidate's LinkedIn connections, so each Refresh can suggest Referral Drafts.
-Last, it creates the private file of sensitive answers that Fill reads, which stays in the Candidate folder.
+Last, it creates the private file of sensitive answers that Fill reads, and the Style Guide every AI-drafted answer follows; both stay in the Candidate folder.
 The current working directory is the Candidate folder; Setup's local state lives in `.job-app-assist/` inside it.
 
 ## 1. Load the hard rules
@@ -26,6 +26,7 @@ Also read `.job-app-assist/resume-variants.json` if it exists: it lists the Resu
 Note whether `.job-app-assist/connections.json` exists: it means the Candidate imported their connections before.
 
 When the Candidate only asks to import their LinkedIn connections and the dashboard already exists, go straight to step 12.
+When they only ask to change how their drafted answers sound, go straight to step 14.
 
 ## 3. Hear what the Candidate wants
 
@@ -254,9 +255,40 @@ node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs private-answers check private-answers.md
 Never copy an answer from this file into the dashboard, a settings document or any other file.
 If the Candidate wants to finish the file later, carry on; Fill reminds them when it runs.
 
-## 14. Hand over
+## 14. Write the Style Guide
+
+Refresh and Fill draft answers to the free-text questions on application forms ("Tell us about a project you are proud of"), and every draft follows the Candidate's Style Guide so it sounds like them rather than generic.
+It lives in `style-guide.md` in the Candidate folder.
+
+```bash
+node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs style-guide init style-guide.md
+```
+
+It creates the file from a template, and leaves an existing file exactly as it is.
+On a rerun where the file already has a tone, ask only whether the Candidate wants to change anything, and skip to the check below on a no.
+
+Otherwise ask the Candidate, in one message, for three things:
+
+1. How they sound when they write: plain or polished, short or detailed, how formal, anything they care about (for example "direct and warm, short sentences, numbers over adjectives").
+2. Words or phrases they never want in their answers (for example "passionate about", "leverage", "I am excited to").
+3. Two or three answers they wrote themselves for past applications or school essays, pasted in chat or as a file in the Candidate folder; these are optional but help the most.
+
+Write their words into `style-guide.md` with the Edit tool: the tone under `## Tone` in their own phrasing, each phrase as a `- phrase` line under `## Phrases to avoid`, and each sample under `## Sample answers` below a `### <the question it answered>` heading.
+Keep the template's comments, and never add a fact about the Candidate they did not give.
+Show them the result and ask whether it sounds like them; edit it until they say it does.
+They can also edit the file themselves at any time.
+Then check it:
+
+```bash
+node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs style-guide check style-guide.md
+```
+
+It fails while the tone is empty; until it passes, Refresh and Fill draft no answers and leave free-text questions for the Candidate.
+If the Candidate wants to finish it later, carry on.
+
+## 15. Hand over
 
 Give the Candidate the dashboard link and a one-line summary of the saved Search Profile, Resume Variants and Gmail tracking choice, and whether Referral Drafts are on.
 Tell them the Search Profile appears at the top of the dashboard, and that News, Postings and Progress fill in once they refresh.
 Mention the Sources button beside the tabs, where they can switch Sources on or off, follow companies on a watchlist, and add Postings by URL.
-Say how many questions `private-answers.md` still leaves blank, and that `/job-app-assist:fill` fills their queued applications in Helium once they have refreshed and queued some Postings.
+Say whether the Style Guide is written (and that AI-drafted answers follow it, marked as AI-drafted in each queued Posting's drawer, where the Candidate can edit them or write their own), how many questions `private-answers.md` still leaves blank, and that `/job-app-assist:fill` fills their queued applications in Helium once they have refreshed and queued some Postings.
