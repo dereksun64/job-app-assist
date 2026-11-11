@@ -21,20 +21,22 @@ import {
   canonicalApplyUrl,
   chosenVariant,
   compareQueueOrder,
+  finalAnswers,
   finishFill,
   startFill,
   validateCardDocument,
   validateSettings,
-  validateVariantOverrideDocument,
+  APPLICATIONS_COLLECTION,
+  validateApplicationDocument,
   type Card,
   type FillRecord,
-  type VariantOverride,
+  type FinalAnswer,
+  type PreparedApplication,
 } from "../contract/index.ts";
 import { FillError, messageOf, type FillIo } from "./io.ts";
+import { readCards, readJsonFile, readManifest, readOverrides, savedIds } from "./state.ts";
 import { PRIVATE_ANSWERS_FILE } from "./private-answers.ts";
 import { sessionUsage, type TokenUsage } from "./usage.ts";
-
-export const RESUME_MANIFEST = ".job-app-assist/resume-variants.json";
 
 const POSTING_ID = /^[0-9a-f]{12}$/;
 
@@ -53,6 +55,11 @@ export interface PlannedPosting {
   signInLikely?: string;
   /** Set when an earlier Fill stopped without finishing this card. */
   fillingSince?: string;
+  /**
+   * The final answer to each free-text question, from the card's Prepared Application; absent
+   * when the card has none yet, so Fill prepares it from the form.
+   */
+  answers?: FinalAnswer[];
 }
 
 /** Hosts of applicant tracking systems that usually ask for a sign-in or a new account. */
@@ -83,63 +90,30 @@ const plural = (n: number, word: string, many = `${word}s`) =>
 const fmt = (n: number) => n.toLocaleString("en-US");
 const name = (card: Card) => `${card.posting.company} - ${card.posting.title}`;
 
-async function readJsonFile(io: FillIo, path: string): Promise<unknown> {
-  let text: string;
-  try {
-    text = await io.readFile(path);
-  } catch {
-    return undefined;
-  }
-  try {
-    return JSON.parse(text) as unknown;
-  } catch {
-    throw new FillError(`${path} is not valid JSON.`);
-  }
-}
-
-async function savedIds(io: FillIo, folder: string): Promise<string[]> {
-  return (await io.readDir(folder))
-    .filter((file) => file.endsWith(".json"))
-    .map((file) => file.slice(0, -".json".length))
-    .sort();
-}
-
-async function readCards(io: FillIo, dir: string): Promise<Card[]> {
-  const folder = join(dir, "state", CARDS_COLLECTION);
-  const cards: Card[] = [];
+async function readApplications(
+  io: FillIo,
+  dir: string,
+): Promise<Map<string, PreparedApplication>> {
+  const folder = join(dir, "state", APPLICATIONS_COLLECTION);
+  const found = new Map<string, PreparedApplication>();
   for (const id of await savedIds(io, folder)) {
-    const result = validateCardDocument(id, await readJsonFile(io, join(folder, `${id}.json`)));
-    if (result.ok) cards.push(result.value as Card);
-  }
-  return cards;
-}
-
-async function readOverrides(io: FillIo, dir: string): Promise<Map<string, VariantOverride>> {
-  const folder = join(dir, "state", "variantOverrides");
-  const overrides = new Map<string, VariantOverride>();
-  for (const id of await savedIds(io, folder)) {
-    const result = validateVariantOverrideDocument(
+    const result = validateApplicationDocument(
       id,
       await readJsonFile(io, join(folder, `${id}.json`)),
     );
-    if (result.ok) overrides.set(id, result.value);
+    if (result.ok) found.set(id, result.value);
   }
-  return overrides;
+  return found;
 }
 
-async function readManifest(io: FillIo): Promise<Map<string, string>> {
-  const problem = new FillError(
-    `${RESUME_MANIFEST} does not list your Resume Variant files. Run /job-app-assist:setup to record them.`,
-  );
-  const manifest = (await readJsonFile(io, RESUME_MANIFEST)) as
-    { variants?: { name?: unknown; file?: unknown }[] } | undefined;
-  if (!Array.isArray(manifest?.variants)) throw problem;
-  const files = new Map<string, string>();
-  for (const { name: variant, file } of manifest.variants) {
-    if (typeof variant !== "string" || typeof file !== "string") throw problem;
-    files.set(variant, file);
-  }
-  return files;
+function preparedLine(answers: readonly FinalAnswer[] | undefined): string {
+  if (answers === undefined) return "No Prepared Application yet: prepare it from the form";
+  if (answers.length === 0) return "Prepared Application: no free-text questions";
+  const typed = answers.filter((a) => a.answer !== null).length;
+  const blank = answers.length - typed;
+  const parts = [plural(typed, "answer") + " to type"];
+  if (blank > 0) parts.push(`${plural(blank, "brief-mode answer")} the Candidate has not written`);
+  return `Prepared Application: ${parts.join(", ")}`;
 }
 
 /** The cards a query names: by Posting id, by apply URL, or by words in company and title. */
@@ -175,6 +149,7 @@ async function plan(dir: string, query: string | undefined, io: FillIo): Promise
   const variantNames = settings.value.resumeVariants.map((v) => v.name);
   const files = await readManifest(io);
   const overrides = await readOverrides(io, dir);
+  const applications = await readApplications(io, dir);
   const cards = await readCards(io, dir);
   const queued = cards.filter((c) => c.stage === "queued").sort(compareQueueOrder);
 
@@ -227,6 +202,8 @@ async function plan(dir: string, query: string | undefined, io: FillIo): Promise
     const site = signInSite(card.posting.applyUrl);
     if (site !== undefined) planned.signInLikely = site;
     if (card.fillingSince !== undefined) planned.fillingSince = card.fillingSince;
+    const application = applications.get(card.postingId);
+    if (application !== undefined) planned.answers = finalAnswers(application);
     postings.push(planned);
   }
   if (problems.length > 0) {
@@ -254,6 +231,7 @@ async function plan(dir: string, query: string | undefined, io: FillIo): Promise
     if (p.signInLikely) out.push(`   Usually needs a sign-in: ${p.signInLikely}`);
     if (p.fillingSince)
       out.push(`   Still marked as filling from an earlier Fill (${p.fillingSince})`);
+    out.push(`   ${preparedLine(p.answers)}`);
     return out.join("\n");
   });
   const heading =

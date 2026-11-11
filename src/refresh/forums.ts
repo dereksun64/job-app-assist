@@ -59,7 +59,7 @@ const ENTITIES: Record<string, string> = {
   nbsp: " ",
 };
 
-function decode(text: string): string {
+export function decode(text: string): string {
   return text.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (whole, name: string) => {
     if (name.startsWith("#x") || name.startsWith("#X")) {
       return String.fromCodePoint(Number.parseInt(name.slice(2), 16));
@@ -69,7 +69,7 @@ function decode(text: string): string {
   });
 }
 
-function plain(html: string): string {
+export function plain(html: string): string {
   return decode(html.replace(/<[^>]*>/g, " "))
     .replace(/\s+/g, " ")
     .trim();
