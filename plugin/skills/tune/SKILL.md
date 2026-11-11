@@ -2,7 +2,7 @@
 name: tune
 description: Tune the Candidate's recommendations. Turns plain-language requests ("more AI startups, fewer defense contractors", "stop showing Workday-only postings", "add PM rotational programs but rank them low", "queue 10 a day") and patterns in their skip reasons into an exact settings diff, shows it, and saves it only after they approve. Use when the Candidate wants to change what gets recommended, ranked, boosted, blocked or queued, or asks what their skips suggest.
 argument-hint: "[what to change, in your own words]"
-allowed-tools: Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs tune-report .job-app-assist/tune) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs settings-diff *) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs validate *) Bash(rm -rf .job-app-assist/tune/state) Bash(mkdir -p .job-app-assist/tune) Bash(date -u *)
+allowed-tools: Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs tune-report .job-app-assist/tune) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs settings-diff *) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs validate *) Bash(rm -rf .job-app-assist/tune/state) Bash(mkdir -p .job-app-assist/tune) Bash(date -u *) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs dashboard check .job-app-assist) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs dashboard record .job-app-assist *)
 ---
 
 # Tune
@@ -22,6 +22,16 @@ Read `.job-app-assist/dashboard.json`.
 It holds `{ "url": "<dashboard Artifact URL>", "pageVersion": "<version>" }`.
 If it does not exist, tell the Candidate that Tune needs their dashboard first, ask them to run `/job-app-assist:setup`, and stop.
 If the `ArtifactData` tool is not available, tell the Candidate that Tune needs Claude Code signed in with the claude.ai account that owns their dashboard, and stop; nothing has changed.
+
+Then bring the dashboard page up to date:
+
+```bash
+node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs dashboard check .job-app-assist
+```
+
+When it says the Toolkit has a newer dashboard page, read the dashboard `url` with the `Artifact` tool, then publish `.job-app-assist/dashboard.html` to that `url` without passing `capabilities`, so the page keeps its database and its data, and run the `jaa dashboard record` command it printed.
+If the publish fails, say so at the end and carry on.
+When it says the page is up to date, or newer than this Toolkit, there is nothing to publish.
 
 ## 3. Save the dashboard state
 

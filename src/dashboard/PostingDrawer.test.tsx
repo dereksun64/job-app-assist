@@ -238,7 +238,7 @@ describe("detail drawer", () => {
     const select = within(drawer).getByRole("combobox", { name: "Resume Variant" });
     await user.selectOptions(select, "Generalist SWE");
     expect(await within(drawer).findByRole("alert")).toHaveTextContent(
-      "Your choice wasn't saved: your dashboard storage is full.",
+      "Your dashboard storage is full, so this change wasn't saved. To make room, ask your Claude to run /job-app-assist:tidy.",
     );
     expect(select).toHaveValue("Backend SWE/SDE");
   });

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
+import { ProblemText } from "./ProblemText.tsx";
 import {
   ADDED_BY_URL_SOURCE,
   ADDED_BY_URL_SOURCE_ID,
@@ -153,7 +154,7 @@ export function SourcesPanel({ db, state, jobList, now, onClose }: SourcesPanelP
         )}
         {problem && (
           <p class="notice notice-problem" role="alert">
-            {problem}
+            <ProblemText text={problem} />
           </p>
         )}
 

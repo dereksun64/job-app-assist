@@ -13,7 +13,7 @@ import {
   type Stage,
   type Validation,
 } from "../contract/index.ts";
-import type { DashboardDb, DbError, QuerySnapshot } from "./db.ts";
+import type { DashboardDb, QuerySnapshot } from "./db.ts";
 
 export type QueueState =
   | { kind: "loading" }
@@ -141,13 +141,4 @@ function checked<T extends Card | Skip>(
     );
   }
   return data;
-}
-
-/** A sentence for the Candidate when a Queue change could not be saved. */
-export function saveProblem(error: unknown): string {
-  const code = (error as Partial<DbError> | undefined)?.code;
-  if (code === "quota_exceeded" || code === "resource_exhausted") {
-    return "Your dashboard storage is full, so that change wasn't saved.";
-  }
-  return "That change wasn't saved. Check your connection and try again.";
 }

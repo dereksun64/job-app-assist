@@ -162,7 +162,7 @@ describe("ticking Postings into the Queue", () => {
     await user.click(tickOf("Brainy"));
     await settle();
     expect(screen.getByRole("alert")).toHaveTextContent(
-      "Your dashboard storage is full, so that change wasn't saved.",
+      "Your dashboard storage is full, so this change wasn't saved. To make room, ask your Claude to run /job-app-assist:tidy.",
     );
     expect(tickOf("Brainy")).not.toBeChecked();
   });

@@ -5,6 +5,7 @@
  * click switches a question between the two, and Fill types whichever the question is set to.
  * The page never calls Claude: Refresh and Fill prepare the answers, the page only edits them.
  */
+import { ProblemText } from "./ProblemText.tsx";
 import { useId, useState } from "preact/hooks";
 import {
   editAnswer,
@@ -17,7 +18,7 @@ import {
   type QuestionType,
   type ResearchBrief,
 } from "../contract/index.ts";
-import type { DbError } from "./db.ts";
+import { saveProblem } from "./saveProblem.ts";
 import { formatDate } from "./format.ts";
 
 /** Saves a change built at the given moment (an ISO timestamp); rejects when it is refused. */
@@ -46,15 +47,6 @@ const MODE_LABELS: Record<AnswerMode, string> = {
   ai: "AI draft",
   brief: "My own words",
 };
-
-function whyNotSaved(error: unknown): string {
-  const code = (error as Partial<DbError> | undefined)?.code;
-  if (code === "quota_exceeded" || code === "resource_exhausted") {
-    return "your dashboard storage is full.";
-  }
-  if (code === "unavailable") return "your dashboard data can't be reached. Try again.";
-  return "something went wrong. Try again.";
-}
 
 export function PreparedAnswers({
   application,
@@ -136,7 +128,7 @@ function Answer({
         setStatus({ kind: "saved" });
       },
       (error: unknown) => {
-        setStatus({ kind: "failed", message: `Your change wasn't saved: ${whyNotSaved(error)}` });
+        setStatus({ kind: "failed", message: saveProblem(error) });
       },
     );
   };
@@ -246,7 +238,7 @@ function Answer({
       )}
       {status.kind === "failed" && (
         <p class="answer-error" role="alert">
-          {status.message}
+          <ProblemText text={status.message} />
         </p>
       )}
     </article>

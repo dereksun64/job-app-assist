@@ -26,6 +26,10 @@ _Avoid_: Location preference, region
 One of a small, fixed set of hand-written resumes, each aimed at a role type; the tool picks one per Posting and never edits its content.
 _Avoid_: Tailored resume, resume version
 
+**Tidy**:
+Making room in a full dashboard by removing old history the Candidate approves: cards Closed for a while with their answers, leftovers with no card, old skips and old News Digests; never open cards, settings, Sources or the Job List.
+_Avoid_: Cleanup, purge, prune
+
 **Style Guide**:
 The Candidate's written description of how they sound (tone, phrases to avoid, sample answers), which every AI-drafted answer follows.
 _Avoid_: Voice profile, tone settings

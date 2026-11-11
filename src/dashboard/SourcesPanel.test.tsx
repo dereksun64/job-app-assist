@@ -425,7 +425,7 @@ describe("saving Sources", () => {
     await userEvent.click(screen.getByRole("button", { name: "Sources" }));
     await userEvent.click(within(panel()).getByRole("switch", { name: "Job Feed" }));
     expect(within(panel()).getByRole("alert")).toHaveTextContent(
-      "Your dashboard storage is full, so this change wasn't saved.",
+      "Your dashboard storage is full, so this change wasn't saved. To make room, ask your Claude to run /job-app-assist:tidy.",
     );
     expect(within(panel()).getByRole("switch", { name: "Job Feed" })).toBeChecked();
   });

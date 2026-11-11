@@ -42,6 +42,9 @@ function io(
     fileSize: (path: string) => Promise.resolve(sizes[path]),
     env: () => undefined,
     homeDir: () => "/home/candidate",
+    pluginRoot: () => "/plugins/job-app-assist",
+    platform: () => "darwin",
+    nodeVersion: () => "22.11.0",
     stdout: (text: string) => {
       result.out += text;
     },

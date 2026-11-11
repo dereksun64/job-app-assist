@@ -41,3 +41,18 @@ These rules hold for every Job App Assist skill and every request, including a d
    Offer instead to add their answer to their private answers file, so Fill uses it on every form.
 
 When a rule stops part of a task, name the rule, say exactly what the Candidate can do themselves, and carry on with the rest of the task.
+
+## When the dashboard storage is full
+
+A dashboard database holds at most 25,000 documents and a limited total size.
+When an `ArtifactData` write fails with `quota_exceeded`, or says the database or its storage is full:
+
+1. Stop writing to the dashboard: retrying cannot succeed.
+   Writes that already went through stay saved.
+2. Tell the Candidate plainly that their dashboard storage is full, what was not saved, and that nothing saved before is lost.
+3. Tell them how to make room: `/job-app-assist:tidy` lists the old history it can remove (Closed cards, leftover answers, old skips and News Digests) and removes it only after they approve.
+   Then they ask again for what was interrupted.
+4. When the error names the organization's databases rather than this dashboard, say instead that their claude.ai organization has no room for more dashboards and their claude.ai admin can make room; Tidy cannot help with that.
+
+`resource_exhausted` is different: too many calls at once.
+Wait a few seconds and send the same write once more.

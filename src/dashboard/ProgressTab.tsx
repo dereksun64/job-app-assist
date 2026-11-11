@@ -7,6 +7,7 @@
  * A card Refresh moved from Gmail shows the email behind the move; dragging it back undoes the move.
  * A Submitted card with no reply for 14 days is flagged for follow-up.
  */
+import { ProblemText } from "./ProblemText.tsx";
 import { useEffect, useId, useMemo, useRef, useState } from "preact/hooks";
 import {
   POSSIBLY_CLOSED_DAYS,
@@ -27,7 +28,8 @@ import {
 import { CLOSED_REASON_LABELS, STAGE_LABELS, count, formatMomentDay } from "./format.ts";
 import { PostingDrawer } from "./PostingDrawer.tsx";
 import type { ResumeVariantProps } from "./PostingsTab.tsx";
-import { saveProblem, type QueueActions, type QueueState } from "./useQueue.ts";
+import { saveProblem } from "./saveProblem.ts";
+import type { QueueActions, QueueState } from "./useQueue.ts";
 
 export interface ProgressTabProps extends ResumeVariantProps {
   queue: QueueState;
@@ -132,7 +134,7 @@ export function ProgressTab({
       </p>
       {problem && (
         <p class="notice notice-problem" role="alert">
-          {problem}
+          <ProblemText text={problem} />
         </p>
       )}
       <section class="board" aria-label="Progress board">
@@ -409,7 +411,7 @@ function StageSection({
       )}
       {problem && (
         <p class="variant-error" role="alert">
-          {problem}
+          <ProblemText text={problem} />
         </p>
       )}
     </section>

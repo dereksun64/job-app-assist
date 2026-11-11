@@ -4,6 +4,7 @@
  * Drafts. It is shared: the Postings tab and the Progress board open the same drawer, and the
  * board adds its own sections (Stage, Fill) as children.
  */
+import { ProblemText } from "./ProblemText.tsx";
 import type { ComponentChildren } from "preact";
 import { useEffect, useId, useRef, useState } from "preact/hooks";
 import {
@@ -13,7 +14,7 @@ import {
   type Referrals,
   type VariantOverride,
 } from "../contract/index.ts";
-import type { DbError } from "./db.ts";
+import { saveProblem } from "./saveProblem.ts";
 import { formatLevel, formatPostedAge } from "./format.ts";
 import {
   PreparedAnswers,
@@ -45,15 +46,6 @@ type Save =
   | { kind: "saving"; variant: string }
   | { kind: "saved" }
   | { kind: "failed"; message: string };
-
-function whyNotSaved(error: unknown): string {
-  const code = (error as Partial<DbError> | undefined)?.code;
-  if (code === "quota_exceeded" || code === "resource_exhausted") {
-    return "your dashboard storage is full.";
-  }
-  if (code === "unavailable") return "your dashboard data can't be reached. Try again.";
-  return "something went wrong. Try again.";
-}
 
 function sourceText(posting: Posting): string {
   const byName = new Map<string, string[]>();
@@ -122,7 +114,7 @@ export function PostingDrawer({
         setSave({ kind: "saved" });
       },
       (error: unknown) => {
-        setSave({ kind: "failed", message: `Your choice wasn't saved: ${whyNotSaved(error)}` });
+        setSave({ kind: "failed", message: saveProblem(error) });
       },
     );
   };
@@ -214,7 +206,7 @@ export function PostingDrawer({
             )}
             {save.kind === "failed" && (
               <p class="variant-error" role="alert">
-                {save.message}
+                <ProblemText text={save.message} />
               </p>
             )}
           </section>

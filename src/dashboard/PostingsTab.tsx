@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
+import { ProblemText } from "./ProblemText.tsx";
 import {
   JOB_FEED_SOURCE,
   WATCHLIST_SOURCE,
@@ -29,7 +30,8 @@ import {
 import { PostingDrawer } from "./PostingDrawer.tsx";
 import type { SaveApplication } from "./PreparedAnswers.tsx";
 import type { JobListState } from "./useJobList.ts";
-import { saveProblem, type QueueActions, type QueueState } from "./useQueue.ts";
+import { saveProblem } from "./saveProblem.ts";
+import type { QueueActions, QueueState } from "./useQueue.ts";
 
 /** How many Postings the list shows at first, and adds per "Show more". */
 export const PAGE_SIZE = 100;
@@ -329,7 +331,7 @@ function JobList({
       )}
       {problem && (
         <p class="notice notice-problem" role="alert">
-          {problem}
+          <ProblemText text={problem} />
         </p>
       )}
 
