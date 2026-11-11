@@ -2,7 +2,7 @@
 
 A Claude Code plugin that lets your own Claude find, prepare and fill job applications on demand, so you only review and submit them.
 Everything lands in a private dashboard in your own claude.ai account, with News, Postings and Progress tabs.
-Your Claude never submits an application, never sends a message as you, and never signs in for you.
+Your Claude never submits an application, never sends a message as you, never signs in for you, and never claims anything about you that you did not give it: it leaves those questions blank and flags them for you.
 
 Setup, Refresh, the Queue, Sources, the News Digest, the Progress board, Settings, Tune, Referral Drafts, Prepared Applications, Fill and Tidy all work today.
 It runs on a Mac.
