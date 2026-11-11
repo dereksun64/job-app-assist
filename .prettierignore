@@ -1,3 +1,4 @@
 plugin/dist
 plugin/evals/results
 package-lock.json
+.claude/worktrees
