@@ -1,4 +1,5 @@
-import type { Posting, ResumeVariantPick, VariantOverride } from "../contract/index.ts";
+import type { Posting, ResumeVariantPick } from "./postings.ts";
+import type { VariantOverride } from "./variant-overrides.ts";
 
 /** The Resume Variant a Posting will use: the Candidate's own choice, or else Refresh's pick. */
 export interface ChosenVariant {

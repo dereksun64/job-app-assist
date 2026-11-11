@@ -40,6 +40,8 @@ function io(
     sleep: () => Promise.resolve(),
     readStdin: () => Promise.resolve(stdin),
     fileSize: (path: string) => Promise.resolve(sizes[path]),
+    env: () => undefined,
+    homeDir: () => "/home/candidate",
     stdout: (text: string) => {
       result.out += text;
     },
@@ -292,4 +294,29 @@ describe("jaa import-connections", () => {
       expect(cli.err).toContain("Usage: jaa validate");
     },
   );
+});
+
+describe("jaa private-answers and jaa fill", () => {
+  it("runs the private-answers steps and checks their arguments", async () => {
+    const cli = io({ "private-answers.md": "- Legal first name: Sam\n" });
+    expect(await runCli(["private-answers", "check", "private-answers.md"], cli)).toBe(0);
+    expect(cli.out).toBe("private-answers.md answers every question.\n");
+    expect(await runCli(["private-answers", "show", "private-answers.md"], cli)).toBe(2);
+    expect(await runCli(["private-answers", "init"], cli)).toBe(2);
+  });
+
+  it("runs the fill steps", async () => {
+    const cli = io();
+    expect(await runCli(["fill", "plan", ".job-app-assist/fill"], cli)).toBe(1);
+    expect(cli.err).toContain("There is no private-answers.md in the Candidate folder");
+    expect(await runCli(["fill"], cli)).toBe(2);
+  });
+
+  it("lists the new commands in its help", async () => {
+    const cli = io();
+    expect(await runCli(["--help"], cli)).toBe(0);
+    expect(cli.out).toContain("jaa private-answers init|check <file>");
+    expect(cli.out).toContain("jaa fill plan <dir> [--posting <words|id|apply URL>]");
+    expect(cli.out).toContain("jaa fill finish <dir> <posting-id> --version <n>");
+  });
 });

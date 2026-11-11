@@ -1,17 +1,21 @@
 /**
  * `jaa`: the Toolkit's command-line entry point, bundled into plugin/dist/jaa.mjs.
  * Skills run it to check a document against the dashboard contract before writing it, and the
- * Refresh skill runs it to build the Job List and the News Digest, and the Tune skill to read skip
- * patterns and show a settings diff.
+ * Refresh skill runs it to build the Job List and the News Digest, the Tune skill to read skip
+ * patterns and show a settings diff, and the Fill skill to plan each Fill, build the cards it
+ * writes and log token use.
  */
 import { validateDocument } from "../contract/index.ts";
+import type { FillIo } from "../fill/io.ts";
+import { runPrivateAnswers } from "../fill/private-answers.ts";
+import { FILL_USAGE, runFill } from "../fill/run.ts";
 import { runNewsCommand, type NewsIo } from "../refresh/news.ts";
 import { runRefreshCommand } from "../refresh/run.ts";
 import { runImportConnections, type ConnectionsIo } from "./connections.ts";
 import { runCheckResumes, type ResumeIo } from "./resumes.ts";
 import { runSettingsDiff, runTuneReport } from "../tune/run.ts";
 
-export interface CliIo extends NewsIo, ResumeIo, ConnectionsIo {}
+export interface CliIo extends NewsIo, ResumeIo, ConnectionsIo, FillIo {}
 
 const USAGE = `Usage: jaa validate <collection> <doc-id> <file|->
        jaa refresh <dir> [--feed <url|file> | --rerun]
@@ -21,6 +25,8 @@ const USAGE = `Usage: jaa validate <collection> <doc-id> <file|->
        jaa tune-report <dir>
        jaa settings-diff <current-file> <proposed-file|->
        jaa import-connections <export.csv> <out.json>
+       jaa private-answers init|check <file>
+${FILL_USAGE}
 
 validate       Checks one dashboard document (JSON, from a file or from stdin with -)
                against the dashboard contract. Exits 0 when it matches, 1 when it does not.
@@ -45,6 +51,16 @@ import-connections
                Reads a LinkedIn connections export (Connections.csv) and saves each
                connection's name, company and position to <out.json>, for Referral Drafts.
                Email addresses and profile links are not kept.
+private-answers
+               init creates the private file of sensitive answers from its template when
+               it is missing, and never overwrites it; check names the blank answers
+               without printing any answer. The file never goes to the dashboard.
+fill           plan lists the Queued cards to fill in Queue order (or the one --posting
+               names) with each one's Resume Variant file, from the dashboard state saved
+               in <dir>/state, and writes <dir>/out/plan.json. start marks a card as
+               filling; finish records <dir>/results/<posting-id>.json on the card and
+               logs the application's token use in <dir>/usage.jsonl. Both write the card
+               and its ArtifactData batch to <dir>/out.
 `;
 
 /** Runs the CLI and resolves its exit code. */
@@ -73,6 +89,15 @@ export async function runCli(argv: readonly string[], io: CliIo): Promise<number
       return 2;
     }
     return runCheckResumes(manifest, settings, io);
+  }
+  if (argv[0] === "fill") return runFill(argv.slice(1), io);
+  if (argv[0] === "private-answers") {
+    const [, step, file, ...rest] = argv;
+    if ((step !== "init" && step !== "check") || !file || rest.length > 0) {
+      io.stderr(USAGE);
+      return 2;
+    }
+    return runPrivateAnswers(step, file, io);
   }
   if (argv[0] === "news") {
     const [, step, dir, ...rest] = argv;

@@ -2,6 +2,8 @@
  * The Progress tab: every card on a board with one column per Stage. The Candidate drags a card
  * to another column, or opens it in the shared detail drawer and changes its Stage there.
  * Moving a card to Closed first asks whether the Candidate was rejected or withdrew.
+ * Once Fill has worked on a card, the card says how many fields to check (or that the site needs
+ * a sign-in), and the drawer lists each flagged field with what to do.
  */
 import { useEffect, useId, useMemo, useRef, useState } from "preact/hooks";
 import {
@@ -12,6 +14,9 @@ import {
   stageSince,
   type Card,
   type ClosedReason,
+  type FillFlagKind,
+  type FillRecord,
+  type SimplifyResult,
   type Posting,
   type Stage,
 } from "../contract/index.ts";
@@ -212,6 +217,7 @@ export function ProgressTab({
               request(open, stage);
             }}
           />
+          {open.fill && <FillSection fill={open.fill} />}
         </PostingDrawer>
       )}
 
@@ -262,6 +268,22 @@ function BoardCard({
     if (unlisted) flags.push({ text: "No longer in your Job List", warning: true });
     if (age >= 1) flags.push({ text: `${count(age, "day")} in Queue` });
     if (age >= POSSIBLY_CLOSED_DAYS) flags.push({ text: "Possibly closed", warning: true });
+  }
+  if (card.fill && !filling) {
+    const { outcome, flags: fillFlags } = card.fill;
+    if (card.stage === "queued" && outcome === "needs_sign_in") {
+      flags.push({ text: "Sign-in needed", warning: true });
+    }
+    if (card.stage === "queued" && outcome === "stopped") {
+      flags.push({ text: "Fill stopped", warning: true });
+    }
+    if (card.stage === "ready_for_review" && outcome === "filled") {
+      flags.push(
+        fillFlags.length > 0
+          ? { text: `${String(fillFlags.length)} to check`, warning: true }
+          : { text: "Nothing flagged" },
+      );
+    }
   }
   if (card.stage === "closed" && card.closedReason) {
     flags.push({ text: CLOSED_REASON_LABELS[card.closedReason] });
@@ -353,6 +375,76 @@ function StageSection({
       {problem && (
         <p class="variant-error" role="alert">
           {problem}
+        </p>
+      )}
+    </section>
+  );
+}
+
+const FLAG_KIND_LABELS: Record<FillFlagKind, string> = {
+  uncertain: "Not sure",
+  legal_claim: "Claim about you",
+  free_text: "Write it yourself",
+  missing_answer: "Not in your private file",
+  resume: "Resume",
+  sign_in: "Sign-in",
+  problem: "Problem",
+};
+
+const SIMPLIFY_LABELS: Record<SimplifyResult, string | undefined> = {
+  filled: "Simplify filled the standard fields first, then your Claude checked every field.",
+  absent: "Simplify did not appear, so your Claude filled every field.",
+  failed: "Simplify's Autofill did not work, so your Claude filled every field.",
+  not_tried: undefined,
+};
+
+/** What the last Fill did on the form, and each field it left for the Candidate. */
+function FillSection({ fill }: { fill: FillRecord }) {
+  const headingId = useId();
+  const filled = fill.outcome === "filled";
+  const summary = [
+    `Filled ${formatMomentDay(fill.at)}.`,
+    SIMPLIFY_LABELS[fill.simplify],
+    fill.resumeVariant && `Uploaded ${fill.resumeVariant}.`,
+  ]
+    .filter(Boolean)
+    .join(" ");
+  return (
+    <section class="drawer-section" aria-labelledby={headingId}>
+      <h3 class="drawer-heading" id={headingId}>
+        Flagged by Fill
+      </h3>
+      {filled && <p class="variant-reason">{summary}</p>}
+      {fill.outcome === "needs_sign_in" && (
+        <p class="variant-reason fill-stopped">
+          This site needs you to sign in or create an account, which only you do. Your Claude
+          stopped there on {formatMomentDay(fill.at)} and kept the card Queued.
+        </p>
+      )}
+      {fill.outcome === "stopped" && (
+        <p class="variant-reason fill-stopped">
+          Your Claude could not fill this form on {formatMomentDay(fill.at)} and kept the card
+          Queued.
+        </p>
+      )}
+      {fill.flags.length > 0 && (
+        <ul class="fill-flags">
+          {fill.flags.map((flag, index) => (
+            <li key={index} class="fill-flag">
+              <span class="fill-flag-head">
+                <span class="fill-flag-field">{flag.field}</span>
+                <span class="flag fill-flag-kind">{FLAG_KIND_LABELS[flag.kind]}</span>
+              </span>
+              <span class="fill-flag-note">{flag.note}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+      {filled && (
+        <p class="variant-reason">
+          {fill.flags.length > 0
+            ? "Check these in the application's tab in Helium, then submit it yourself."
+            : "Nothing was flagged. Look the form over in its tab in Helium, then submit it yourself."}
         </p>
       )}
     </section>
