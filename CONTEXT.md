@@ -90,6 +90,10 @@ _Avoid_: Apply (as a tool action), send
 Where a queued Posting is in its whole lifecycle, shown as a column on the Progress board: Queued, Ready for Review, Submitted, Interviewing, Offer, or Closed (rejected or withdrawn). A Posting being Filled stays Queued, marked as filling.
 _Avoid_: Status, application status, column, step
 
+**Stage evidence**:
+The company, date and subject of the email behind a Stage move Refresh made from the Candidate's Gmail, shown on the card; never the email's body. Dragging the card back undoes the move, and that email never moves the card again.
+_Avoid_: Proof, email log, email record
+
 ### Staying informed
 
 **News Digest**:

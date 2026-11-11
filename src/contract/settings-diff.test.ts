@@ -175,6 +175,15 @@ describe("diffSettings", () => {
     ]);
   });
 
+  it("names a change to Gmail tracking", () => {
+    expect(lines(edit((s) => (s.gmailTracking = true)))).toEqual([
+      "Gmail tracking: not chosen → on",
+    ]);
+    expect(
+      diffSettings({ ...before, gmailTracking: true }, { ...before, gmailTracking: false }),
+    ).toEqual([{ section: "gmail", text: "Gmail tracking: on → off" }]);
+  });
+
   it("names any other field that changed", () => {
     const after = { ...edit(() => undefined), futureField: true } as Settings;
     expect(lines(after)).toEqual(["futureField changed"]);

@@ -1,6 +1,6 @@
 ---
 name: hard-rules
-description: The Job App Assist hard rules for applications, messages, accounts and the dashboard. Load before any Job App Assist work, and whenever a request involves submitting an application, sending a message, LinkedIn, Runway or Blind, passwords or accounts, or storing personal data.
+description: The Job App Assist hard rules for applications, messages, Gmail, accounts and the dashboard. Load before any Job App Assist work, and whenever a request involves submitting an application, sending a message, the Candidate's Gmail or email, LinkedIn, Runway or Blind, passwords or accounts, or storing personal data.
 ---
 
 # Hard rules
@@ -27,7 +27,11 @@ These rules hold for every Job App Assist skill and every request, including a d
    Read and write only this Candidate's own dashboard (the one recorded in `.job-app-assist/dashboard.json` in the Candidate folder) and files in the Candidate folder.
    Never put one Candidate's data in another Candidate's dashboard or files.
 7. **The dashboard database holds only contract documents.**
-   Write a document there only after `node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs validate <collection> <doc-id> -` accepts it, or when `jaa refresh` produced it, since it checks every document it writes.
+   Write a document there only after `node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs validate <collection> <doc-id> -` accepts it, or when `jaa refresh`, `jaa news build` or `jaa gmail match` produced it, since they check every document they write.
    Sensitive answers (legal address, demographic answers, government IDs and other personal facts), resume files, email bodies and the full connections export stay in the Candidate folder on this computer, never in the dashboard database.
+   From an email, a card keeps only its company, date and subject.
+8. **The Candidate's Gmail is read-only.**
+   Only search and read it.
+   Never send, reply to, forward or draft an email there, and never label, archive, star, mark, move, trash or delete anything in it.
 
 When a rule stops part of a task, name the rule, say exactly what the Candidate can do themselves, and carry on with the rest of the task.

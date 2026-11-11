@@ -1,14 +1,15 @@
 /**
  * `jaa`: the Toolkit's command-line entry point, bundled into plugin/dist/jaa.mjs.
  * Skills run it to check a document against the dashboard contract before writing it, and the
- * Refresh skill runs it to build the Job List and the News Digest, the Tune skill to read skip
- * patterns and show a settings diff, and the Fill skill to plan each Fill, build the cards it
- * writes and log token use.
+ * Refresh skill runs it to build the Job List and the News Digest and to move cards from Gmail,
+ * the Tune skill to read skip patterns and show a settings diff, and the Fill skill to plan each
+ * Fill, build the cards it writes and log token use.
  */
 import { validateDocument } from "../contract/index.ts";
 import type { FillIo } from "../fill/io.ts";
 import { runPrivateAnswers } from "../fill/private-answers.ts";
 import { FILL_USAGE, runFill } from "../fill/run.ts";
+import { runGmailCommand } from "../refresh/gmail.ts";
 import { runNewsCommand, type NewsIo } from "../refresh/news.ts";
 import { runRefreshCommand } from "../refresh/run.ts";
 import { runImportConnections, type ConnectionsIo } from "./connections.ts";
@@ -21,6 +22,8 @@ const USAGE = `Usage: jaa validate <collection> <doc-id> <file|->
        jaa refresh <dir> [--feed <url|file> | --rerun]
        jaa news plan <dir>
        jaa news build <dir>
+       jaa gmail plan <dir>
+       jaa gmail match <dir>
        jaa check-resumes <manifest> [--settings <file|->]
        jaa tune-report <dir>
        jaa settings-diff <current-file> <proposed-file|->
@@ -39,6 +42,12 @@ news           After refresh, in the same <dir>: plan computes the hiring signal
                the companies in the Queue and reads the forums (<dir>/out/news-plan.json);
                build joins them with the news gathered in <dir>/out/news-gathered.json into
                the day's News Digest and writes its batch to <dir>/out/news-writes.json.
+gmail          After refresh, in the same <dir>: plan says whether the Candidate opted in to
+               Gmail tracking and gives the Gmail searches that cover the board
+               (<dir>/out/gmail-plan.json); match reads the emails found
+               (<dir>/out/gmail-gathered.json) and the judgments in <dir>/gmail-judgments.json,
+               moves cards, and writes their batch to <dir>/out/gmail-writes.json and the
+               unsure emails to <dir>/out/gmail-review.json.
 check-resumes  Checks that every Resume Variant file the manifest lists is in the Candidate
                folder, and with --settings that the settings document names the same
                Resume Variants in the same order.
@@ -130,6 +139,14 @@ export async function runCli(argv: readonly string[], io: CliIo): Promise<number
       return 2;
     }
     return runImportConnections(exportPath, outPath, io);
+  }
+  if (argv[0] === "gmail") {
+    const [, step, dir, ...rest] = argv;
+    if ((step !== "plan" && step !== "match") || !dir || dir.startsWith("--") || rest.length > 0) {
+      io.stderr(USAGE);
+      return 2;
+    }
+    return runGmailCommand(step, dir, io);
   }
   const [command, collection, docId, file, ...rest] = argv;
   if (command !== "validate" || !collection || !docId || !file || rest.length > 0) {

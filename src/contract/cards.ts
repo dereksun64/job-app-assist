@@ -16,6 +16,10 @@ import { validateWith, type Validation } from "./validation.ts";
  * When Fill finishes a card it records `fill`: how the form went and the fields the Candidate
  * must look at before submitting. A flag names a field, never the value in it, so a sensitive
  * answer never reaches the database. Fill uses `startFill` and `finishFill`.
+ * Refresh moves cards from the Candidate's Gmail with `moveCardByEmail`, which records the email
+ * behind each automatic move as Stage evidence: the company, the email's date and its subject,
+ * never its body. When the Candidate drags a card back from a Stage an email put it in, the move
+ * is undone; the evidence stays, marked undone, so the same email never moves the card again.
  */
 export const CARDS_COLLECTION = "cards";
 
@@ -63,6 +67,15 @@ export const FILL_FLAG_KINDS = [
 /** At most this many flags per card; Fill groups the rest into one flag. */
 export const MAX_FILL_FLAGS = 40;
 
+/** The Stages an email can move a card to. */
+export const EMAIL_STAGES = ["submitted", "interviewing", "offer", "closed"] as const;
+
+/** A Submitted card with no reply for this many days or more is flagged for follow-up. */
+export const FOLLOW_UP_DAYS = 14;
+
+/** The most Stage evidence a card keeps; the oldest entries go first. */
+export const MAX_STAGE_EVIDENCE = 20;
+
 /** A queued Posting this many days old or more may have closed. */
 export const POSSIBLY_CLOSED_DAYS = 5;
 
@@ -86,6 +99,34 @@ export function snapshotMatches(kind: string) {
     }
   });
 }
+
+const evidenceText = (max: number) =>
+  z
+    .string()
+    .check(
+      z.trim(),
+      z.minLength(1, "must not be blank"),
+      z.maxLength(max, `must be ${String(max)} characters or fewer`),
+    );
+
+/**
+ * The email behind one automatic move: only its company, date and subject. The contract has no
+ * room for anything else from the email, so no body or excerpt can reach the database.
+ */
+const stageEvidence = z.strictObject({
+  /** The company on the card the email was matched to. */
+  company: evidenceText(200),
+  /** When the email arrived. */
+  receivedAt: timestampSchema,
+  /** The email's subject line. */
+  subject: evidenceText(300),
+  /** The Stage the email moved the card to; Closed means rejected. */
+  stage: z.enum(EMAIL_STAGES),
+  /** When Refresh moved the card. */
+  movedAt: timestampSchema,
+  /** When the Candidate dragged the card back, undoing this move. */
+  undoneAt: z.optional(timestampSchema),
+});
 
 const stageRules = z.superRefine<{
   stage: Stage;
@@ -190,6 +231,8 @@ const card = z
     queuedBy: z.enum(QUEUED_BY),
     /** When the card entered its Stage; absent until it first moves, so `queuedAt` stands in. */
     stageChangedAt: z.optional(timestampSchema),
+    /** The emails behind automatic moves, oldest first. */
+    stageEvidence: z.optional(z.array(stageEvidence).check(z.maxLength(MAX_STAGE_EVIDENCE))),
     posting: postingSchema,
     /** What the last Fill of this card did and flagged. */
     fill: z.optional(fillRecord),
@@ -206,6 +249,27 @@ export type FillFlagKind = (typeof FILL_FLAG_KINDS)[number];
 export type FillFlag = z.output<typeof fillFlag>;
 export type FillRecord = z.output<typeof fillRecord>;
 export type Card = z.output<typeof card>;
+export type EmailStage = (typeof EMAIL_STAGES)[number];
+export type StageEvidence = z.output<typeof stageEvidence>;
+/** What a card keeps of an email: its company, date and subject. */
+export type EmailFacts = Pick<StageEvidence, "company" | "receivedAt" | "subject">;
+
+const stageOrder = (stage: Stage) => STAGES.indexOf(stage);
+
+/** The evidence for the card's current Stage, when an email put it there and it has not moved since. */
+export function currentEvidence(of: Card): StageEvidence | undefined {
+  const last = of.stageEvidence?.at(-1);
+  if (!last || last.undoneAt !== undefined) return undefined;
+  return last.stage === of.stage && last.movedAt === of.stageChangedAt ? last : undefined;
+}
+
+/** Whether this email has already moved the card, including a move the Candidate undid. */
+export function hasEmail(of: Card, email: Pick<EmailFacts, "receivedAt" | "subject">): boolean {
+  const subject = email.subject.trim();
+  return (of.stageEvidence ?? []).some(
+    (e) => e.receivedAt === email.receivedAt && e.subject === subject,
+  );
+}
 
 /** Each Stage's name as the Candidate sees it. */
 export const STAGE_LABELS: Record<Stage, string> = {
@@ -229,6 +293,13 @@ export function moveCard(from: Card, stage: Stage, at: string, closedReason?: Cl
   delete moved.closedReason;
   delete moved.fillingSince;
   if (stage === "closed") moved.closedReason = closedReason;
+  // Moving a card back from the Stage an email put it in undoes that automatic move.
+  const current = currentEvidence(from);
+  if (current && from.stageEvidence && stageOrder(stage) < stageOrder(from.stage)) {
+    moved.stageEvidence = from.stageEvidence.map((e) =>
+      e === current ? { ...e, undoneAt: at } : e,
+    );
+  }
   return moved;
 }
 
@@ -253,6 +324,33 @@ export function finishFill(from: Card, record: FillRecord): Card {
   delete done.fillingSince;
   done.fill = record;
   return done;
+}
+
+/**
+ * The card moved to `stage` at `at` because of an email, keeping the email's company, date and
+ * subject as evidence. An email closes a card only as rejected.
+ */
+export function moveCardByEmail(
+  from: Card,
+  stage: EmailStage,
+  email: EmailFacts,
+  at: string,
+): Card {
+  const moved = moveCard(from, stage, at, stage === "closed" ? "rejected" : undefined);
+  const evidence: StageEvidence = {
+    company: email.company.trim(),
+    receivedAt: email.receivedAt,
+    subject: email.subject.trim(),
+    stage,
+    movedAt: at,
+  };
+  moved.stageEvidence = [...(from.stageEvidence ?? []), evidence].slice(-MAX_STAGE_EVIDENCE);
+  return moved;
+}
+
+/** Whether a card has sat in Submitted, with no reply, long enough to follow up. */
+export function needsFollowUp(of: Card, now: number): boolean {
+  return of.stage === "submitted" && queueAgeDays(stageSince(of), now) >= FOLLOW_UP_DAYS;
 }
 
 /** When the card entered its current Stage. */

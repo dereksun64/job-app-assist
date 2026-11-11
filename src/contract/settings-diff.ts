@@ -23,6 +23,7 @@ export type SettingsSection =
   | "applySites"
   | "freshness"
   | "resumeVariants"
+  | "gmail"
   | "other";
 
 export interface SettingsChange {
@@ -45,6 +46,7 @@ const DESCRIBED = new Set([
   "blockedApplySites",
   "freshnessWeight",
   "resumeVariants",
+  "gmailTracking",
 ]);
 const SEARCH_PROFILE_FIELDS = new Set<string>([
   "roleTypes",
@@ -197,6 +199,10 @@ export function diffSettings(before: Settings, after: Settings): SettingsChange[
     ]);
 
   add("resumeVariants", variantChanges(before.resumeVariants, after.resumeVariants));
+  const gmail = (s: Settings) =>
+    s.gmailTracking === undefined ? "not chosen" : s.gmailTracking ? "on" : "off";
+  if (gmail(before) !== gmail(after))
+    add("gmail", [`Gmail tracking: ${gmail(before)} → ${gmail(after)}`]);
 
   // Fields this module does not know yet still show up, so no change goes unseen.
   const record = (s: Settings) => s as unknown as Record<string, unknown>;

@@ -213,14 +213,14 @@ function codePointLength(str) {
   const units = str.length;
   if (!highSurrogate.test(str))
     return units;
-  let count5 = units;
+  let count6 = units;
   for (let i = 0; i < units - 1; i++) {
     if ((str.charCodeAt(i) & 64512) === 55296 && (str.charCodeAt(i + 1) & 64512) === 56320) {
-      count5--;
+      count6--;
       i++;
     }
   }
-  return count5;
+  return count6;
 }
 function getLengthableOrigin(input) {
   if (Array.isArray(input))
@@ -1307,6 +1307,71 @@ var $ZodObject = /* @__PURE__ */ $constructor("$ZodObject", (inst, def) => {
     return handleCatchall(proms, input, payload, ctx, _normalized.value, inst, abortEarly === true);
   };
 });
+function handleUnionResults(results, final, inst, ctx) {
+  for (const result of results) {
+    if (result.issues.length === 0) {
+      final.value = result.value;
+      return final;
+    }
+  }
+  const nonaborted = results.filter((r) => !aborted(r));
+  if (nonaborted.length === 1) {
+    final.value = nonaborted[0].value;
+    return nonaborted[0];
+  }
+  final.issues.push({
+    code: "invalid_union",
+    input: final.value,
+    inst,
+    errors: results.map((result) => result.issues.map((iss) => finalizeIssue(iss, ctx, config())))
+  });
+  return final;
+}
+var $ZodUnion = /* @__PURE__ */ $constructor("$ZodUnion", (inst, def) => {
+  $ZodType.init(inst, def);
+  defineLazyInternal(inst, "optin", (zod) => zod.def.options.some((o) => o._zod.optin === "defaulted") ? "defaulted" : zod.def.options.some((o) => o._zod.optin !== void 0) ? "optional" : void 0);
+  defineLazyInternal(inst, "optout", (zod) => zod.def.options.some((o) => o._zod.optout === "optional") ? "optional" : void 0);
+  defineLazyInternal(inst, "values", (zod) => {
+    if (zod.def.options.every((o) => o._zod.values)) {
+      return new Set(zod.def.options.flatMap((option) => Array.from(option._zod.values)));
+    }
+    return void 0;
+  });
+  defineLazyInternal(inst, "pattern", (zod) => {
+    if (zod.def.options.every((o) => o._zod.pattern)) {
+      const patterns = zod.def.options.map((o) => o._zod.pattern);
+      return new RegExp(`^(${patterns.map((p) => cleanRegex(p.source)).join("|")})$`);
+    }
+    return void 0;
+  });
+  const first = def.options.length === 1 ? def.options[0]._zod.run : null;
+  inst._zod.parse = (payload, ctx) => {
+    if (first) {
+      return first(payload, ctx);
+    }
+    let async = false;
+    const results = [];
+    for (const option of def.options) {
+      const result = option._zod.run({
+        value: payload.value,
+        issues: []
+      }, ctx);
+      if (result instanceof Promise) {
+        results.push(result);
+        async = true;
+      } else {
+        if (result.issues.length === 0)
+          return result;
+        results.push(result);
+      }
+    }
+    if (!async)
+      return handleUnionResults(results, payload, inst, ctx);
+    return Promise.all(results).then((results2) => {
+      return handleUnionResults(results2, payload, inst, ctx);
+    });
+  };
+});
 var $ZodEnum = /* @__PURE__ */ $constructor("$ZodEnum", (inst, def) => {
   $ZodType.init(inst, def);
   const values = getEnumValues(def.entries);
@@ -1855,6 +1920,18 @@ function strictObject(shape, params) {
     ...normalizeParams(params)
   });
 }
+var ZodMiniUnion = /* @__PURE__ */ $constructor("ZodMiniUnion", (inst, def) => {
+  $ZodUnion.init(inst, def);
+  ZodMiniType.init(inst, def);
+});
+// @__NO_SIDE_EFFECTS__
+function union(options, params) {
+  return new ZodMiniUnion({
+    type: "union",
+    options,
+    ...normalizeParams(params)
+  });
+}
 var ZodMiniEnum = /* @__PURE__ */ $constructor("ZodMiniEnum", (inst, def) => {
   $ZodEnum.init(inst, def);
   ZodMiniType.init(inst, def);
@@ -2134,6 +2211,11 @@ var settings = strictObject({
     ),
     DEFAULT_FRESHNESS_WEIGHT
   ),
+  /**
+   * Whether Refresh reads the Candidate's Gmail, read-only, to move board cards. Absent until
+   * the Candidate chooses in Setup, which counts as off.
+   */
+  gmailTracking: optional(boolean2()),
   updatedAt: iso_exports.datetime({ error: "must be an ISO 8601 timestamp" })
 }).check(
   superRefine((value, ctx) => {
@@ -2331,6 +2413,9 @@ var FILL_FLAG_KINDS = [
   "problem"
 ];
 var MAX_FILL_FLAGS = 40;
+var EMAIL_STAGES = ["submitted", "interviewing", "offer", "closed"];
+var FOLLOW_UP_DAYS = 14;
+var MAX_STAGE_EVIDENCE = 20;
 var POSSIBLY_CLOSED_DAYS = 5;
 var DAY_MS = 864e5;
 function queueAgeDays(queuedAt, now) {
@@ -2348,6 +2433,25 @@ function snapshotMatches(kind) {
     }
   });
 }
+var evidenceText = (max) => string2().check(
+  _trim(),
+  _minLength(1, "must not be blank"),
+  _maxLength(max, `must be ${String(max)} characters or fewer`)
+);
+var stageEvidence = strictObject({
+  /** The company on the card the email was matched to. */
+  company: evidenceText(200),
+  /** When the email arrived. */
+  receivedAt: timestampSchema,
+  /** The email's subject line. */
+  subject: evidenceText(300),
+  /** The Stage the email moved the card to; Closed means rejected. */
+  stage: _enum(EMAIL_STAGES),
+  /** When Refresh moved the card. */
+  movedAt: timestampSchema,
+  /** When the Candidate dragged the card back, undoing this move. */
+  undoneAt: optional(timestampSchema)
+});
 var stageRules = superRefine((value, ctx) => {
   if (value.stage === "closed" && value.closedReason === void 0) {
     ctx.addIssue({
@@ -2435,11 +2539,25 @@ var card = strictObject({
   queuedBy: _enum(QUEUED_BY),
   /** When the card entered its Stage; absent until it first moves, so `queuedAt` stands in. */
   stageChangedAt: optional(timestampSchema),
+  /** The emails behind automatic moves, oldest first. */
+  stageEvidence: optional(array(stageEvidence).check(_maxLength(MAX_STAGE_EVIDENCE))),
   posting: postingSchema,
   /** What the last Fill of this card did and flagged. */
   fill: optional(fillRecord),
   updatedAt: timestampSchema
 }).check(snapshotMatches("card"), stageRules);
+var stageOrder = (stage) => STAGES.indexOf(stage);
+function currentEvidence(of) {
+  const last = of.stageEvidence?.at(-1);
+  if (!last || last.undoneAt !== void 0) return void 0;
+  return last.stage === of.stage && last.movedAt === of.stageChangedAt ? last : void 0;
+}
+function hasEmail(of, email2) {
+  const subject = email2.subject.trim();
+  return (of.stageEvidence ?? []).some(
+    (e) => e.receivedAt === email2.receivedAt && e.subject === subject
+  );
+}
 var STAGE_LABELS = {
   queued: "Queued",
   ready_for_review: "Ready for Review",
@@ -2456,6 +2574,12 @@ function moveCard(from, stage, at, closedReason) {
   delete moved.closedReason;
   delete moved.fillingSince;
   if (stage === "closed") moved.closedReason = closedReason;
+  const current = currentEvidence(from);
+  if (current && from.stageEvidence && stageOrder(stage) < stageOrder(from.stage)) {
+    moved.stageEvidence = from.stageEvidence.map(
+      (e) => e === current ? { ...e, undoneAt: at } : e
+    );
+  }
   return moved;
 }
 function startFill(from, at) {
@@ -2469,6 +2593,24 @@ function finishFill(from, record) {
   delete done.fillingSince;
   done.fill = record;
   return done;
+}
+function moveCardByEmail(from, stage, email2, at) {
+  const moved = moveCard(from, stage, at, stage === "closed" ? "rejected" : void 0);
+  const evidence = {
+    company: email2.company.trim(),
+    receivedAt: email2.receivedAt,
+    subject: email2.subject.trim(),
+    stage,
+    movedAt: at
+  };
+  moved.stageEvidence = [...from.stageEvidence ?? [], evidence].slice(-MAX_STAGE_EVIDENCE);
+  return moved;
+}
+function needsFollowUp(of, now) {
+  return of.stage === "submitted" && queueAgeDays(stageSince(of), now) >= FOLLOW_UP_DAYS;
+}
+function stageSince(of) {
+  return of.stageChangedAt ?? of.queuedAt;
 }
 function compareQueueOrder(a, b) {
   return a.queuedAt.localeCompare(b.queuedAt) || a.posting.locationTier - b.posting.locationTier || b.posting.score - a.posting.score || a.postingId.localeCompare(b.postingId);
@@ -3044,7 +3186,8 @@ var DESCRIBED = /* @__PURE__ */ new Set([
   "companies",
   "blockedApplySites",
   "freshnessWeight",
-  "resumeVariants"
+  "resumeVariants",
+  "gmailTracking"
 ]);
 var SEARCH_PROFILE_FIELDS = /* @__PURE__ */ new Set([
   "roleTypes",
@@ -3177,6 +3320,9 @@ function diffSettings(before, after) {
       `Freshness weight: ${String(before.freshnessWeight)}% \u2192 ${String(after.freshnessWeight)}%`
     ]);
   add("resumeVariants", variantChanges(before.resumeVariants, after.resumeVariants));
+  const gmail = (s) => s.gmailTracking === void 0 ? "not chosen" : s.gmailTracking ? "on" : "off";
+  if (gmail(before) !== gmail(after))
+    add("gmail", [`Gmail tracking: ${gmail(before)} \u2192 ${gmail(after)}`]);
   const record = (s) => s;
   const profile = (s) => s.searchProfile;
   const names = (o) => Object.keys(o);
@@ -3308,8 +3454,8 @@ var ANSWER_LINE = /^\s*[-*]\s+([^:]+):(.*)$/;
 function blankAnswers(text10) {
   const blank = [];
   for (const line of text10.split("\n")) {
-    const match2 = ANSWER_LINE.exec(line);
-    if (match2?.[1] && match2[2]?.trim() === "") blank.push(match2[1].trim());
+    const match3 = ANSWER_LINE.exec(line);
+    if (match3?.[1] && match3[2]?.trim() === "") blank.push(match3[1].trim());
   }
   return blank;
 }
@@ -3780,8 +3926,343 @@ async function runFill(argv, io) {
   }
 }
 
-// src/refresh/news.ts
+// src/refresh/gmail.ts
 import { join as join4, resolve as resolve3 } from "node:path";
+
+// src/engine/gmail.ts
+var EMAIL_KINDS = [
+  "confirmation",
+  "assessment",
+  "interview",
+  "offer",
+  "rejection"
+];
+var STAGE_OF_KIND = {
+  confirmation: "submitted",
+  assessment: "interviewing",
+  interview: "interviewing",
+  offer: "offer",
+  rejection: "closed"
+};
+var EMAIL_LOOKBACK_DAYS = 7;
+var MAX_SEARCH_DAYS = 90;
+var COMPANIES_PER_QUERY = 15;
+var SUBJECT_MAX = 300;
+var DAY_MS2 = 864e5;
+var emailSchema = strictObject({
+  /** Gmail's message id; it stays in the Candidate folder. */
+  id: string2().check(_minLength(1, "must not be blank")),
+  /** The From header, for example `Acme Recruiting <jobs@acme.com>`. */
+  from: string2().check(_minLength(1, "must not be blank")),
+  receivedAt: iso_exports.datetime({ error: "must be an ISO 8601 timestamp" }),
+  subject: string2(),
+  /** Gmail's short preview of the email, used to classify it and never stored on a card. */
+  snippet: optional(string2())
+});
+var gmailJudgmentSchema = union([
+  strictObject({
+    postingId: string2().check(_regex(/^[0-9a-f]{12}$/, "must be a Posting id")),
+    kind: _enum(EMAIL_KINDS)
+  }),
+  strictObject({ ignore: literal(true) })
+]);
+var KIND_PATTERNS = {
+  confirmation: /\bthanks? (you )?for (applying|your application|your interest)|\bapplication (received|submitted|confirmation)|\breceived your application|\byour application (has been|was) (received|submitted)/,
+  assessment: /\bassessments?\b|\bcoding (challenge|test|exercise|assignment)|\bhackerrank\b|\bcodesignal\b|\bcodility\b|\bhirevue\b|\btake[- ]home\b|\binvited you to (a|an|the) (test|assessment|challenge)|\bonline test\b/,
+  interview: /\binterviews?\b|\bphone screen|\brecruiter (call|screen|chat)|\bschedule (a |an |the |your )?(call|chat|time|conversation|meeting)|\bon-?site\b|\bsuperday\b|\bmeet (with )?the team/,
+  offer: /\boffer (letter|of employment|details|package)\b|\bpleased to (extend|offer)\b|\bextend(ing)? (you )?an offer|\byour offer\b|\b(job|employment) offer\b|\boffer from\b/,
+  rejection: /\bunfortunately\b|\bregret to inform|\bnot (be )?mov(e|ing) forward|\b(decided|chosen|chose|elected) to (move|proceed|pursue|go) (forward )?with other|\bother candidates\b|\bno longer (being )?(considered|under consideration)|\b(position|role) (has been|is|was) filled|\bnot (been )?selected\b|\bwill not be (moving|proceeding)|\bunable to (offer|move forward)/
+};
+var ALERT_PATTERN = /\bjobs? (you may|you might) (be interested in|like)|\byou may be interested in\b|\bnew jobs? (at|for|matching)\b|\bjob alert|\brecommended jobs|\bjobs for you\b/;
+function classifyEmail(email2) {
+  const text10 = `${email2.subject} ${email2.snippet ?? ""}`.toLowerCase().replace(/[’']/g, "'");
+  if (ALERT_PATTERN.test(text10)) return { kinds: [], alert: true };
+  let kinds = EMAIL_KINDS.filter((kind) => KIND_PATTERNS[kind].test(text10));
+  if (kinds.length > 1) kinds = kinds.filter((kind) => kind !== "confirmation");
+  const [only] = kinds;
+  return kinds.length === 1 && only ? { kind: only, kinds } : { kinds };
+}
+function normalize2(text10) {
+  return text10.normalize("NFKD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/&/g, " and ").replace(/[^a-z0-9]+/g, " ").trim();
+}
+var COMPANY_SUFFIXES = /* @__PURE__ */ new Set([
+  "inc",
+  "incorporated",
+  "llc",
+  "ltd",
+  "limited",
+  "corp",
+  "corporation",
+  "co",
+  "company",
+  "plc",
+  "gmbh",
+  "technologies",
+  "technology",
+  "labs",
+  "group",
+  "holdings"
+]);
+function companyKeys(company) {
+  const full = normalize2(company);
+  const words2 = full.split(" ");
+  while (words2.length > 1 && COMPANY_SUFFIXES.has(words2.at(-1) ?? "")) words2.pop();
+  const short = words2.join(" ");
+  const names = [.../* @__PURE__ */ new Set([full, short])].filter((name2) => name2.length >= 2);
+  return { names, labels: [...new Set(names.map((name2) => name2.replace(/ /g, "")))] };
+}
+function containsWords(text10, phrase) {
+  return ` ${normalize2(text10)} `.includes(` ${phrase} `);
+}
+var RELAY_DOMAINS = /* @__PURE__ */ new Set([
+  "greenhouse.io",
+  "greenhouse-mail.io",
+  "lever.co",
+  "ashbyhq.com",
+  "myworkday.com",
+  "myworkdayjobs.com",
+  "workday.com",
+  "icims.com",
+  "smartrecruiters.com",
+  "jobvite.com",
+  "successfactors.com",
+  "successfactors.eu",
+  "taleo.net",
+  "oraclecloud.com",
+  "bamboohr.com",
+  "workable.com",
+  "workablemail.com",
+  "rippling.com",
+  "gem.com",
+  "paradox.ai",
+  "eightfold.ai",
+  "avature.net",
+  "breezy.hr",
+  "recruitee.com",
+  "jazzhr.com",
+  "applytojob.com",
+  "hackerrank.com",
+  "hackerrankforwork.com",
+  "codesignal.com",
+  "codility.com",
+  "hirevue.com",
+  "karat.com",
+  "linkedin.com",
+  "indeed.com",
+  "indeedemail.com",
+  "joinhandshake.com",
+  "glassdoor.com",
+  "wellfound.com",
+  "simplify.jobs"
+]);
+function registrableDomain(host) {
+  const labels = host.toLowerCase().split(".").filter(Boolean);
+  const keep = labels.length >= 3 && /^(co|com|ac|org|net|gov)$/.test(labels.at(-2) ?? "") ? 3 : 2;
+  return labels.slice(-keep).join(".");
+}
+function parseSender(from) {
+  const address = /<([^>]+)>/.exec(from)?.[1] ?? from;
+  const name2 = from.includes("<") ? from.slice(0, from.indexOf("<")).replace(/"/g, "").trim() : "";
+  const domain = (address.split("@")[1] ?? "").trim().toLowerCase();
+  const registrable = registrableDomain(domain);
+  const suffixLabels = registrable.split(".").length - 1;
+  const labels = domain.split(".").slice(0, -suffixLabels);
+  return { name: name2, domain, labels, relay: RELAY_DOMAINS.has(registrable) };
+}
+function matchStrength(email2, sender, card2) {
+  const keys = companyKeys(card2.posting.company);
+  if (!sender.relay) {
+    if (sender.labels.some((label2) => keys.labels.includes(label2))) return "strong";
+    let applyHost = "";
+    try {
+      applyHost = new URL(card2.posting.applyUrl).hostname;
+    } catch {
+    }
+    const applySite2 = registrableDomain(applyHost);
+    if (sender.domain && !RELAY_DOMAINS.has(applySite2) && registrableDomain(sender.domain) === applySite2) {
+      return "strong";
+    }
+  }
+  const named = (text10) => keys.names.some((name2) => containsWords(text10, name2));
+  if (sender.relay && (named(sender.name) || named(email2.subject))) return "strong";
+  if (named(sender.name) || named(email2.subject) || named(email2.snippet ?? "")) return "weak";
+  return void 0;
+}
+var stageIndex = (stage) => STAGES.indexOf(stage);
+function movesForward(card2, stage) {
+  return card2.stage !== "closed" && stageIndex(stage) > stageIndex(card2.stage);
+}
+function inWindow(card2, email2) {
+  return Date.parse(email2.receivedAt) >= Date.parse(card2.queuedAt) - EMAIL_LOOKBACK_DAYS * DAY_MS2;
+}
+function shortSubject(subject) {
+  const trimmed = subject.trim() || "(no subject)";
+  return trimmed.length <= SUBJECT_MAX ? trimmed : `${trimmed.slice(0, SUBJECT_MAX - 1).trimEnd()}\u2026`;
+}
+function byTitle(email2, cards) {
+  const text10 = `${email2.subject} ${email2.snippet ?? ""}`;
+  const named = cards.filter((card2) => containsWords(text10, normalize2(card2.posting.title)));
+  return named.length === 1 ? named : cards;
+}
+function planGmailMoves(input) {
+  const board = new Map(input.cards.map((card2) => [card2.postingId, card2]));
+  const moved = /* @__PURE__ */ new Map();
+  const moves = [];
+  const review = [];
+  const counts = {
+    emails: input.emails.length,
+    alreadyRecorded: 0,
+    alerts: 0,
+    unmatched: 0,
+    noChange: 0,
+    judged: 0
+  };
+  const emails = [...input.emails].sort(
+    (a, b) => a.receivedAt.localeCompare(b.receivedAt) || a.id.localeCompare(b.id)
+  );
+  const move = (email2, card2, kind, by) => {
+    const to = STAGE_OF_KIND[kind];
+    if (!movesForward(card2, to)) {
+      counts.noChange += 1;
+      return;
+    }
+    const evidence = {
+      company: card2.posting.company,
+      receivedAt: email2.receivedAt,
+      subject: shortSubject(email2.subject)
+    };
+    const after = moveCardByEmail(card2, to, evidence, input.now);
+    board.set(card2.postingId, after);
+    moved.set(card2.postingId, after);
+    moves.push({
+      emailId: email2.id,
+      postingId: card2.postingId,
+      company: card2.posting.company,
+      title: card2.posting.title,
+      from: card2.stage,
+      to,
+      by,
+      evidence
+    });
+  };
+  for (const email2 of emails) {
+    const facts = { receivedAt: email2.receivedAt, subject: shortSubject(email2.subject) };
+    if ([...board.values()].some((card2) => hasEmail(card2, facts))) {
+      counts.alreadyRecorded += 1;
+      continue;
+    }
+    const judgment = input.judgments[email2.id];
+    if (judgment) {
+      counts.judged += 1;
+      if ("ignore" in judgment) continue;
+      const card2 = board.get(judgment.postingId);
+      if (card2) move(email2, card2, judgment.kind, "judgment");
+      continue;
+    }
+    const classification = classifyEmail(email2);
+    if (classification.alert) {
+      counts.alerts += 1;
+      continue;
+    }
+    const sender = parseSender(email2.from);
+    const matches = [...board.values()].map((card2) => ({ card: card2, strength: matchStrength(email2, sender, card2) })).filter((m) => m.strength !== void 0);
+    if (matches.length === 0) {
+      counts.unmatched += 1;
+      continue;
+    }
+    const best = matches.some((m) => m.strength === "strong") ? "strong" : "weak";
+    const kinds = classification.kinds.length > 0 ? classification.kinds : [...EMAIL_KINDS];
+    const open = byTitle(
+      email2,
+      matches.filter((m) => m.strength === best).map((m) => m.card).filter((card2) => inWindow(card2, email2))
+    ).filter((card2) => kinds.some((kind) => movesForward(card2, STAGE_OF_KIND[kind])));
+    if (open.length === 0) {
+      counts.noChange += 1;
+      continue;
+    }
+    const [only] = open;
+    if (best === "strong" && open.length === 1 && only && classification.kind) {
+      move(email2, only, classification.kind, "rules");
+      continue;
+    }
+    const company = open[0]?.posting.company ?? "";
+    const why = best === "weak" ? `Only the subject or text names ${company}; the sender is not ${company} or an application site.` : open.length > 1 ? `It could be about ${String(open.length)} cards at ${company}.` : classification.kinds.length > 1 ? "It reads as more than one kind of email." : "The rules could not tell what kind of email it is.";
+    const item = {
+      emailId: email2.id,
+      from: email2.from,
+      receivedAt: email2.receivedAt,
+      subject: email2.subject,
+      kinds: classification.kinds,
+      why,
+      cards: open.map((card2) => ({
+        postingId: card2.postingId,
+        company: card2.posting.company,
+        title: card2.posting.title,
+        stage: card2.stage
+      }))
+    };
+    if (email2.snippet !== void 0) item.snippet = email2.snippet;
+    review.push(item);
+  }
+  return { cards: moved, moves, review, counts };
+}
+var KIND_TERMS = '(application OR applying OR applied OR interview OR assessment OR offer OR unfortunately OR candidacy OR "next steps")';
+function searchTerm(company) {
+  const clean2 = company.replace(/"/g, "").trim();
+  return /^[\p{L}\p{N}]+$/u.test(clean2) ? clean2 : `"${clean2}"`;
+}
+function gmailSearchPlan(cards, now) {
+  const open = cards.filter((card2) => card2.stage !== "closed");
+  if (open.length === 0) return { since: void 0, companies: [], queries: [] };
+  const seen = /* @__PURE__ */ new Set();
+  const companies2 = [];
+  for (const card2 of open) {
+    const key2 = normalize2(card2.posting.company);
+    if (seen.has(key2)) continue;
+    seen.add(key2);
+    companies2.push(card2.posting.company.trim());
+  }
+  const oldest = Math.min(...open.map((card2) => Date.parse(card2.queuedAt)));
+  const start2 = Math.max(
+    oldest - EMAIL_LOOKBACK_DAYS * DAY_MS2,
+    Date.parse(now) - MAX_SEARCH_DAYS * DAY_MS2
+  );
+  const since = new Date(start2).toISOString().slice(0, 10);
+  const queries = [];
+  for (let i = 0; i < companies2.length; i += COMPANIES_PER_QUERY) {
+    const group = companies2.slice(i, i + COMPANIES_PER_QUERY).map(searchTerm);
+    queries.push(`after:${since.replace(/-/g, "/")} (${group.join(" OR ")}) ${KIND_TERMS}`);
+  }
+  return { since, companies: companies2, queries };
+}
+function followUps(cards, now) {
+  const at = Date.parse(now);
+  return cards.filter((card2) => needsFollowUp(card2, at)).sort((a, b) => stageSince(a).localeCompare(stageSince(b)));
+}
+
+// src/refresh/run.ts
+import { join as join3, resolve as resolve2 } from "node:path";
+
+// src/engine/apply-sites.ts
+function onBlockedSite(url, sites) {
+  if (sites.length === 0) return false;
+  let host;
+  try {
+    host = new URL(url).hostname.toLowerCase();
+  } catch {
+    return false;
+  }
+  return sites.some((site) => host === site || host.endsWith(`.${site}`));
+}
+function applySiteOf(url) {
+  let host;
+  try {
+    host = new URL(url).hostname.toLowerCase();
+  } catch {
+    return void 0;
+  }
+  return host.split(".").slice(-2).join(".");
+}
 
 // src/engine/fortune-500.ts
 var FORTUNE_500 = [
@@ -4607,296 +5088,6 @@ function companyBoost(company, companyTier, rules = NO_COMPANY_RULES) {
   return { value, reasons };
 }
 
-// src/engine/news.ts
-var HIRING_SIGNAL_DAYS = 7;
-var MAX_HIRING_SIGNALS = 12;
-var MINOR_BOOSTS = /^Company tier (3|4)$/;
-var DAY_MS2 = 864e5;
-function addDays(day, days) {
-  return new Date(Date.parse(`${day}T00:00:00Z`) + days * DAY_MS2).toISOString().slice(0, 10);
-}
-function dayIn(iso, timeZone) {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit"
-  }).format(new Date(iso));
-}
-function hiringSignals(thisWeek) {
-  const byCompany = /* @__PURE__ */ new Map();
-  for (const posting of thisWeek) {
-    if (!posting.boosts.some((boost) => !MINOR_BOOSTS.test(boost))) continue;
-    const key2 = companyKey(posting.company);
-    byCompany.set(key2, [...byCompany.get(key2) ?? [], posting]);
-  }
-  return [...byCompany.values()].map((postings) => {
-    const newest = [...postings].sort(
-      (a, b) => b.postedOn.localeCompare(a.postedOn) || b.score - a.score
-    );
-    const lead = newest[0];
-    return {
-      company: lead.company,
-      boosts: lead.boosts.filter((boost) => !MINOR_BOOSTS.test(boost)),
-      newPostings: postings.length,
-      postings: newest.slice(0, MAX_SIGNAL_POSTINGS).map(({ id, title, level, postedOn, applyUrl }) => ({
-        id,
-        title,
-        level,
-        postedOn,
-        applyUrl
-      }))
-    };
-  }).sort(
-    (a, b) => b.newPostings - a.newPostings || Number(b.boosts.includes("Fortune 500")) - Number(a.boosts.includes("Fortune 500")) || a.company.localeCompare(b.company)
-  ).slice(0, MAX_HIRING_SIGNALS);
-}
-function queueCompanies(cards) {
-  const names = /* @__PURE__ */ new Map();
-  const queued = cards.filter((card2) => card2.stage === "queued").sort((a, b) => a.queuedAt.localeCompare(b.queuedAt));
-  for (const { posting } of queued) {
-    const name2 = displayCompany(posting.company);
-    const key2 = companyKey(name2);
-    if (name2 === UNKNOWN_COMPANY || key2 === "" || names.has(key2)) continue;
-    names.set(key2, name2);
-  }
-  return [...names.values()].sort((a, b) => a.localeCompare(b));
-}
-function recentUrls(recent, day) {
-  const since = addDays(day, -HIRING_SIGNAL_DAYS);
-  const urls = /* @__PURE__ */ new Set();
-  for (const digest2 of recent) {
-    if (digest2.day >= day || digest2.day < since) continue;
-    for (const item of [...digest2.forumHighlights, ...digest2.companyNews, ...digest2.industryNews]) {
-      urls.add(item.url);
-    }
-  }
-  return [...urls].sort();
-}
-function planNews({ day, postings, cards, recent }) {
-  const since = addDays(day, -(HIRING_SIGNAL_DAYS - 1));
-  const thisWeek = postings.filter((p) => p.postedOn >= since && p.postedOn <= day);
-  return {
-    day,
-    newThisWeek: thisWeek.length,
-    hiringSignals: hiringSignals(thisWeek),
-    queueCompanies: queueCompanies(cards),
-    recentUrls: recentUrls(recent, day)
-  };
-}
-var GATHERED_SECTIONS = ["forumHighlights", "companyNews", "industryNews", "gaps"];
-var SECTION_LIST = "forumHighlights, companyNews, industryNews and gaps";
-function buildDigest(plan3, gathered, builtAt) {
-  if (typeof gathered !== "object" || gathered === null || Array.isArray(gathered)) {
-    return {
-      ok: false,
-      issues: [`The gathered news must be an object with ${SECTION_LIST}.`]
-    };
-  }
-  const extra = Object.keys(gathered).filter(
-    (key2) => !GATHERED_SECTIONS.includes(key2)
-  );
-  if (extra.length > 0) {
-    return {
-      ok: false,
-      issues: extra.map((key2) => `${key2}: is not a news section; write only ${SECTION_LIST}`)
-    };
-  }
-  const sections = gathered;
-  const digest2 = {
-    schemaVersion: 1,
-    day: plan3.day,
-    builtAt,
-    newThisWeek: plan3.newThisWeek,
-    hiringSignals: plan3.hiringSignals,
-    forumHighlights: sections.forumHighlights ?? [],
-    companyNews: sections.companyNews ?? [],
-    industryNews: sections.industryNews ?? [],
-    gaps: sections.gaps ?? []
-  };
-  const result = validateNewsDocument(plan3.day, digest2);
-  if (!result.ok) return result;
-  const value = result.value;
-  const queue = new Set(plan3.queueCompanies.map(companyKey));
-  const outside = value.companyNews.flatMap(
-    (item, i) => queue.has(companyKey(item.company)) ? [] : [
-      `companyNews.${String(i)}.company: "${item.company}" is not in the Queue; company news covers only ${plan3.queueCompanies.join(", ") || "companies in the Queue, and the Queue is empty"}`
-    ]
-  );
-  return outside.length > 0 ? { ok: false, issues: outside } : { ok: true, value };
-}
-function staleNewsDays(days, today) {
-  const oldest = addDays(today, -(NEWS_DAYS_KEPT - 1));
-  return days.filter((day) => safeParse(isoDaySchema, day).success && day < oldest).sort();
-}
-
-// src/refresh/forums.ts
-var USER_AGENT = "job-app-assist (+https://github.com/dereksun64/job-app-assist)";
-var REDDIT_FEED = "https://www.reddit.com/r/csMajors+cscareerquestions/top/.rss?t=day&limit=40";
-var HACKER_NEWS_FEED = "https://hn.algolia.com/api/v1/search?tags=front_page&hitsPerPage=30";
-var SUBREDDITS = {
-  csmajors: "r/csMajors",
-  cscareerquestions: "r/cscareerquestions"
-};
-var THREADS_PER_SUBREDDIT = 15;
-var TIMEOUT_MS = 2e4;
-var MAX_RETRY_WAIT_MS = 65e3;
-var EXCERPT_CHARS = 300;
-var ENTITIES = {
-  amp: "&",
-  lt: "<",
-  gt: ">",
-  quot: '"',
-  apos: "'",
-  nbsp: " "
-};
-function decode2(text10) {
-  return text10.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (whole, name2) => {
-    if (name2.startsWith("#x") || name2.startsWith("#X")) {
-      return String.fromCodePoint(Number.parseInt(name2.slice(2), 16));
-    }
-    if (name2.startsWith("#")) return String.fromCodePoint(Number(name2.slice(1)));
-    return ENTITIES[name2.toLowerCase()] ?? whole;
-  });
-}
-function plain(html) {
-  return decode2(html.replace(/<[^>]*>/g, " ")).replace(/\s+/g, " ").trim();
-}
-function excerpt(text10) {
-  if (text10 === "") return void 0;
-  return text10.length <= EXCERPT_CHARS ? text10 : `${text10.slice(0, EXCERPT_CHARS - 1).trimEnd()}\u2026`;
-}
-var tag = (xml, name2) => new RegExp(`<${name2}[^>]*>([\\s\\S]*?)</${name2}>`).exec(xml)?.[1];
-function parseRedditFeed(xml) {
-  if (!/<feed[\s>]/.test(xml)) return void 0;
-  const bySubreddit = new Map(
-    Object.values(SUBREDDITS).map((forum) => [forum, []])
-  );
-  for (const [, entry = ""] of xml.matchAll(/<entry>([\s\S]*?)<\/entry>/g)) {
-    const subreddit = /<category term="([^"]+)"/.exec(entry)?.[1]?.toLowerCase() ?? "";
-    const threads = bySubreddit.get(SUBREDDITS[subreddit] ?? "");
-    if (!threads || threads.length >= THREADS_PER_SUBREDDIT) continue;
-    const title = plain(tag(entry, "title") ?? "");
-    const url = /<link href="([^"]+)"/.exec(entry)?.[1];
-    const postedAt = tag(entry, "published") ?? tag(entry, "updated") ?? "";
-    if (title === "" || url === void 0) continue;
-    const body = decode2(tag(entry, "content") ?? "").replace(/<!-- SC_ON -->[\s\S]*$/, "").replace(/submitted by[\s\S]*$/, "");
-    const thread = { title, url: decode2(url), postedAt };
-    const text10 = excerpt(plain(body));
-    if (text10 !== void 0) thread.excerpt = text10;
-    threads.push(thread);
-  }
-  return bySubreddit;
-}
-function parseHackerNews(json2) {
-  const hits = json2?.hits;
-  if (!Array.isArray(hits)) return void 0;
-  return hits.flatMap((hit) => {
-    if (typeof hit.objectID !== "string" || typeof hit.title !== "string") return [];
-    const thread = {
-      title: hit.title,
-      url: `https://news.ycombinator.com/item?id=${hit.objectID}`,
-      postedAt: typeof hit.created_at === "string" ? hit.created_at : ""
-    };
-    if (typeof hit.points === "number") thread.points = hit.points;
-    if (typeof hit.num_comments === "number") thread.comments = hit.num_comments;
-    if (typeof hit.url === "string" && hit.url !== "") thread.links = hit.url;
-    if (typeof hit.story_text === "string") {
-      const text10 = excerpt(plain(hit.story_text));
-      if (text10 !== void 0) thread.excerpt = text10;
-    }
-    return [thread];
-  }).sort((a, b) => (b.points ?? 0) - (a.points ?? 0));
-}
-function describe2(error2) {
-  if (error2 instanceof Error) {
-    if (error2.name === "TimeoutError") return "it took too long to answer";
-    const cause = error2.cause;
-    return cause instanceof Error ? cause.message : error2.message;
-  }
-  return String(error2);
-}
-function retryWait(response) {
-  for (const header of ["retry-after", "x-ratelimit-reset"]) {
-    const seconds = Number(response.headers.get(header) ?? Number.NaN);
-    if (Number.isFinite(seconds) && seconds > 0) return Math.ceil(seconds) * 1e3;
-  }
-  return 5e3;
-}
-async function get(url, io) {
-  const request = () => io.fetch(url, {
-    headers: { "user-agent": USER_AGENT },
-    signal: AbortSignal.timeout(TIMEOUT_MS)
-  });
-  const response = await request();
-  if (response.status !== 429) return response;
-  const wait = retryWait(response);
-  if (wait > MAX_RETRY_WAIT_MS) return response;
-  await io.sleep(wait);
-  return request();
-}
-async function read(name2, url, io, parse3) {
-  let response;
-  try {
-    response = await get(url, io);
-  } catch (error2) {
-    return { ok: false, error: `${name2} could not be reached: ${describe2(error2)}.` };
-  }
-  if (!response.ok) {
-    return { ok: false, error: `${name2} answered HTTP ${String(response.status)}.` };
-  }
-  try {
-    const data = await parse3(response);
-    if (data !== void 0) return { ok: true, data };
-  } catch {
-  }
-  return { ok: false, error: `${name2} sent data in an unexpected format.` };
-}
-async function readForums(io) {
-  const reddit = await read(
-    "Reddit",
-    REDDIT_FEED,
-    io,
-    async (r) => parseRedditFeed(await r.text())
-  );
-  const hn = await read(
-    "Hacker News",
-    HACKER_NEWS_FEED,
-    io,
-    async (r) => parseHackerNews(await r.json())
-  );
-  return FORUMS.map((forum) => {
-    if (forum === "Hacker News") {
-      return hn.ok ? { forum, ok: true, threads: hn.data } : { forum, ok: false, error: hn.error };
-    }
-    return reddit.ok ? { forum, ok: true, threads: reddit.data.get(forum) ?? [] } : { forum, ok: false, error: reddit.error };
-  });
-}
-
-// src/refresh/run.ts
-import { join as join3, resolve as resolve2 } from "node:path";
-
-// src/engine/apply-sites.ts
-function onBlockedSite(url, sites) {
-  if (sites.length === 0) return false;
-  let host;
-  try {
-    host = new URL(url).hostname.toLowerCase();
-  } catch {
-    return false;
-  }
-  return sites.some((site) => host === site || host.endsWith(`.${site}`));
-}
-function applySiteOf(url) {
-  let host;
-  try {
-    host = new URL(url).hostname.toLowerCase();
-  } catch {
-    return void 0;
-  }
-  return host.split(".").slice(-2).join(".");
-}
-
 // src/engine/freshness.ts
 var DAY_MS3 = 864e5;
 var MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
@@ -5579,7 +5770,7 @@ function sameDrafts(a, b) {
 }
 function planReferrals(input) {
   const { now, connections, current, calls } = input;
-  const plan3 = {
+  const plan4 = {
     set: [],
     delete: [],
     review: [],
@@ -5610,7 +5801,7 @@ function planReferrals(input) {
       const [best] = postings;
       if (!best || key2 === "") continue;
       const record = (name2, call) => {
-        (plan3.calls[key2] ??= {})[name2] = call;
+        (plan4.calls[key2] ??= {})[name2] = call;
       };
       const asked = rankedMatches(best, connections).filter((connection) => {
         const call = callFor(calls, key2, connection.name);
@@ -5634,11 +5825,11 @@ function planReferrals(input) {
           toDraft.push(connection);
         }
       }
-      plan3.summary.matches += asked.length;
-      plan3.summary.toDraft += toDraft.length;
+      plan4.summary.matches += asked.length;
+      plan4.summary.toDraft += toDraft.length;
       const room = MAX_REFERRAL_REVIEW - listed;
       if (toDraft.length > 0 && room > 0) {
-        plan3.review.push({
+        plan4.review.push({
           key: key2,
           company: best.company,
           roles: postings.slice(0, MAX_ROLES_PER_MESSAGE).map((p) => ({
@@ -5651,8 +5842,8 @@ function planReferrals(input) {
         listed += Math.min(room, toDraft.length);
       }
       if (drafts.length > 0) {
-        plan3.summary.companies += 1;
-        plan3.summary.drafts += drafts.length;
+        plan4.summary.companies += 1;
+        plan4.summary.drafts += drafts.length;
       }
       for (const posting of postings) {
         const existing = current.get(posting.id);
@@ -5660,15 +5851,15 @@ function planReferrals(input) {
           if (existing || input.currentIds.includes(posting.id)) removals.add(posting.id);
           continue;
         }
-        plan3.summary.postings += 1;
+        plan4.summary.postings += 1;
         if (!existing || !sameDrafts(existing.drafts, drafts)) {
-          plan3.set.push({ schemaVersion: 1, postingId: posting.id, drafts, updatedAt: now });
+          plan4.set.push({ schemaVersion: 1, postingId: posting.id, drafts, updatedAt: now });
         }
       }
     }
   }
-  plan3.delete = [...removals].sort();
-  return plan3;
+  plan4.delete = [...removals].sort();
+  return plan4;
 }
 
 // src/engine/roles.ts
@@ -5676,11 +5867,11 @@ var INTERN = /\bintern(ship)?s?\b|\bco-?op\b|\bapprentice(ship)?\b/;
 var NEW_GRAD = /\bnew (college )?grad(uate)?s?\b|\bgraduate\b|\buniversity\b|\bcollege\b|\bcampus\b|\bentry[- ]level\b|\bearly[- ]career\b|\bncg\b|\brotational\b|\bresidency\b/;
 var JUNIOR = /\bjunior\b|\bjr\.?(?=\s|$)|\bassociate\b|\b(engineer|developer|scientist|sde|swe|analyst|programmer)\s+(i|1)\b/;
 var SENIOR = /\bsenior\b|\bsr\.?(?=\s|$)|\bstaff (?!intern)(?=\w)|\bprincipal\b|\blead (engineer|developer|scientist|software|data|machine)|\b(engineer|developer|scientist|sde|swe|programmer),?\s+(ii|iii|iv|2|3|4)\b|\bdirector\b|\bhead of\b|\barchitect\b|\bexperienced\b|\bmid[- ]level\b|\bengineering manager\b|\bmanager,? (software|engineering)\b/;
-function normalize2(text10) {
+function normalize3(text10) {
   return ` ${text10.toLowerCase().replace(/[\u2013\u2014]/g, "-").replace(/\s+/g, " ")} `;
 }
 function levelOf(title, jobType, { stated = false } = {}) {
-  const text10 = normalize2(title);
+  const text10 = normalize3(title);
   if (INTERN.test(text10)) return "intern";
   if (NEW_GRAD.test(text10)) return "new_grad";
   if (JUNIOR.test(text10)) return "junior";
@@ -5706,7 +5897,7 @@ var CATEGORY_FAMILIES = [
   [/hardware/i, ["hardware"]]
 ];
 function familiesOf(text10) {
-  const normalized = normalize2(text10);
+  const normalized = normalize3(text10);
   return new Set(
     Object.entries(FAMILIES).filter(([, re]) => re.test(normalized)).map(([family]) => family)
   );
@@ -5753,7 +5944,7 @@ var VAGUE_WORDS = /* @__PURE__ */ new Set([
   "ii"
 ]);
 function significantWords(name2) {
-  return normalize2(name2).replace(/\(.*?\)/g, " ").split(/[^a-z0-9+#]+/).filter((word) => word !== "" && !/^\d+$/.test(word) && !GENERIC_WORDS.has(word));
+  return normalize3(name2).replace(/\(.*?\)/g, " ").split(/[^a-z0-9+#]+/).filter((word) => word !== "" && !/^\d+$/.test(word) && !GENERIC_WORDS.has(word));
 }
 function hasWord(text10, word) {
   const stem = word.length > 5 ? word.slice(0, -2) : word;
@@ -5766,7 +5957,7 @@ function matchRoleType(title, category, roleTypes) {
       CATEGORY_FAMILIES.filter(([re]) => re.test(category)).flatMap(([, families]) => families)
     );
   }
-  const text10 = normalize2(title);
+  const text10 = normalize3(title);
   const ordered = ROLE_TYPE_PRIORITIES.flatMap(
     (priority) => roleTypes.filter((roleType2) => roleType2.priority === priority)
   );
@@ -6086,19 +6277,19 @@ function groupDuplicates(candidates) {
     return root;
   };
   const owner = /* @__PURE__ */ new Map();
-  const join6 = (key2, i) => {
+  const join7 = (key2, i) => {
     const other = owner.get(key2);
     if (other === void 0) owner.set(key2, i);
     else parent[find(i)] = find(other);
   };
   candidates.forEach((candidate, i) => {
-    join6(`url:${candidate.canonicalUrl}`, i);
+    join7(`url:${candidate.canonicalUrl}`, i);
     const textKey = [
       companyKey(candidate.listing.company),
       titleKey(candidate.listing.title),
       [...new Set(candidate.places.map(placeKey))].sort().join(";")
     ].join("|");
-    join6(`text:${textKey}`, i);
+    join7(`text:${textKey}`, i);
   });
   const groups = /* @__PURE__ */ new Map();
   candidates.forEach((candidate, i) => {
@@ -6122,7 +6313,7 @@ function mergeSources(sources) {
   const unique = new Map(sources.map((source) => [sourceKey(source), source]));
   return [...unique.values()].sort((a, b) => compareText(sourceKey(a), sourceKey(b)));
 }
-function excerpt2(description) {
+function excerpt(description) {
   const text10 = description?.replace(/\s+/g, " ").trim();
   if (!text10) return void 0;
   if (text10.length <= POSTING_DESCRIPTION_MAX) return text10;
@@ -6186,7 +6377,7 @@ function merge2(group, settings2, now) {
     score: score2(representative.priority, boost.value, postedOn, now, settings2),
     boosts: boost.reasons
   };
-  const short = excerpt2(description);
+  const short = excerpt(description);
   if (short !== void 0) posting.description = short;
   const evidence = {
     title: posting.title,
@@ -6430,12 +6621,12 @@ function csvRows(csv) {
 }
 var MONTHS2 = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
 function isoDate(value) {
-  const match2 = /^(\d{1,2}) ([A-Za-z]{3})[a-z]* (\d{4})$/.exec(value.trim());
-  if (!match2) return void 0;
-  const [, day = "", month = "", year = ""] = match2;
+  const match3 = /^(\d{1,2}) ([A-Za-z]{3})[a-z]* (\d{4})$/.exec(value.trim());
+  if (!match3) return void 0;
+  const [, day2 = "", month = "", year = ""] = match3;
   const index = MONTHS2.indexOf(month.toLowerCase());
   if (index < 0) return void 0;
-  const date3 = `${year}-${String(index + 1).padStart(2, "0")}-${day.padStart(2, "0")}`;
+  const date3 = `${year}-${String(index + 1).padStart(2, "0")}-${day2.padStart(2, "0")}`;
   return Number.isNaN(Date.parse(date3)) ? void 0 : date3;
 }
 var clean = (value) => (value ?? "").replace(/\s+/g, " ").trim();
@@ -6544,7 +6735,7 @@ function ashbyJobs(json2) {
   });
 }
 var PARSERS = { greenhouse: greenhouseJobs, lever: leverJobs, ashby: ashbyJobs };
-function describe3(error2) {
+function describe2(error2) {
   if (error2 instanceof Error) {
     if (error2.name === "TimeoutError") return "it took too long to answer";
     const cause = error2.cause;
@@ -6562,7 +6753,7 @@ async function readJobBoard(fetch2, company, now) {
       signal: AbortSignal.timeout(BOARD_TIMEOUT_MS)
     });
   } catch (error2) {
-    return fail2(`${board} could not be reached: ${describe3(error2)}.`);
+    return fail2(`${board} could not be reached: ${describe2(error2)}.`);
   }
   if (response.status === 404) {
     return fail2(
@@ -6647,7 +6838,7 @@ function parseJobFeed(json2, fallbackTime) {
   }
   return { name: JOB_FEED_SOURCE, ok: true, fetchedAt, postings };
 }
-function describe4(error2) {
+function describe3(error2) {
   if (error2 instanceof Error) {
     if (error2.name === "TimeoutError") return "it took too long to answer";
     const cause = error2.cause;
@@ -6663,7 +6854,7 @@ async function readJobFeed(fetch2, now, url = JOB_FEED_URL) {
     return {
       name: JOB_FEED_SOURCE,
       ok: false,
-      error: `The Job Feed could not be reached: ${describe4(error2)}.`
+      error: `The Job Feed could not be reached: ${describe3(error2)}.`
     };
   }
   if (!response.ok) {
@@ -6968,7 +7159,7 @@ function formatSources(summary) {
 function formatSummary(summary, paths, batches, sourceIssues = []) {
   const { writes: writesPath, review: reviewPath } = paths;
   const lines = [];
-  const tiers = summary.byTier.map((count5, i) => `Tier ${String(i + 1)}: ${number2(count5)}`).join(", ");
+  const tiers = summary.byTier.map((count6, i) => `Tier ${String(i + 1)}: ${number2(count6)}`).join(", ");
   lines.push(`Refresh finished at ${summary.refreshedAt.slice(0, 16).replace("T", " ")} UTC.`);
   lines.push(
     `Job List: ${number2(summary.total)} Postings (${tiers}); ${number2(summary.newPostings)} new and ${number2(summary.removedPostings)} gone since the last Refresh.`
@@ -7249,14 +7440,516 @@ ${check.issues.map((i) => `- ${i}`).join("\n")}`
   }
 }
 
+// src/refresh/gmail.ts
+var PLAN_FILE = "gmail-plan.json";
+var GATHERED_FILE = "gmail-gathered.json";
+var REVIEW_FILE = "gmail-review.json";
+var WRITES_FILE = "gmail-writes.json";
+var JUDGMENTS_FILE = "gmail-judgments.json";
+var CARDS_FOLDER = "gmail-cards";
+var STAGE_NAMES = {
+  queued: "Queued",
+  ready_for_review: "Ready for Review",
+  submitted: "Submitted",
+  interviewing: "Interviewing",
+  offer: "Offer",
+  closed: "Closed"
+};
+var count3 = (n, one, many = `${one}s`) => `${n.toLocaleString("en-US")} ${n === 1 ? one : many}`;
+async function readSettings(io, dir) {
+  const path = join4(dir, "state", "settings", "main.json");
+  const json2 = await readJson(io, path);
+  if (json2 === void 0) {
+    throw new RefreshError(
+      `No settings at ${path}. Read settings/main from the dashboard into ${join4(dir, "state")} first.`
+    );
+  }
+  const settings2 = validateSettings(json2);
+  if (!settings2.ok) {
+    throw new RefreshError(
+      `The settings document does not match the dashboard contract:
+${settings2.issues.map((i) => `- ${i}`).join("\n")}`
+    );
+  }
+  return settings2.value;
+}
+async function readCards2(io, dir) {
+  const folder = join4(dir, "state", CARDS_COLLECTION);
+  const cards = [];
+  for (const docId of await savedIds2(io, folder)) {
+    const result = validateCardDocument(docId, await readJson(io, join4(folder, `${docId}.json`)));
+    if (result.ok) cards.push(result.value);
+  }
+  return cards;
+}
+function day(iso, timeZone) {
+  return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone });
+}
+function followUpLines(cards, now, timeZone) {
+  const due = followUps(cards, now);
+  if (due.length === 0) return ["Follow up: none."];
+  return [
+    `Follow up: ${count3(due.length, "Submitted card has", "Submitted cards have")} had no reply in ${String(FOLLOW_UP_DAYS)} days or more:`,
+    ...due.map(
+      (card2) => `- ${card2.posting.company}, ${card2.posting.title}: Submitted since ${day(stageSince(card2), timeZone)}.`
+    )
+  ];
+}
+async function plan2(dir, io) {
+  const settings2 = await readSettings(io, dir);
+  const cards = await readCards2(io, dir);
+  const tracking = settings2.gmailTracking === void 0 ? "unset" : settings2.gmailTracking ? "on" : "off";
+  const search = tracking === "on" ? gmailSearchPlan(cards, io.now()) : { since: void 0, companies: [], queries: [] };
+  const out = join4(dir, "out");
+  await io.makeDir(out);
+  const file = { tracking, ...search };
+  await io.writeFile(join4(out, PLAN_FILE), `${JSON.stringify(file, null, 2)}
+`);
+  const lines = [];
+  if (tracking === "off") {
+    lines.push("Gmail tracking is off, so skip reading Gmail.");
+  } else if (tracking === "unset") {
+    lines.push(
+      "The Candidate has not chosen whether Refresh reads their Gmail, so skip reading Gmail. Mention that /job-app-assist:setup can switch Gmail tracking on."
+    );
+  } else if (search.queries.length === 0) {
+    lines.push("Gmail tracking is on, but no card is open, so there is nothing to search for.");
+  } else {
+    lines.push(
+      `Gmail tracking is on. Search the Candidate's Gmail, read-only, with ${search.queries.length === 1 ? "this query" : `these ${String(search.queries.length)} queries`} (emails since ${search.since ?? ""}, about ${count3(search.companies.length, "company", "companies")}):`,
+      ...search.queries.map((query) => `- ${query}`),
+      `Next: save the emails found to ${join4(out, GATHERED_FILE)}, then run jaa gmail match.`
+    );
+  }
+  lines.push(...followUpLines(cards, io.now(), io.timeZone()));
+  io.stdout(`${lines.join("\n")}
+`);
+}
+var gatheredSchema = strictObject({ emails: array(emailSchema) });
+async function readJudgments2(io, path, board) {
+  const json2 = await readJson(io, path);
+  if (json2 === void 0) return {};
+  const shape = 'It maps Gmail message ids to { "postingId": "<card>", "kind": "<kind>" } or { "ignore": true }.';
+  if (typeof json2 !== "object" || json2 === null || Array.isArray(json2)) {
+    throw new RefreshError(`${path} is not a JSON object. ${shape}`);
+  }
+  const judgments = {};
+  for (const [id, entry] of Object.entries(json2)) {
+    const result = validateWith(gmailJudgmentSchema, entry);
+    if (!result.ok) {
+      throw new RefreshError(`${path} gives ${id} ${result.issues.join("; ")}. ${shape}`);
+    }
+    const judgment = result.value;
+    if ("postingId" in judgment && !board.has(judgment.postingId)) {
+      throw new RefreshError(
+        `${path}: ${id} names the card ${judgment.postingId}, which is not on the board. Use a postingId from ${REVIEW_FILE}.`
+      );
+    }
+    judgments[id] = judgment;
+  }
+  return judgments;
+}
+async function match2(dir, io) {
+  const settings2 = await readSettings(io, dir);
+  if (settings2.gmailTracking !== true) {
+    throw new RefreshError(
+      "Gmail tracking is off in the Candidate's settings, so Refresh does not read their Gmail."
+    );
+  }
+  const cards = await readCards2(io, dir);
+  const board = new Map(cards.map((card2) => [card2.postingId, card2]));
+  const out = join4(dir, "out");
+  const gatheredPath = join4(out, GATHERED_FILE);
+  const gatheredJson = await readJson(io, gatheredPath);
+  if (gatheredJson === void 0) {
+    throw new RefreshError(
+      `No emails at ${gatheredPath}. Save what the Gmail searches found there first, as { "emails": [...] }.`
+    );
+  }
+  const gathered = validateWith(gatheredSchema, gatheredJson);
+  if (!gathered.ok) {
+    throw new RefreshError(
+      [
+        `The emails in ${gatheredPath} are not in the expected shape:`,
+        ...gathered.issues.map((issue2) => `- ${issue2}`),
+        "Each email is { id, from, receivedAt, subject, snippet }; fix them and run jaa gmail match again."
+      ].join("\n")
+    );
+  }
+  const { emails } = gathered.value;
+  const judgmentsPath = join4(dir, JUDGMENTS_FILE);
+  const judgments = await readJudgments2(io, judgmentsPath, board);
+  const versions = await readJson(io, join4(dir, "versions.json"));
+  const versionOf = (docId) => {
+    const version2 = typeof versions === "object" && versions !== null ? versions[`${CARDS_COLLECTION}/${docId}`] : void 0;
+    return Number.isInteger(version2) && version2 > 0 ? version2 : void 0;
+  };
+  const now = io.now();
+  const result = planGmailMoves({ emails, cards, judgments, now });
+  const missing = [...result.cards.keys()].filter((id) => versionOf(id) === void 0).sort();
+  if (missing.length > 0) {
+    throw new RefreshError(
+      `versions.json has no version for ${missing.map((id) => `${CARDS_COLLECTION}/${id}`).join(", ")}. Add the version ArtifactData reported for each card read.`
+    );
+  }
+  await io.removeDir(join4(out, CARDS_FOLDER));
+  await io.makeDir(join4(out, CARDS_FOLDER));
+  const writes = [];
+  for (const [docId, card2] of [...result.cards].sort(([a], [b]) => a.localeCompare(b))) {
+    const check = validateCardDocument(docId, card2);
+    if (!check.ok) {
+      throw new RefreshError(
+        `Gmail tracking built an invalid ${CARDS_COLLECTION}/${docId}:
+${check.issues.map((i) => `- ${i}`).join("\n")}`
+      );
+    }
+    const filePath = join4(out, CARDS_FOLDER, `${docId}.json`);
+    const text10 = `${JSON.stringify(card2)}
+`;
+    await io.writeFile(filePath, text10);
+    const write = {
+      op: "set",
+      collection: CARDS_COLLECTION,
+      doc_id: docId,
+      file_path: filePath
+    };
+    const version2 = versionOf(docId);
+    if (version2 !== void 0) write.if_version = version2;
+    writes.push({ write, bytes: Buffer.byteLength(text10) });
+  }
+  const batches = batchesOf(writes);
+  const writesPath = join4(out, WRITES_FILE);
+  await io.writeFile(writesPath, `${JSON.stringify({ batches }, null, 2)}
+`);
+  const reviewPath = join4(out, REVIEW_FILE);
+  await io.writeFile(reviewPath, `${JSON.stringify({ review: result.review }, null, 2)}
+`);
+  const found = new Set(emails.map((email2) => email2.id));
+  const kept = Object.fromEntries(Object.entries(judgments).filter(([id]) => found.has(id)));
+  if (Object.keys(kept).length !== Object.keys(judgments).length) {
+    await io.writeFile(judgmentsPath, `${JSON.stringify(kept, null, 2)}
+`);
+  }
+  const timeZone = io.timeZone();
+  const { counts } = result;
+  const lines = [
+    `Gmail: read ${count3(counts.emails, "email")}; ${String(counts.alreadyRecorded)} already used on an earlier Refresh, ${String(counts.alerts)} job alerts, ${String(counts.unmatched)} about no card on the board, ${String(counts.noChange)} with no forward move.`
+  ];
+  if (result.moves.length === 0) {
+    lines.push("Moved no cards.");
+  } else {
+    lines.push(`Moved ${count3(result.moves.length, "card")}:`);
+    for (const move of result.moves) {
+      lines.push(
+        `- ${move.company}, ${move.title}: ${STAGE_NAMES[move.from]} to ${STAGE_NAMES[move.to]}${move.to === "closed" ? " (rejected)" : ""}, by "${move.evidence.subject}" (${day(move.evidence.receivedAt, timeZone)}).`
+      );
+    }
+  }
+  if (result.review.length > 0) {
+    lines.push(
+      `Unsure: ${count3(result.review.length, "email")} for you to judge, listed in ${reviewPath}.`
+    );
+  }
+  const after = cards.map((card2) => result.cards.get(card2.postingId) ?? card2);
+  lines.push(...followUpLines(after, now, timeZone));
+  lines.push(
+    batches.length === 0 ? "Nothing to write to the dashboard." : `Next: send the ${batches.length === 1 ? "batch" : `${String(batches.length)} batches`} in ${writesPath} with ArtifactData, one batch call each, in order.`
+  );
+  io.stdout(`${lines.join("\n")}
+`);
+}
+async function runGmailCommand(step, dirArg, io) {
+  const dir = resolve3(dirArg);
+  try {
+    await (step === "plan" ? plan2(dir, io) : match2(dir, io));
+    return 0;
+  } catch (error2) {
+    if (error2 instanceof RefreshError) {
+      io.stderr(`${error2.message}
+`);
+      return 1;
+    }
+    throw error2;
+  }
+}
+
 // src/refresh/news.ts
-var PLAN_FILE = "news-plan.json";
-var GATHERED_FILE = "news-gathered.json";
-var WRITES_FILE = "news-writes.json";
+import { join as join5, resolve as resolve4 } from "node:path";
+
+// src/engine/news.ts
+var HIRING_SIGNAL_DAYS = 7;
+var MAX_HIRING_SIGNALS = 12;
+var MINOR_BOOSTS = /^Company tier (3|4)$/;
+var DAY_MS4 = 864e5;
+function addDays(day2, days) {
+  return new Date(Date.parse(`${day2}T00:00:00Z`) + days * DAY_MS4).toISOString().slice(0, 10);
+}
+function dayIn(iso, timeZone) {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).format(new Date(iso));
+}
+function hiringSignals(thisWeek) {
+  const byCompany = /* @__PURE__ */ new Map();
+  for (const posting of thisWeek) {
+    if (!posting.boosts.some((boost) => !MINOR_BOOSTS.test(boost))) continue;
+    const key2 = companyKey(posting.company);
+    byCompany.set(key2, [...byCompany.get(key2) ?? [], posting]);
+  }
+  return [...byCompany.values()].map((postings) => {
+    const newest = [...postings].sort(
+      (a, b) => b.postedOn.localeCompare(a.postedOn) || b.score - a.score
+    );
+    const lead = newest[0];
+    return {
+      company: lead.company,
+      boosts: lead.boosts.filter((boost) => !MINOR_BOOSTS.test(boost)),
+      newPostings: postings.length,
+      postings: newest.slice(0, MAX_SIGNAL_POSTINGS).map(({ id, title, level, postedOn, applyUrl }) => ({
+        id,
+        title,
+        level,
+        postedOn,
+        applyUrl
+      }))
+    };
+  }).sort(
+    (a, b) => b.newPostings - a.newPostings || Number(b.boosts.includes("Fortune 500")) - Number(a.boosts.includes("Fortune 500")) || a.company.localeCompare(b.company)
+  ).slice(0, MAX_HIRING_SIGNALS);
+}
+function queueCompanies(cards) {
+  const names = /* @__PURE__ */ new Map();
+  const queued = cards.filter((card2) => card2.stage === "queued").sort((a, b) => a.queuedAt.localeCompare(b.queuedAt));
+  for (const { posting } of queued) {
+    const name2 = displayCompany(posting.company);
+    const key2 = companyKey(name2);
+    if (name2 === UNKNOWN_COMPANY || key2 === "" || names.has(key2)) continue;
+    names.set(key2, name2);
+  }
+  return [...names.values()].sort((a, b) => a.localeCompare(b));
+}
+function recentUrls(recent, day2) {
+  const since = addDays(day2, -HIRING_SIGNAL_DAYS);
+  const urls = /* @__PURE__ */ new Set();
+  for (const digest2 of recent) {
+    if (digest2.day >= day2 || digest2.day < since) continue;
+    for (const item of [...digest2.forumHighlights, ...digest2.companyNews, ...digest2.industryNews]) {
+      urls.add(item.url);
+    }
+  }
+  return [...urls].sort();
+}
+function planNews({ day: day2, postings, cards, recent }) {
+  const since = addDays(day2, -(HIRING_SIGNAL_DAYS - 1));
+  const thisWeek = postings.filter((p) => p.postedOn >= since && p.postedOn <= day2);
+  return {
+    day: day2,
+    newThisWeek: thisWeek.length,
+    hiringSignals: hiringSignals(thisWeek),
+    queueCompanies: queueCompanies(cards),
+    recentUrls: recentUrls(recent, day2)
+  };
+}
+var GATHERED_SECTIONS = ["forumHighlights", "companyNews", "industryNews", "gaps"];
+var SECTION_LIST = "forumHighlights, companyNews, industryNews and gaps";
+function buildDigest(plan4, gathered, builtAt) {
+  if (typeof gathered !== "object" || gathered === null || Array.isArray(gathered)) {
+    return {
+      ok: false,
+      issues: [`The gathered news must be an object with ${SECTION_LIST}.`]
+    };
+  }
+  const extra = Object.keys(gathered).filter(
+    (key2) => !GATHERED_SECTIONS.includes(key2)
+  );
+  if (extra.length > 0) {
+    return {
+      ok: false,
+      issues: extra.map((key2) => `${key2}: is not a news section; write only ${SECTION_LIST}`)
+    };
+  }
+  const sections = gathered;
+  const digest2 = {
+    schemaVersion: 1,
+    day: plan4.day,
+    builtAt,
+    newThisWeek: plan4.newThisWeek,
+    hiringSignals: plan4.hiringSignals,
+    forumHighlights: sections.forumHighlights ?? [],
+    companyNews: sections.companyNews ?? [],
+    industryNews: sections.industryNews ?? [],
+    gaps: sections.gaps ?? []
+  };
+  const result = validateNewsDocument(plan4.day, digest2);
+  if (!result.ok) return result;
+  const value = result.value;
+  const queue = new Set(plan4.queueCompanies.map(companyKey));
+  const outside = value.companyNews.flatMap(
+    (item, i) => queue.has(companyKey(item.company)) ? [] : [
+      `companyNews.${String(i)}.company: "${item.company}" is not in the Queue; company news covers only ${plan4.queueCompanies.join(", ") || "companies in the Queue, and the Queue is empty"}`
+    ]
+  );
+  return outside.length > 0 ? { ok: false, issues: outside } : { ok: true, value };
+}
+function staleNewsDays(days, today) {
+  const oldest = addDays(today, -(NEWS_DAYS_KEPT - 1));
+  return days.filter((day2) => safeParse(isoDaySchema, day2).success && day2 < oldest).sort();
+}
+
+// src/refresh/forums.ts
+var USER_AGENT = "job-app-assist (+https://github.com/dereksun64/job-app-assist)";
+var REDDIT_FEED = "https://www.reddit.com/r/csMajors+cscareerquestions/top/.rss?t=day&limit=40";
+var HACKER_NEWS_FEED = "https://hn.algolia.com/api/v1/search?tags=front_page&hitsPerPage=30";
+var SUBREDDITS = {
+  csmajors: "r/csMajors",
+  cscareerquestions: "r/cscareerquestions"
+};
+var THREADS_PER_SUBREDDIT = 15;
+var TIMEOUT_MS = 2e4;
+var MAX_RETRY_WAIT_MS = 65e3;
+var EXCERPT_CHARS = 300;
+var ENTITIES = {
+  amp: "&",
+  lt: "<",
+  gt: ">",
+  quot: '"',
+  apos: "'",
+  nbsp: " "
+};
+function decode2(text10) {
+  return text10.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (whole, name2) => {
+    if (name2.startsWith("#x") || name2.startsWith("#X")) {
+      return String.fromCodePoint(Number.parseInt(name2.slice(2), 16));
+    }
+    if (name2.startsWith("#")) return String.fromCodePoint(Number(name2.slice(1)));
+    return ENTITIES[name2.toLowerCase()] ?? whole;
+  });
+}
+function plain(html) {
+  return decode2(html.replace(/<[^>]*>/g, " ")).replace(/\s+/g, " ").trim();
+}
+function excerpt2(text10) {
+  if (text10 === "") return void 0;
+  return text10.length <= EXCERPT_CHARS ? text10 : `${text10.slice(0, EXCERPT_CHARS - 1).trimEnd()}\u2026`;
+}
+var tag = (xml, name2) => new RegExp(`<${name2}[^>]*>([\\s\\S]*?)</${name2}>`).exec(xml)?.[1];
+function parseRedditFeed(xml) {
+  if (!/<feed[\s>]/.test(xml)) return void 0;
+  const bySubreddit = new Map(
+    Object.values(SUBREDDITS).map((forum) => [forum, []])
+  );
+  for (const [, entry = ""] of xml.matchAll(/<entry>([\s\S]*?)<\/entry>/g)) {
+    const subreddit = /<category term="([^"]+)"/.exec(entry)?.[1]?.toLowerCase() ?? "";
+    const threads = bySubreddit.get(SUBREDDITS[subreddit] ?? "");
+    if (!threads || threads.length >= THREADS_PER_SUBREDDIT) continue;
+    const title = plain(tag(entry, "title") ?? "");
+    const url = /<link href="([^"]+)"/.exec(entry)?.[1];
+    const postedAt = tag(entry, "published") ?? tag(entry, "updated") ?? "";
+    if (title === "" || url === void 0) continue;
+    const body = decode2(tag(entry, "content") ?? "").replace(/<!-- SC_ON -->[\s\S]*$/, "").replace(/submitted by[\s\S]*$/, "");
+    const thread = { title, url: decode2(url), postedAt };
+    const text10 = excerpt2(plain(body));
+    if (text10 !== void 0) thread.excerpt = text10;
+    threads.push(thread);
+  }
+  return bySubreddit;
+}
+function parseHackerNews(json2) {
+  const hits = json2?.hits;
+  if (!Array.isArray(hits)) return void 0;
+  return hits.flatMap((hit) => {
+    if (typeof hit.objectID !== "string" || typeof hit.title !== "string") return [];
+    const thread = {
+      title: hit.title,
+      url: `https://news.ycombinator.com/item?id=${hit.objectID}`,
+      postedAt: typeof hit.created_at === "string" ? hit.created_at : ""
+    };
+    if (typeof hit.points === "number") thread.points = hit.points;
+    if (typeof hit.num_comments === "number") thread.comments = hit.num_comments;
+    if (typeof hit.url === "string" && hit.url !== "") thread.links = hit.url;
+    if (typeof hit.story_text === "string") {
+      const text10 = excerpt2(plain(hit.story_text));
+      if (text10 !== void 0) thread.excerpt = text10;
+    }
+    return [thread];
+  }).sort((a, b) => (b.points ?? 0) - (a.points ?? 0));
+}
+function describe4(error2) {
+  if (error2 instanceof Error) {
+    if (error2.name === "TimeoutError") return "it took too long to answer";
+    const cause = error2.cause;
+    return cause instanceof Error ? cause.message : error2.message;
+  }
+  return String(error2);
+}
+function retryWait(response) {
+  for (const header of ["retry-after", "x-ratelimit-reset"]) {
+    const seconds = Number(response.headers.get(header) ?? Number.NaN);
+    if (Number.isFinite(seconds) && seconds > 0) return Math.ceil(seconds) * 1e3;
+  }
+  return 5e3;
+}
+async function get(url, io) {
+  const request = () => io.fetch(url, {
+    headers: { "user-agent": USER_AGENT },
+    signal: AbortSignal.timeout(TIMEOUT_MS)
+  });
+  const response = await request();
+  if (response.status !== 429) return response;
+  const wait = retryWait(response);
+  if (wait > MAX_RETRY_WAIT_MS) return response;
+  await io.sleep(wait);
+  return request();
+}
+async function read(name2, url, io, parse3) {
+  let response;
+  try {
+    response = await get(url, io);
+  } catch (error2) {
+    return { ok: false, error: `${name2} could not be reached: ${describe4(error2)}.` };
+  }
+  if (!response.ok) {
+    return { ok: false, error: `${name2} answered HTTP ${String(response.status)}.` };
+  }
+  try {
+    const data = await parse3(response);
+    if (data !== void 0) return { ok: true, data };
+  } catch {
+  }
+  return { ok: false, error: `${name2} sent data in an unexpected format.` };
+}
+async function readForums(io) {
+  const reddit = await read(
+    "Reddit",
+    REDDIT_FEED,
+    io,
+    async (r) => parseRedditFeed(await r.text())
+  );
+  const hn = await read(
+    "Hacker News",
+    HACKER_NEWS_FEED,
+    io,
+    async (r) => parseHackerNews(await r.json())
+  );
+  return FORUMS.map((forum) => {
+    if (forum === "Hacker News") {
+      return hn.ok ? { forum, ok: true, threads: hn.data } : { forum, ok: false, error: hn.error };
+    }
+    return reddit.ok ? { forum, ok: true, threads: reddit.data.get(forum) ?? [] } : { forum, ok: false, error: reddit.error };
+  });
+}
+
+// src/refresh/news.ts
+var PLAN_FILE2 = "news-plan.json";
+var GATHERED_FILE2 = "news-gathered.json";
+var WRITES_FILE2 = "news-writes.json";
 var number3 = (n) => n.toLocaleString("en-US");
-var count3 = (n, one, many = `${one}s`) => `${number3(n)} ${n === 1 ? one : many}`;
-function longDay(day) {
-  return (/* @__PURE__ */ new Date(`${day}T12:00:00Z`)).toLocaleDateString("en-US", {
+var count4 = (n, one, many = `${one}s`) => `${number3(n)} ${n === 1 ? one : many}`;
+function longDay(day2) {
+  return (/* @__PURE__ */ new Date(`${day2}T12:00:00Z`)).toLocaleDateString("en-US", {
     weekday: "long",
     month: "long",
     day: "numeric",
@@ -7267,7 +7960,7 @@ function longDay(day) {
 async function readValid(io, folder, validate2) {
   const docs = /* @__PURE__ */ new Map();
   for (const docId of await savedIds2(io, folder)) {
-    const result = validate2(docId, await readJson(io, join4(folder, `${docId}.json`)));
+    const result = validate2(docId, await readJson(io, join5(folder, `${docId}.json`)));
     if (result.ok) docs.set(docId, result.value);
   }
   return docs;
@@ -7278,34 +7971,34 @@ async function readJobList(io, folder) {
   if (!meta3) return void 0;
   return [...docs.entries()].filter(([id]) => id !== "meta").map(([, doc]) => doc).filter((page2) => page2.refreshedAt === meta3.refreshedAt).sort((a, b) => a.page - b.page).flatMap((page2) => page2.postings);
 }
-async function plan2(dir, io) {
-  const day = dayIn(io.now(), io.timeZone());
-  const postings = await readJobList(io, join4(dir, "out", POSTINGS_COLLECTION)) ?? await readJobList(io, join4(dir, "state", POSTINGS_COLLECTION)) ?? [];
+async function plan3(dir, io) {
+  const day2 = dayIn(io.now(), io.timeZone());
+  const postings = await readJobList(io, join5(dir, "out", POSTINGS_COLLECTION)) ?? await readJobList(io, join5(dir, "state", POSTINGS_COLLECTION)) ?? [];
   const cards = /* @__PURE__ */ new Map();
-  for (const folder of [join4(dir, "state", CARDS_COLLECTION), join4(dir, "out", CARDS_COLLECTION)]) {
+  for (const folder of [join5(dir, "state", CARDS_COLLECTION), join5(dir, "out", CARDS_COLLECTION)]) {
     for (const [id, card2] of await readValid(io, folder, validateCardDocument)) {
       cards.set(id, card2);
     }
   }
   const recent = await readValid(
     io,
-    join4(dir, "state", NEWS_COLLECTION),
+    join5(dir, "state", NEWS_COLLECTION),
     validateNewsDocument
   );
   const forums = await readForums({ fetch: io.fetch, sleep: (ms) => io.sleep(ms) });
   const result = {
-    ...planNews({ day, postings, cards: [...cards.values()], recent: [...recent.values()] }),
+    ...planNews({ day: day2, postings, cards: [...cards.values()], recent: [...recent.values()] }),
     forums
   };
-  const out = join4(dir, "out");
+  const out = join5(dir, "out");
   await io.makeDir(out);
-  const planPath = join4(out, PLAN_FILE);
+  const planPath = join5(out, PLAN_FILE2);
   await io.writeFile(planPath, `${JSON.stringify(result, null, 2)}
 `);
-  const lines = [`News Digest for ${longDay(day)}.`];
-  lines.push(`Job List: ${count3(result.newThisWeek, "Posting")} went up in the past 7 days.`);
+  const lines = [`News Digest for ${longDay(day2)}.`];
+  lines.push(`Job List: ${count4(result.newThisWeek, "Posting")} went up in the past 7 days.`);
   lines.push(
-    result.hiringSignals.length === 0 ? "Hiring signals: none this week." : `Hiring signals: ${count3(result.hiringSignals.length, "company", "companies")} (${result.hiringSignals.map((s) => `${s.company}, ${count3(s.newPostings, "new Posting")}`).join("; ")}).`
+    result.hiringSignals.length === 0 ? "Hiring signals: none this week." : `Hiring signals: ${count4(result.hiringSignals.length, "company", "companies")} (${result.hiringSignals.map((s) => `${s.company}, ${count4(s.newPostings, "new Posting")}`).join("; ")}).`
   );
   lines.push(
     result.queueCompanies.length === 0 ? "Companies in the Queue: none, so leave companyNews empty." : `Companies in the Queue: ${result.queueCompanies.join(", ")}.`
@@ -7313,32 +8006,32 @@ async function plan2(dir, io) {
   lines.push("Forums:");
   for (const read2 of forums) {
     lines.push(
-      read2.ok ? `- ${read2.forum}: ${count3(read2.threads.length, "thread")}, under forums in ${planPath}.` : `- ${read2.forum}: FAILED. ${read2.error}`
+      read2.ok ? `- ${read2.forum}: ${count4(read2.threads.length, "thread")}, under forums in ${planPath}.` : `- ${read2.forum}: FAILED. ${read2.error}`
     );
   }
   if (result.recentUrls.length > 0) {
     lines.push(
-      `Already linked this week: ${count3(result.recentUrls.length, "source")}, listed under recentUrls in ${planPath}; do not repeat them.`
+      `Already linked this week: ${count4(result.recentUrls.length, "source")}, listed under recentUrls in ${planPath}; do not repeat them.`
     );
   }
-  lines.push(`Next: gather the news and write it to ${join4(out, GATHERED_FILE)}.`);
+  lines.push(`Next: gather the news and write it to ${join5(out, GATHERED_FILE2)}.`);
   io.stdout(`${lines.join("\n")}
 `);
 }
 function isPlan(value) {
   if (typeof value !== "object" || value === null) return false;
-  const plan3 = value;
-  return typeof plan3.day === "string" && typeof plan3.newThisWeek === "number" && Array.isArray(plan3.hiringSignals) && Array.isArray(plan3.queueCompanies) && Array.isArray(plan3.recentUrls);
+  const plan4 = value;
+  return typeof plan4.day === "string" && typeof plan4.newThisWeek === "number" && Array.isArray(plan4.hiringSignals) && Array.isArray(plan4.queueCompanies) && Array.isArray(plan4.recentUrls);
 }
 async function build(dir, io) {
-  const out = join4(dir, "out");
-  const planJson = await readJson(io, join4(out, PLAN_FILE));
+  const out = join5(dir, "out");
+  const planJson = await readJson(io, join5(out, PLAN_FILE2));
   if (!isPlan(planJson)) {
     throw new RefreshError(
-      `No News Digest plan at ${join4(out, PLAN_FILE)}. Run jaa news plan first.`
+      `No News Digest plan at ${join5(out, PLAN_FILE2)}. Run jaa news plan first.`
     );
   }
-  const gatheredPath = join4(out, GATHERED_FILE);
+  const gatheredPath = join5(out, GATHERED_FILE2);
   const gathered = await readJson(io, gatheredPath);
   if (gathered === void 0) {
     throw new RefreshError(
@@ -7356,13 +8049,13 @@ async function build(dir, io) {
     );
   }
   const digest2 = result.value;
-  const versions = await readJson(io, join4(dir, "versions.json"));
+  const versions = await readJson(io, join5(dir, "versions.json"));
   const versionOf = (docId) => {
     const version2 = typeof versions === "object" && versions !== null ? versions[`${NEWS_COLLECTION}/${docId}`] : void 0;
     return Number.isInteger(version2) && version2 > 0 ? version2 : void 0;
   };
-  await io.makeDir(join4(out, NEWS_COLLECTION));
-  const filePath = join4(out, NEWS_COLLECTION, `${digest2.day}.json`);
+  await io.makeDir(join5(out, NEWS_COLLECTION));
+  const filePath = join5(out, NEWS_COLLECTION, `${digest2.day}.json`);
   const text10 = `${JSON.stringify(digest2)}
 `;
   await io.writeFile(filePath, text10);
@@ -7375,24 +8068,24 @@ async function build(dir, io) {
   const setVersion = versionOf(digest2.day);
   if (setVersion !== void 0) set.if_version = setVersion;
   const writes = [{ write: set, bytes: Buffer.byteLength(text10) }];
-  const stale = staleNewsDays(await savedIds2(io, join4(dir, "state", NEWS_COLLECTION)), digest2.day);
-  for (const day of stale) {
-    const remove = { op: "delete", collection: NEWS_COLLECTION, doc_id: day };
-    const version2 = versionOf(day);
+  const stale = staleNewsDays(await savedIds2(io, join5(dir, "state", NEWS_COLLECTION)), digest2.day);
+  for (const day2 of stale) {
+    const remove = { op: "delete", collection: NEWS_COLLECTION, doc_id: day2 };
+    const version2 = versionOf(day2);
     if (version2 !== void 0) remove.if_version = version2;
     writes.push({ write: remove, bytes: 0 });
   }
   const batches = batchesOf(writes);
-  const writesPath = join4(out, WRITES_FILE);
+  const writesPath = join5(out, WRITES_FILE2);
   await io.writeFile(writesPath, `${JSON.stringify({ batches }, null, 2)}
 `);
   const lines = [
-    `News Digest for ${longDay(digest2.day)}: ${count3(digest2.hiringSignals.length, "hiring signal")}, ${count3(digest2.forumHighlights.length, "forum highlight")}, ${count3(digest2.companyNews.length, "company news item")}, ${count3(digest2.industryNews.length, "industry story", "industry stories")}.`
+    `News Digest for ${longDay(digest2.day)}: ${count4(digest2.hiringSignals.length, "hiring signal")}, ${count4(digest2.forumHighlights.length, "forum highlight")}, ${count4(digest2.companyNews.length, "company news item")}, ${count4(digest2.industryNews.length, "industry story", "industry stories")}.`
   ];
   for (const gap2 of digest2.gaps) lines.push(`Gap in ${gap2.section}: ${gap2.note}`);
   if (stale.length > 0) {
     lines.push(
-      `Removing ${count3(stale.length, "digest")} older than ${String(NEWS_DAYS_KEPT)} days.`
+      `Removing ${count4(stale.length, "digest")} older than ${String(NEWS_DAYS_KEPT)} days.`
     );
   }
   lines.push(
@@ -7402,9 +8095,9 @@ async function build(dir, io) {
 `);
 }
 async function runNewsCommand(step, dirArg, io) {
-  const dir = resolve3(dirArg);
+  const dir = resolve4(dirArg);
   try {
-    await (step === "plan" ? plan2(dir, io) : build(dir, io));
+    await (step === "plan" ? plan3(dir, io) : build(dir, io));
     return 0;
   } catch (error2) {
     if (error2 instanceof RefreshError) {
@@ -7417,7 +8110,7 @@ async function runNewsCommand(step, dirArg, io) {
 }
 
 // src/cli/connections.ts
-var count4 = (n, one, many = `${one}s`) => `${n.toLocaleString("en-US")} ${n === 1 ? one : many}`;
+var count5 = (n, one, many = `${one}s`) => `${n.toLocaleString("en-US")} ${n === 1 ? one : many}`;
 async function runImportConnections(exportPath, outPath, io) {
   let csv;
   try {
@@ -7443,9 +8136,9 @@ async function runImportConnections(exportPath, outPath, io) {
   await io.writeFile(outPath, `${JSON.stringify(file, null, 2)}
 `);
   const companies2 = new Set(parsed.connections.map((c) => companyKey(c.company))).size;
-  const leftOut = parsed.leftOut === 0 ? "" : ` ${count4(parsed.leftOut, "connection with no company listed was", "connections with no company listed were")} left out.`;
+  const leftOut = parsed.leftOut === 0 ? "" : ` ${count5(parsed.leftOut, "connection with no company listed was", "connections with no company listed were")} left out.`;
   io.stdout(
-    `Imported ${count4(parsed.connections.length, "connection")} at ${count4(companies2, "company", "companies")} into ${outPath}.${leftOut}
+    `Imported ${count5(parsed.connections.length, "connection")} at ${count5(companies2, "company", "companies")} into ${outPath}.${leftOut}
 Email addresses and profile links were not kept. The file stays on this computer; the dashboard only ever holds the Referral Drafts made from it.
 `
   );
@@ -7453,7 +8146,7 @@ Email addresses and profile links were not kept. The file stays on this computer
 }
 
 // src/cli/resumes.ts
-import { isAbsolute as isAbsolute2, normalize as normalize3 } from "node:path";
+import { isAbsolute as isAbsolute2, normalize as normalize4 } from "node:path";
 var RESUME_FILE = /\.(pdf|docx?)$/i;
 var manifest = strictObject({
   variants: array(
@@ -7466,7 +8159,7 @@ var manifest = strictObject({
       file: string2().check(
         _trim(),
         refine(
-          (path) => path !== "" && !isAbsolute2(path) && !normalize3(path).startsWith(".."),
+          (path) => path !== "" && !isAbsolute2(path) && !normalize4(path).startsWith(".."),
           "must be a path inside the Candidate folder, relative to it"
         ),
         _regex(RESUME_FILE, "must be a PDF or Word file (.pdf, .docx or .doc)")
@@ -7558,7 +8251,7 @@ function messageOf2(error2) {
 }
 
 // src/tune/run.ts
-import { join as join5 } from "node:path";
+import { join as join6 } from "node:path";
 
 // src/engine/skip-patterns.ts
 var COMPANY_THRESHOLD = 2;
@@ -7618,13 +8311,13 @@ function skipPatterns(allSkips, settings2, options = {}) {
     total: skips.length,
     byReason,
     companies: [...companies2.values()].sort((a, b) => b.skips - a.skips).slice(0, LIST_LIMIT),
-    roleTypes: roleTypes.sorted().slice(0, LIST_LIMIT).map(({ value, count: count5 }) => {
+    roleTypes: roleTypes.sorted().slice(0, LIST_LIMIT).map(({ value, count: count6 }) => {
       const priority = priorityOf(value);
-      return priority === void 0 ? { roleType: value, skips: count5 } : { roleType: value, skips: count5, priority };
+      return priority === void 0 ? { roleType: value, skips: count6 } : { roleType: value, skips: count6, priority };
     }),
-    locations: locations.sorted().slice(0, LIST_LIMIT).map(({ value, count: count5 }) => ({ ...value, skips: count5 })),
-    levels: levels.sorted().map(({ value, count: count5 }) => ({ level: value, skips: count5 })),
-    applySites: sites.sorted().slice(0, LIST_LIMIT).map(({ value, count: count5 }) => ({ site: value, skips: count5 })),
+    locations: locations.sorted().slice(0, LIST_LIMIT).map(({ value, count: count6 }) => ({ ...value, skips: count6 })),
+    levels: levels.sorted().map(({ value, count: count6 }) => ({ level: value, skips: count6 })),
+    applySites: sites.sorted().slice(0, LIST_LIMIT).map(({ value, count: count6 }) => ({ site: value, skips: count6 })),
     suggestions: []
   };
   report.suggestions = suggest(report, settings2);
@@ -7684,7 +8377,7 @@ function suggest(report, settings2) {
 
 // src/tune/run.ts
 var SKIP_WINDOW_DAYS = 90;
-var DAY_MS4 = 864e5;
+var DAY_MS5 = 864e5;
 var COMPANY_LIMIT = 300;
 var REASON_WORDS = {
   wrong_role: "wrong role",
@@ -7723,13 +8416,13 @@ async function jsonFiles(io, folder) {
   return (await io.readDir(folder)).filter((name2) => name2.endsWith(".json")).sort();
 }
 async function readSkips(io, dir) {
-  const folder = join5(dir, "state", SKIPS_COLLECTION);
+  const folder = join6(dir, "state", SKIPS_COLLECTION);
   const skips = [];
   for (const file of await jsonFiles(io, folder)) {
     const docId = file.slice(0, -".json".length);
     let body;
     try {
-      body = JSON.parse(await io.readFile(join5(folder, file)));
+      body = JSON.parse(await io.readFile(join6(folder, file)));
     } catch {
       continue;
     }
@@ -7739,14 +8432,14 @@ async function readSkips(io, dir) {
   return skips;
 }
 async function readJobList2(io, dir) {
-  const folder = join5(dir, "state", POSTINGS_COLLECTION);
+  const folder = join6(dir, "state", POSTINGS_COLLECTION);
   let meta3;
   const pages = [];
   for (const file of await jsonFiles(io, folder)) {
     const docId = file.slice(0, -".json".length);
     let body;
     try {
-      body = JSON.parse(await io.readFile(join5(folder, file)));
+      body = JSON.parse(await io.readFile(join6(folder, file)));
     } catch {
       continue;
     }
@@ -7771,7 +8464,7 @@ function settingsLine(settings2) {
   ].join("; ");
 }
 function formatTuneReport(settings2, skips, jobList, now) {
-  const since = new Date(Date.parse(now) - SKIP_WINDOW_DAYS * DAY_MS4).toISOString();
+  const since = new Date(Date.parse(now) - SKIP_WINDOW_DAYS * DAY_MS5).toISOString();
   const patterns = skipPatterns(skips, settings2, { since });
   const lines = [settingsLine(settings2), ""];
   const reasons = SKIP_REASONS.filter((r) => patterns.byReason[r] > 0).map((r) => `${REASON_WORDS[r]} ${number4(patterns.byReason[r])}`).join(", ");
@@ -7835,9 +8528,9 @@ function formatTuneReport(settings2, skips, jobList, now) {
       `Job List companies (${plural2(jobList.length, "Posting")} at ${plural2(ranked.length, "company", "companies")}, most Postings first${ranked.length > COMPANY_LIMIT ? `, first ${String(COMPANY_LIMIT)}` : ""}):`
     );
     lines.push(
-      ranked.slice(0, COMPANY_LIMIT).map(({ name: name2, count: count5 }) => {
+      ranked.slice(0, COMPANY_LIMIT).map(({ name: name2, count: count6 }) => {
         const rule = companyRuleOf(name2, settings2.companies);
-        return `${name2} ${number4(count5)}${rule ? ` (${RULE_WORDS[rule]})` : ""}`;
+        return `${name2} ${number4(count6)}${rule ? ` (${RULE_WORDS[rule]})` : ""}`;
       }).join("; ")
     );
     lines.push(
@@ -7853,7 +8546,7 @@ async function runTuneReport(dir, io) {
   try {
     const settings2 = await readSettingsFile(
       io,
-      join5(dir, "state", "settings", "main.json"),
+      join6(dir, "state", "settings", "main.json"),
       "The saved settings document"
     );
     const [skips, jobList] = await Promise.all([readSkips(io, dir), readJobList2(io, dir)]);
@@ -7890,6 +8583,8 @@ var USAGE = `Usage: jaa validate <collection> <doc-id> <file|->
        jaa refresh <dir> [--feed <url|file> | --rerun]
        jaa news plan <dir>
        jaa news build <dir>
+       jaa gmail plan <dir>
+       jaa gmail match <dir>
        jaa check-resumes <manifest> [--settings <file|->]
        jaa tune-report <dir>
        jaa settings-diff <current-file> <proposed-file|->
@@ -7908,6 +8603,12 @@ news           After refresh, in the same <dir>: plan computes the hiring signal
                the companies in the Queue and reads the forums (<dir>/out/news-plan.json);
                build joins them with the news gathered in <dir>/out/news-gathered.json into
                the day's News Digest and writes its batch to <dir>/out/news-writes.json.
+gmail          After refresh, in the same <dir>: plan says whether the Candidate opted in to
+               Gmail tracking and gives the Gmail searches that cover the board
+               (<dir>/out/gmail-plan.json); match reads the emails found
+               (<dir>/out/gmail-gathered.json) and the judgments in <dir>/gmail-judgments.json,
+               moves cards, and writes their batch to <dir>/out/gmail-writes.json and the
+               unsure emails to <dir>/out/gmail-review.json.
 check-resumes  Checks that every Resume Variant file the manifest lists is in the Candidate
                folder, and with --settings that the settings document names the same
                Resume Variants in the same order.
@@ -7997,6 +8698,14 @@ async function runCli(argv, io) {
       return 2;
     }
     return runImportConnections(exportPath, outPath, io);
+  }
+  if (argv[0] === "gmail") {
+    const [, step, dir, ...rest2] = argv;
+    if (step !== "plan" && step !== "match" || !dir || dir.startsWith("--") || rest2.length > 0) {
+      io.stderr(USAGE);
+      return 2;
+    }
+    return runGmailCommand(step, dir, io);
   }
   const [command, collection, docId, file, ...rest] = argv;
   if (command !== "validate" || !collection || !docId || !file || rest.length > 0) {
