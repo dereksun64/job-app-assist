@@ -3825,7 +3825,8 @@ function preparedLine(answers) {
   if (answers.length === 0) return "Prepared Application: no free-text questions";
   const typed = answers.filter((a) => a.answer !== null).length;
   const blank = answers.length - typed;
-  const parts = [plural(typed, "answer") + " to type"];
+  const parts = [];
+  if (typed > 0) parts.push(`${plural(typed, "answer")} to type`);
   if (blank > 0) parts.push(`${plural(blank, "brief-mode answer")} the Candidate has not written`);
   return `Prepared Application: ${parts.join(", ")}`;
 }
