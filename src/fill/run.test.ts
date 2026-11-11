@@ -438,16 +438,20 @@ describe("jaa fill finish", () => {
     expect(io.out).toContain(
       "Tokens for this application: 42,910 over 1 response (40,000 cache reads, 2,000 cache writes, 10 input, 900 output).",
     );
-    expect(io.out).toContain("1 filled application logged so far, averaging 42,910 tokens each.");
+    expect(io.out).toContain(
+      "1 filled application logged so far. On average each took 1 response and 900 output tokens (42,910 tokens in all, mostly cache reads).",
+    );
   });
 
   it("averages over every filled application in the log", async () => {
     const earlier =
-      json({ outcome: "filled", tokens: { total: 57090 } }) +
+      json({ outcome: "filled", tokens: { total: 57090, messages: 23, output: 9100 } }) +
       json({ outcome: "needs_sign_in", tokens: { total: 5 } });
     const io = await finished({ [`${DIR}/usage.jsonl`]: earlier });
     expect(await runFill(["finish", DIR, p.id, "--version", "4"], io)).toBe(0);
-    expect(io.out).toContain("2 filled applications logged so far, averaging 50,000 tokens each.");
+    expect(io.out).toContain(
+      "2 filled applications logged so far. On average each took 12 responses and 5,000 output tokens (50,000 tokens in all, mostly cache reads).",
+    );
     expect((await io.readFile(`${DIR}/usage.jsonl`)).trim().split("\n")).toHaveLength(3);
   });
 

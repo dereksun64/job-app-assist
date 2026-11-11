@@ -2,7 +2,7 @@
 name: fill
 description: Fill the Candidate's queued job applications in Helium, stopping before submit. Works through the Queued cards on the Progress board in Queue order (or one Posting the Candidate names), opens each apply URL in a new Helium tab through Claude in Chrome, runs Simplify's Autofill, then checks and fills every field from the Candidate's private answers file and Prepared Application (preparing one first for a card that has none), uploads the chosen Resume Variant, flags what the Candidate must answer, and moves each card to Ready for Review. Use when the Candidate asks to fill their Queue, fill applications, apply to their queued jobs, or fill one named Posting, and whenever they ask how Fill should answer application questions or handle fields their answers do not cover, such as qualifications, salary or blank required fields.
 argument-hint: "[a Posting to fill, by company and title, or leave empty for the whole Queue]"
-allowed-tools: Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs private-answers check private-answers.md) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs fill plan .job-app-assist/fill) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs fill plan .job-app-assist/fill --posting *) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs fill start .job-app-assist/fill *) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs fill finish .job-app-assist/fill *) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs prepare build .job-app-assist/fill --posting *) Bash(rm -rf .job-app-assist/fill/state .job-app-assist/fill/out .job-app-assist/fill/results .job-app-assist/fill/started .job-app-assist/fill/prepared) Bash(mkdir -p .job-app-assist/fill/results) Bash(cp ${CLAUDE_PLUGIN_ROOT}/dist/dashboard.html .job-app-assist/dashboard.html) mcp__claude-in-chrome__tabs_context_mcp mcp__claude-in-chrome__tabs_create_mcp mcp__claude-in-chrome__navigate mcp__claude-in-chrome__computer mcp__claude-in-chrome__read_page mcp__claude-in-chrome__find mcp__claude-in-chrome__form_input mcp__claude-in-chrome__file_upload mcp__claude-in-chrome__get_page_text mcp__claude-in-chrome__javascript_tool
+allowed-tools: Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs private-answers check private-answers.md) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs fill plan .job-app-assist/fill) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs fill plan .job-app-assist/fill --posting *) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs fill start .job-app-assist/fill *) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs fill finish .job-app-assist/fill *) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs prepare build .job-app-assist/fill --posting *) Bash(rm -rf .job-app-assist/fill/state .job-app-assist/fill/out .job-app-assist/fill/results .job-app-assist/fill/started .job-app-assist/fill/prepared) Bash(mkdir -p .job-app-assist/fill/results) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs dashboard check .job-app-assist) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs dashboard record .job-app-assist *) mcp__claude-in-chrome__tabs_context_mcp mcp__claude-in-chrome__tabs_create_mcp mcp__claude-in-chrome__navigate mcp__claude-in-chrome__computer mcp__claude-in-chrome__read_page mcp__claude-in-chrome__find mcp__claude-in-chrome__form_input mcp__claude-in-chrome__file_upload mcp__claude-in-chrome__get_page_text mcp__claude-in-chrome__javascript_tool
 ---
 
 # Fill
@@ -31,16 +31,13 @@ Read `.job-app-assist/dashboard.json`.
 It holds `{ "url": "<dashboard Artifact URL>", "pageVersion": "<version>" }`.
 If it does not exist, tell the Candidate that Fill needs their dashboard first, ask them to run `/job-app-assist:setup`, and stop.
 
-Read `version` from `${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json`.
-When it differs from `pageVersion`, the Toolkit has a newer dashboard page:
-
 ```bash
-cp ${CLAUDE_PLUGIN_ROOT}/dist/dashboard.html .job-app-assist/dashboard.html
+node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs dashboard check .job-app-assist
 ```
 
-Read the dashboard `url` with the `Artifact` tool, then publish `.job-app-assist/dashboard.html` to that `url` without passing `capabilities`, so the page keeps its database and its data.
-Then save `pageVersion` in `.job-app-assist/dashboard.json` as the new version.
+When it says the Toolkit has a newer dashboard page, read the dashboard `url` with the `Artifact` tool, then publish `.job-app-assist/dashboard.html` to that `url` without passing `capabilities`, so the page keeps its database and its data, and run the `jaa dashboard record` command it printed.
 If the publish fails, say so in the summary and carry on.
+When it says the page is up to date, or newer than this Toolkit, there is nothing to publish.
 
 ## 3. Read the private answers
 

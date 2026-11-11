@@ -386,7 +386,7 @@ describe("one settings document", () => {
     );
     expect(db.writes).toEqual([]);
     expect(within(panel()).getByRole("alert")).toHaveTextContent(
-      "Your dashboard storage is full, so this change wasn't saved.",
+      "Your dashboard storage is full, so this change wasn't saved. To make room, ask your Claude to run /job-app-assist:tidy.",
     );
     expect(within(region("Companies")).getByRole("list", { name: "Boosted" })).toHaveTextContent(
       "OpenAI",

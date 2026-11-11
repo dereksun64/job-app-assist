@@ -238,7 +238,7 @@ describe("Prepared Application answers in the drawer", () => {
     const why = answer(drawer, "Why do you want to join Figma?");
     await user.click(within(why).getByRole("button", { name: "AI draft" }));
     expect(await within(why).findByRole("alert")).toHaveTextContent(
-      "Your change wasn't saved: your dashboard storage is full.",
+      "Your dashboard storage is full, so this change wasn't saved. To make room, ask your Claude to run /job-app-assist:tidy.",
     );
     expect(within(why).getByRole("button", { name: "My own words" })).toHaveAttribute(
       "aria-pressed",

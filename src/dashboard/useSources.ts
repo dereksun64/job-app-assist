@@ -12,7 +12,8 @@ import {
   type SourceSettings,
   type WatchlistSource,
 } from "../contract/index.ts";
-import type { DashboardDb, DbError } from "./db.ts";
+import type { DashboardDb } from "./db.ts";
+import { saveProblem } from "./saveProblem.ts";
 
 export type SourcesState =
   | { kind: "loading" }
@@ -69,18 +70,6 @@ export function sourceDocument(
     case ADDED_BY_URL_SOURCE_ID:
       return { schemaVersion: 1, ...sources.addedByUrl, updatedAt };
   }
-}
-
-/** Why a save failed, in words the Candidate can act on. */
-export function saveProblem(error: unknown): string {
-  const { code, message } = (error ?? {}) as Partial<DbError>;
-  if (code === "quota_exceeded" || code === "resource_exhausted") {
-    return "Your dashboard storage is full, so this change wasn't saved.";
-  }
-  if (code === "invalid_argument" && message) {
-    return `This change wasn't saved: ${message}`;
-  }
-  return "This change wasn't saved because your dashboard data can't be reached. Try again in a moment.";
 }
 
 /**

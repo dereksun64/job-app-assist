@@ -1,6 +1,7 @@
 import { homedir } from "node:os";
 import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { text } from "node:stream/consumers";
+import { fileURLToPath } from "node:url";
 import { runCli } from "./jaa.ts";
 
 process.exitCode = await runCli(process.argv.slice(2), {
@@ -23,6 +24,10 @@ process.exitCode = await runCli(process.argv.slice(2), {
     ),
   env: (name) => process.env[name],
   homeDir: () => homedir(),
+  // Bundled as <plugin>/dist/jaa.mjs, so the plugin's folder is one up.
+  pluginRoot: () => fileURLToPath(new URL("..", import.meta.url)),
+  platform: () => process.platform,
+  nodeVersion: () => process.versions.node,
   stdout: (chunk) => process.stdout.write(chunk),
   stderr: (chunk) => process.stderr.write(chunk),
 });

@@ -4,7 +4,8 @@
  * Refresh skill runs it to build the Job List and the News Digest and to move cards from Gmail,
  * the Tune skill to read skip patterns and show a settings diff, the Fill skill to plan each
  * Fill, build the cards it writes and log token use, and Refresh and Fill to prepare Prepared
- * Applications.
+ * Applications, and Tidy to make room in a full dashboard. Every skill runs it to keep the dashboard page up to date, and Setup to check
+ * the prerequisites on this computer.
  */
 import { validateDocument } from "../contract/index.ts";
 import type { FillIo } from "../fill/io.ts";
@@ -16,12 +17,18 @@ import { runGmailCommand } from "../refresh/gmail.ts";
 import { runNewsCommand, type NewsIo } from "../refresh/news.ts";
 import { runRefreshCommand } from "../refresh/run.ts";
 import { runImportConnections, type ConnectionsIo } from "./connections.ts";
+import { DASHBOARD_USAGE, runDashboard, type DashboardIo } from "./dashboard.ts";
+import { runPrerequisites, type PrerequisitesIo } from "./prerequisites.ts";
 import { runCheckResumes, type ResumeIo } from "./resumes.ts";
 import { runSettingsDiff, runTuneReport } from "../tune/run.ts";
+import { runTidy, TIDY_USAGE } from "../tidy/run.ts";
 
-export interface CliIo extends NewsIo, ResumeIo, ConnectionsIo, FillIo {}
+export interface CliIo
+  extends NewsIo, ResumeIo, ConnectionsIo, FillIo, DashboardIo, PrerequisitesIo {}
 
 const USAGE = `Usage: jaa validate <collection> <doc-id> <file|->
+       jaa prerequisites
+${DASHBOARD_USAGE}
        jaa refresh <dir> [--feed <url|file> | --rerun]
        jaa news plan <dir>
        jaa news build <dir>
@@ -35,9 +42,18 @@ const USAGE = `Usage: jaa validate <collection> <doc-id> <file|->
        jaa style-guide init|check <file>
 ${FILL_USAGE}
 ${PREPARE_USAGE}
+${TIDY_USAGE}
 
 validate       Checks one dashboard document (JSON, from a file or from stdin with -)
                against the dashboard contract. Exits 0 when it matches, 1 when it does not.
+prerequisites  Checks this computer for what Fill needs (Node.js 20 or newer, Helium, and the
+               Claude and Simplify Copilot extensions in Helium) and says how to fix each
+               missing one. Exits 1 only when Node.js is too old.
+dashboard      check compares the dashboard page version recorded in <dir>/dashboard.json
+               with this Toolkit's page and, when the Toolkit's is newer, copies it to
+               <dir>/dashboard.html to publish in place. page copies the page for a first
+               publish. record saves the dashboard link and the page version just
+               published; it refuses a different link unless --replace is passed.
 refresh        Builds the Job List from the dashboard state saved in <dir>/state and the
                Job Feed, and writes the documents and ArtifactData batches to <dir>/out.
                --rerun rebuilds from the Sources the last run read, without the network,
@@ -86,6 +102,11 @@ prepare        plan lists the Queued cards without a Prepared Application (from 
                the Style Guide and the contract, and writes the Prepared Applications and
                their batch to <dir>/out. --posting builds one card's from the questions
                Fill read on its form, and prints the answers to type.
+tidy           plan lists the old history a full dashboard can let go (Closed cards closed
+               30 or more days ago, or --closed-days, with their answers; leftovers with no
+               card; old skips and News Digests) from the state saved in <dir>/state, and
+               saves it to <dir>/out/tidy-plan.json. build turns it into delete batches
+               pinned to the versions in <dir>/versions.json, in <dir>/out/writes.json.
 `;
 
 /** Runs the CLI and resolves its exit code. */
@@ -114,6 +135,15 @@ export async function runCli(argv: readonly string[], io: CliIo): Promise<number
       return 2;
     }
     return runCheckResumes(manifest, settings, io);
+  }
+  if (argv[0] === "tidy") return runTidy(argv.slice(1), io);
+  if (argv[0] === "dashboard") return runDashboard(argv.slice(1), io);
+  if (argv[0] === "prerequisites") {
+    if (argv.length > 1) {
+      io.stderr(USAGE);
+      return 2;
+    }
+    return runPrerequisites(io);
   }
   if (argv[0] === "fill") return runFill(argv.slice(1), io);
   if (argv[0] === "prepare") return runPrepare(argv.slice(1), io);

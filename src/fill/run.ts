@@ -297,7 +297,7 @@ async function start(dir: string, id: string, version: number, io: FillIo): Prom
 
 interface UsageLine {
   outcome?: unknown;
-  tokens?: { total?: unknown } | null;
+  tokens?: { total?: unknown; messages?: unknown; output?: unknown } | null;
 }
 
 async function finish(dir: string, id: string, version: number, io: FillIo): Promise<number> {
@@ -349,12 +349,19 @@ async function finish(dir: string, id: string, version: number, io: FillIo): Pro
   const log = `${earlier}${earlier === "" || earlier.endsWith("\n") ? "" : "\n"}${JSON.stringify(entry)}\n`;
   await io.writeFile(logPath, log);
 
-  const totals: number[] = [];
+  const logged: { total: number; messages: number; output: number }[] = [];
   for (const line of log.split("\n")) {
     try {
       const parsed = JSON.parse(line) as UsageLine;
-      if (parsed.outcome === "filled" && typeof parsed.tokens?.total === "number")
-        totals.push(parsed.tokens.total);
+      const t = parsed.tokens;
+      if (
+        parsed.outcome === "filled" &&
+        typeof t?.total === "number" &&
+        typeof t.messages === "number" &&
+        typeof t.output === "number"
+      ) {
+        logged.push({ total: t.total, messages: t.messages, output: t.output });
+      }
     } catch {
       // Blank or unreadable lines are not applications.
     }
@@ -374,10 +381,14 @@ async function finish(dir: string, id: string, version: number, io: FillIo): Pro
       ? `Tokens for this application: ${fmt(tokens.total)} over ${plural(tokens.messages, "response")} (${fmt(tokens.cacheRead)} cache reads, ${fmt(tokens.cacheCreation)} cache writes, ${fmt(tokens.input)} input, ${fmt(tokens.output)} output).`
       : "Token use for this application could not be measured: this session's transcript was not found.",
   ];
-  if (totals.length > 0) {
-    const average = Math.round(totals.reduce((a, b) => a + b, 0) / totals.length);
+  if (logged.length > 0) {
+    const mean = (pick: (u: (typeof logged)[number]) => number) =>
+      Math.round(logged.reduce((sum, u) => sum + pick(u), 0) / logged.length);
     lines.push(
-      `${plural(totals.length, "filled application")} logged so far, averaging ${fmt(average)} tokens each.`,
+      `${plural(logged.length, "filled application")} logged so far. On average each took ${plural(
+        mean((u) => u.messages),
+        "response",
+      )} and ${fmt(mean((u) => u.output))} output tokens (${fmt(mean((u) => u.total))} tokens in all, mostly cache reads).`,
     );
   }
   io.stdout(`${lines.join("\n")}\n`);

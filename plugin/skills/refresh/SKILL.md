@@ -1,7 +1,7 @@
 ---
 name: refresh
 description: Refresh the Candidate's Job List, Queue and News Digest. Pulls Postings from the Candidate's enabled Sources (the Job Feed, their watchlist companies' job boards and Postings they added by URL), keeps the ones that match the Search Profile, ranks them, picks a Resume Variant for each, pre-queues the best ones up to the daily Queue target, drafts referral asks for the Candidate's connections at queued companies, writes them to the dashboard's Postings tab, moves Progress board cards from the Candidate's Gmail replies when they opted in, builds the day's News Digest for the News tab, prepares answers and Research Briefs for queued Postings, and ends with a short summary in chat. Use when the Candidate asks to refresh, update their jobs, see today's Postings, check their applications' status or catch up on the news.
-allowed-tools: Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs refresh .job-app-assist/refresh) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs refresh .job-app-assist/refresh --rerun) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs news plan .job-app-assist/refresh) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs news build .job-app-assist/refresh) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs gmail plan .job-app-assist/refresh) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs gmail match .job-app-assist/refresh) WebSearch WebFetch(domain:news.ycombinator.com) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs prepare plan .job-app-assist/refresh) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs prepare build .job-app-assist/refresh) Bash(rm -rf .job-app-assist/refresh/state .job-app-assist/refresh/out .job-app-assist/refresh/prepared) Bash(mkdir -p .job-app-assist/refresh) Bash(cp ${CLAUDE_PLUGIN_ROOT}/dist/dashboard.html .job-app-assist/dashboard.html)
+allowed-tools: Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs refresh .job-app-assist/refresh) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs refresh .job-app-assist/refresh --rerun) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs news plan .job-app-assist/refresh) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs news build .job-app-assist/refresh) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs gmail plan .job-app-assist/refresh) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs gmail match .job-app-assist/refresh) WebSearch WebFetch(domain:news.ycombinator.com) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs prepare plan .job-app-assist/refresh) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs prepare build .job-app-assist/refresh) Bash(rm -rf .job-app-assist/refresh/state .job-app-assist/refresh/out .job-app-assist/refresh/prepared) Bash(mkdir -p .job-app-assist/refresh) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs dashboard check .job-app-assist) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs dashboard record .job-app-assist *)
 ---
 
 # Refresh
@@ -28,16 +28,13 @@ If it does not exist, tell the Candidate that Refresh needs their dashboard firs
 
 ## 3. Bring the dashboard page up to date
 
-Read `version` from `${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json`.
-When it differs from `pageVersion`, the Toolkit has a newer dashboard page:
-
 ```bash
-cp ${CLAUDE_PLUGIN_ROOT}/dist/dashboard.html .job-app-assist/dashboard.html
+node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs dashboard check .job-app-assist
 ```
 
-Read the dashboard `url` with the `Artifact` tool, then publish `.job-app-assist/dashboard.html` to that `url` without passing `capabilities`, so the page keeps its database and its data.
-Then save `pageVersion` in `.job-app-assist/dashboard.json` as the new version.
+When it says the Toolkit has a newer dashboard page, read the dashboard `url` with the `Artifact` tool, then publish `.job-app-assist/dashboard.html` to that `url` without passing `capabilities`, so the page keeps its database and its data, and run the `jaa dashboard record` command it printed.
 If the publish fails, say so in the summary and carry on; the data still updates.
+When it says the page is up to date, or newer than this Toolkit, there is nothing to publish.
 
 ## 4. Save the dashboard state
 
@@ -169,7 +166,7 @@ It holds `{ "batches": [[...], ...] }`.
 For each batch, in order, call `ArtifactData` with `action: "batch"`, the dashboard `url`, and that batch as `writes`, exactly as listed: every entry already carries its `file_path` and, for documents that exist, its `if_version`.
 
 - If a batch is refused because a document changed since step 4, another Refresh is writing at the same time: go back to step 4 once; the calls you recorded in steps 6 and 7 are kept.
-- If the database reports it is full or over quota, stop and tell the Candidate plainly that their dashboard storage is full.
+- If the database reports it is full (`quota_exceeded`), stop writing and follow "When the dashboard storage is full" in the hard rules.
 
 Then read `postings/meta` with `action: "get"` and check that its `refreshedAt` is the one in `.job-app-assist/refresh/out/summary.json`.
 

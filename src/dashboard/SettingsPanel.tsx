@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "preact/hooks";
+import { ProblemText } from "./ProblemText.tsx";
 import {
   COMPANY_RULES,
   MAX_FRESHNESS_WEIGHT,
@@ -148,7 +149,7 @@ export function SettingsPanel({ db, state, now, onClose }: SettingsPanelProps) {
         <div class="sheet-footer">
           {problem && (
             <p class="notice notice-problem" role="alert">
-              {problem}
+              <ProblemText text={problem} />
             </p>
           )}
           <p class="settings-saved" role="status">

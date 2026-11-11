@@ -7,7 +7,7 @@ import {
   type Settings,
 } from "../contract/index.ts";
 import type { DashboardDb } from "./db.ts";
-import { saveProblem } from "./useSources.ts";
+import { saveProblem } from "./saveProblem.ts";
 
 export type SettingsSave = { ok: true; changes: SettingsChange[] } | { ok: false; problem: string };
 

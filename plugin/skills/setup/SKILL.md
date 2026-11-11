@@ -1,13 +1,14 @@
 ---
 name: setup
-description: Set up Job App Assist. Drafts the Candidate's Search Profile from a plain-language description, records their labeled Resume Variants, asks whether Refresh may read their Gmail to track applications, saves it all once they confirm, publishes their private dashboard, optionally imports their LinkedIn connections export for Referral Drafts, creates the private file of sensitive answers Fill uses, and writes the Style Guide every AI-drafted answer follows. Use when the Candidate wants to get started, change their Search Profile, add or change their resumes, switch Gmail tracking on or off, create their dashboard, import their LinkedIn connections, set up their private answers, or change how their drafted answers sound.
+description: Set up Job App Assist. Checks the prerequisites (Node.js, Helium, the Claude extension and its connection, Simplify, and the optional Gmail connector) and explains each fix, drafts the Candidate's Search Profile from a plain-language description, records their labeled Resume Variants, asks whether Refresh may read their Gmail to track applications, saves it all once they confirm, publishes their private dashboard, optionally imports their LinkedIn connections export for Referral Drafts, creates the private file of sensitive answers Fill uses, and writes the Style Guide every AI-drafted answer follows. Can be rerun at any time without losing data. Use when the Candidate wants to get started, check their setup, change their Search Profile, add or change their resumes, switch Gmail tracking on or off, create their dashboard, import their LinkedIn connections, set up their private answers, or change how their drafted answers sound.
 argument-hint: "[the jobs you want, in your own words]"
-allowed-tools: Bash(node --version) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs validate *) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs check-resumes *) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs import-connections *) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs private-answers init private-answers.md) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs private-answers check private-answers.md) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs style-guide init style-guide.md) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs style-guide check style-guide.md) Bash(mkdir -p .job-app-assist) Bash(cp ${CLAUDE_PLUGIN_ROOT}/dist/dashboard.html .job-app-assist/dashboard.html) Bash(date -u *)
+allowed-tools: Bash(node --version) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs validate *) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs check-resumes *) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs import-connections *) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs private-answers init private-answers.md) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs private-answers check private-answers.md) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs style-guide init style-guide.md) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs style-guide check style-guide.md) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs prerequisites) mcp__claude-in-chrome__list_connected_browsers Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs dashboard check .job-app-assist) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs dashboard page .job-app-assist) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs dashboard record .job-app-assist *) Bash(date -u *)
 ---
 
 # Setup
 
-Setup turns the Candidate's own words into a Search Profile, records their Resume Variants, asks whether Refresh may read their Gmail, saves it all only after they confirm it, and gives them their private dashboard: a claude.ai Artifact in their own account with News, Postings and Progress tabs.
+Setup first checks what the Toolkit needs on this computer and says how to fix anything missing.
+It then turns the Candidate's own words into a Search Profile, records their Resume Variants, asks whether Refresh may read their Gmail, saves it all only after they confirm it, and gives them their private dashboard: a claude.ai Artifact in their own account with News, Postings and Progress tabs.
 It can also import the Candidate's LinkedIn connections, so each Refresh can suggest Referral Drafts.
 Last, it creates the private file of sensitive answers that Fill reads, and the Style Guide every AI-drafted answer follows; both stay in the Candidate folder.
 The current working directory is the Candidate folder; Setup's local state lives in `.job-app-assist/` inside it.
@@ -22,20 +23,62 @@ Read `.job-app-assist/dashboard.json` if it exists.
 It holds `{ "url": "<dashboard Artifact URL>", "pageVersion": "<version>" }`.
 When it exists, this is a rerun: read the current settings with `ArtifactData` (`action: "get"`, the recorded `url`, `collection: "settings"`, `doc_id: "main"`) and start the draft from them, so the Candidate only describes what should change.
 If that read finds no settings document, carry on as a first save.
+If the Artifact tool cannot read the recorded `url` because the dashboard no longer exists, tell the Candidate their dashboard is gone and its data with it, and ask whether to create a new one; on a yes, carry on as a first run, and step 10 records the new dashboard with `--replace`.
+
+When `.job-app-assist/dashboard.json` does not exist, the Candidate may still have a dashboard from an earlier Setup, in another folder or before `.job-app-assist/` was deleted.
+List their artifacts with the `Artifact` tool (`action: "list"`) and look for any titled "Job App Assist".
+When there is one, ask whether it is their dashboard and whether to keep using it, which keeps all its data.
+On a yes, this is a rerun on that dashboard: read its settings as above, and step 10 publishes to its `url` instead of creating a new dashboard.
+With none, or when the Candidate wants a fresh dashboard, this is a first run.
 Also read `.job-app-assist/resume-variants.json` if it exists: it lists the Resume Variants recorded last time.
 Note whether `.job-app-assist/connections.json` exists: it means the Candidate imported their connections before.
 
-When the Candidate only asks to import their LinkedIn connections and the dashboard already exists, go straight to step 12.
-When they only ask to change how their drafted answers sound, go straight to step 14.
+When the Candidate only asks to import their LinkedIn connections and the dashboard already exists, go straight to step 13.
+When they only ask to change how their drafted answers sound, go straight to step 15.
 
-## 3. Hear what the Candidate wants
+Rerunning Setup never loses data: the dashboard page is republished in place, settings are written only after the Candidate confirms them, Sources the Candidate changed are never overwritten, and `private-answers.md`, `style-guide.md` and the connections file are kept as they are unless the Candidate asks to change them.
+
+## 3. Check the prerequisites
+
+Check what the Toolkit needs before anything else, so nothing fails silently later:
+
+```bash
+node --version
+```
+
+If `node` is missing or older than version 20, tell the Candidate to install Node.js 20 or newer from https://nodejs.org and run Setup again, and stop here: the Toolkit cannot run without it.
+When this session cannot run commands at all, say which checks you could not run, do the two checks below anyway, and carry on with the Search Profile.
+Then check this computer:
+
+```bash
+node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs prerequisites
+```
+
+It looks for Helium and for the Claude extension and Simplify Copilot in Helium, and says how to fix each one that is missing or turned off.
+Then check the two things only this session can see:
+
+- **The Claude extension's connection.**
+  Call `mcp__claude-in-chrome__list_connected_browsers`.
+  When no Claude in Chrome tools are available in this session, or it lists no browser, the extension is not connected: tell the Candidate to open Helium, click the Claude extension's icon, sign in with the claude.ai account this Claude uses, and leave Helium open.
+  When it lists more than one browser, tell the Candidate that Fill works only in Helium, and to quit the other browsers before filling.
+  A connected browser shows only as a generic name such as "Browser 1"; when `jaa prerequisites` says the Claude extension is also on in Google Chrome, pass on its advice.
+- **The Gmail connector**, which is optional: whether this session has Gmail tools, such as `search_threads`.
+  Step 7 explains what Gmail tracking does and asks whether the Candidate wants it.
+
+Show the Candidate a short checklist: each prerequisite as ready, not ready or not checked, and for each one that is not ready, its fix in a sentence or two.
+Never leave a missing prerequisite without its fix.
+Only Node.js stops Setup.
+Helium, the Claude extension and Simplify are needed only for Fill, so carry on with Setup when any of them is missing; the hand-over in step 16 repeats what is still missing.
+Never install anything or sign in for the Candidate (hard rule 4), and check nothing through computer use (hard rule 5).
+
+## 4. Hear what the Candidate wants
 
 The description is whatever the Candidate already said about the jobs they want, including text after `/job-app-assist:setup`.
 With no description yet, ask one question: what jobs they want, in their own words (roles, level, when they can start, where).
 
-## 4. Draft the Search Profile
+## 5. Draft the Search Profile
 
-Turn the description into a settings document with exactly these fields, plus the `resumeVariants` that step 5 adds and the `gmailTracking` that step 6 adds:
+Turn the description into a settings document with exactly these fields, plus the `resumeVariants` that step 6 adds and the `gmailTracking` that step 7 adds:
 
 ```json
 {
@@ -62,14 +105,16 @@ Turn the description into a settings document with exactly these fields, plus th
   Places the Candidate prefers go in Tier 1, places they would accept go in later tiers, and each location appears in only one tier.
   Remote is a location like any other.
 - `dailyQueueTarget`: how many Postings to queue per day, 1 to 100.
-  The default is 20; a smaller Claude plan suits a smaller number.
+  Filling one application takes about 25 model responses, and every queued Posting also gets a Prepared Application on Refresh, so the target should fit the Candidate's Claude plan.
+  Ask which plan they have if they have not said, and start from 5 for Pro, 15 for Max 5x and 40 for Max 20x, or 10 when they are not sure.
+  They can change it later in the Settings panel or with `/job-app-assist:tune`, using the token use Fill reports after each application.
 
 - `companies`, `blockedApplySites` and `freshnessWeight`: start empty and at 20 unless the Candidate names companies to prefer, avoid or rule out, application sites to avoid, or how much recency matters.
   On a rerun, keep what the current settings have; the Candidate tunes these later with `/job-app-assist:tune` or the dashboard's Settings panel.
 
 Where the description leaves a field open, choose the most likely value and mark it as an assumption when you show the draft.
 
-## 5. Record the Resume Variants
+## 6. Record the Resume Variants
 
 A Resume Variant is one of the Candidate's own hand-written resumes, aimed at a role type.
 Refresh picks one for every Posting and Fill uploads it; the Toolkit never edits a resume.
@@ -97,7 +142,6 @@ node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs check-resumes .job-app-assist/resume-var
 ```
 
 Fix every reported problem with the Candidate and run it again until it prints that every file was found.
-If `node` is missing or older than version 20 (`node --version`), tell the Candidate to install Node.js 20 or newer from https://nodejs.org and run Setup again, and stop here.
 
 Add the Resume Variants to the settings draft as `resumeVariants`, with the same names in the same order:
 
@@ -116,7 +160,7 @@ Add the Resume Variants to the settings draft as `resumeVariants`, with the same
 
 The files themselves never go to the dashboard: it holds only each Resume Variant's name and rules, and the manifest that pairs names with files stays in the Candidate folder.
 
-## 6. Ask about Gmail tracking
+## 7. Ask about Gmail tracking
 
 Refresh can keep the Progress board up to date from the Candidate's Gmail.
 Explain it in plain words before asking, covering each of these points:
@@ -130,9 +174,9 @@ Explain it in plain words before asking, covering each of these points:
 
 Then ask whether they want it on, and add their answer to the draft as `"gmailTracking": true` or `"gmailTracking": false`.
 On a rerun, say what it is now and ask only if they want to change it.
-When they choose it but no Gmail tools (such as `search_threads`) are available in this session, tell them to connect Gmail as above; Refresh skips Gmail until it is connected, so their choice still stands.
+When they choose it but step 3 found no Gmail tools, tell them to connect Gmail as above; Refresh skips Gmail until it is connected, so their choice still stands.
 
-## 7. Show the draft and wait for confirmation
+## 8. Show the draft and wait for confirmation
 
 Show the draft in plain words (role types by priority, seniority, start window, each Location Tier, daily Queue target, each Resume Variant with its file, role types and keywords, the default first, and whether Gmail tracking is on), list your assumptions, and ask the Candidate to confirm or say what to change.
 Redraft and show it again after every change.
@@ -141,7 +185,7 @@ Saving needs the Candidate's explicit confirmation of the draft as shown, given 
 A request to save without looking ("just save it") still gets the draft shown and the question asked.
 This step is complete only when the Candidate has confirmed the latest draft; until then nothing is validated, published or saved to the dashboard.
 
-## 8. Check the draft against the dashboard contract
+## 9. Check the draft against the dashboard contract
 
 Set `updatedAt` from `date -u +%Y-%m-%dT%H:%M:%SZ`, then validate the exact JSON you will save:
 
@@ -162,38 +206,51 @@ JSON
 
 If a fix changes what the Candidate confirmed, show the change and confirm again.
 
-## 9. Publish the dashboard
+## 10. Publish the dashboard
 
+If the Artifact tool is not available, tell the Candidate that their dashboard needs Claude Code signed in with a claude.ai account and stop; their Search Profile is not saved yet.
+
+**First run.**
 Copy the page into the Candidate folder, since the Artifact tool publishes files from there:
 
 ```bash
-mkdir -p .job-app-assist
-cp ${CLAUDE_PLUGIN_ROOT}/dist/dashboard.html .job-app-assist/dashboard.html
+node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs dashboard page .job-app-assist
 ```
 
-Publish `.job-app-assist/dashboard.html` with the `Artifact` tool and these capabilities, so only the Candidate can read or write the dashboard data even if the page is ever shared:
+Publish `.job-app-assist/dashboard.html` with the `Artifact` tool, `icon: "briefcase"`, `description: "Your Job App Assist dashboard: News, Postings and Progress."`, and these capabilities, so only the Candidate can read or write the dashboard data even if the page is ever shared:
 
 ```json
 { "db": { "rules": [{ "path": "", "read": "owner", "write": "owner" }] } }
 ```
 
-- First run: publish with `icon: "briefcase"` and `description: "Your Job App Assist dashboard: News, Postings and Progress."`.
-- Rerun: read the recorded `url` with the Artifact tool, then publish to that `url`, so the page updates in place and its data stays.
+Then record it, adding `--replace` when step 2 found the recorded dashboard gone:
 
-Then use the Write tool to save `.job-app-assist/dashboard.json` with the dashboard `url` and `pageVersion` set to the `version` in `${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json`.
+```bash
+node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs dashboard record .job-app-assist <the new dashboard url>
+```
 
-If the Artifact tool is not available, tell the Candidate that their dashboard needs Claude Code signed in with a claude.ai account and stop; their Search Profile is not saved yet.
+**Rerun on the recorded dashboard.**
 
-## 10. Save the settings document
+```bash
+node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs dashboard check .job-app-assist
+```
+
+When it says the Toolkit has a newer dashboard page, publish `.job-app-assist/dashboard.html` to the recorded `url` without passing `capabilities`, so the page keeps its database and its data, and run the `jaa dashboard record` command it printed.
+Otherwise there is nothing to publish.
+
+**Rerun on a dashboard the Candidate chose in step 2.**
+Copy the page with `jaa dashboard page` as on a first run, publish it to that dashboard's `url` without passing `capabilities`, and record that `url` with `jaa dashboard record`.
+
+## 11. Save the settings document
 
 Write the validated document with `ArtifactData`: `action: "set"`, the dashboard `url`, `collection: "settings"`, `doc_id: "main"`, and the document as `data`.
 When step 2 found an existing settings document, pass its `version` as `if_version`.
 Read it back with `action: "get"`; Setup is done when the stored document matches what the Candidate confirmed.
 
-## 11. Seed the Sources
+## 12. Seed the Sources
 
 List the `sources` collection with `ArtifactData` (`action: "list"`, the dashboard `url`).
-For each of these documents that is missing, write it with `action: "set"`, after checking it with `node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs validate sources <doc-id> -` as in step 8, and with `updatedAt` from the same `date -u` command:
+For each of these documents that is missing, write it with `action: "set"`, after checking it with `node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs validate sources <doc-id> -` as in step 9, and with `updatedAt` from the same `date -u` command:
 
 - `job-feed`: `{ "schemaVersion": 1, "enabled": true, "updatedAt": "<now>" }`
 - `watchlist`: `{ "schemaVersion": 1, "enabled": true, "companies": [], "updatedAt": "<now>" }`
@@ -201,7 +258,7 @@ For each of these documents that is missing, write it with `action: "set"`, afte
 
 Never overwrite a Source document that exists: the Candidate's switches, watchlist and added Postings live there.
 
-## 12. Offer to import LinkedIn connections
+## 13. Offer to import LinkedIn connections
 
 This step is optional.
 With the Candidate's LinkedIn connections in the Candidate folder, each Refresh drafts a short referral ask for connections who work at the companies in their Queue, and shows each one in that Posting's drawer with a copy button.
@@ -209,7 +266,7 @@ The Candidate sends every message themselves.
 
 Ask once whether they want Referral Drafts.
 On a rerun where `.job-app-assist/connections.json` exists, ask instead whether they have a newer export to import, since people change jobs.
-A no is fine: skip to step 13.
+A no is fine: skip to step 14.
 
 The Candidate gets the export from LinkedIn themselves; never open LinkedIn for them (hard rule 3).
 Tell them how:
@@ -233,7 +290,7 @@ When it succeeds, tell the Candidate how many connections it imported, that the 
 Do not open `.job-app-assist/connections.json` or repeat its contents in chat; Refresh reads it.
 To stop Referral Drafts later, the Candidate deletes `.job-app-assist/connections.json`.
 
-## 13. Create the private answers file
+## 14. Create the private answers file
 
 Application forms ask for answers that must never sit in the dashboard database (hard rule 7): legal name and address, phone, work authorization and sponsorship, education details, and the voluntary demographic questions.
 They live in `private-answers.md` in the Candidate folder, which Fill reads on this computer while it fills a form.
@@ -255,7 +312,7 @@ node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs private-answers check private-answers.md
 Never copy an answer from this file into the dashboard, a settings document or any other file.
 If the Candidate wants to finish the file later, carry on; Fill reminds them when it runs.
 
-## 14. Write the Style Guide
+## 15. Write the Style Guide
 
 Refresh and Fill draft answers to the free-text questions on application forms ("Tell us about a project you are proud of"), and every draft follows the Candidate's Style Guide so it sounds like them rather than generic.
 It lives in `style-guide.md` in the Candidate folder.
@@ -286,9 +343,10 @@ node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs style-guide check style-guide.md
 It fails while the tone is empty; until it passes, Refresh and Fill draft no answers and leave free-text questions for the Candidate.
 If the Candidate wants to finish it later, carry on.
 
-## 15. Hand over
+## 16. Hand over
 
 Give the Candidate the dashboard link and a one-line summary of the saved Search Profile, Resume Variants and Gmail tracking choice, and whether Referral Drafts are on.
 Tell them the Search Profile appears at the top of the dashboard, and that News, Postings and Progress fill in once they refresh.
 Mention the Sources button beside the tabs, where they can switch Sources on or off, follow companies on a watchlist, and add Postings by URL.
 Say whether the Style Guide is written (and that AI-drafted answers follow it, marked as AI-drafted in each queued Posting's drawer, where the Candidate can edit them or write their own), how many questions `private-answers.md` still leaves blank, and that `/job-app-assist:fill` fills their queued applications in Helium once they have refreshed and queued some Postings.
+When step 3 found anything Fill needs still missing (Helium, the Claude extension or its connection, Simplify), list it again with its fix, and say that Setup can be run again at any time to check, without losing anything.

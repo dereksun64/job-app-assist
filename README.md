@@ -4,14 +4,24 @@ A Claude Code plugin that lets your own Claude find, prepare and fill job applic
 Everything lands in a private dashboard in your own claude.ai account, with News, Postings and Progress tabs.
 Your Claude never submits an application, never sends a message as you, and never signs in for you.
 
-This is an early version: Setup, Refresh, the Queue, Sources, the News Digest, the Progress board, Settings, Tune, Referral Drafts and Fill work today.
+Setup, Refresh, the Queue, Sources, the News Digest, the Progress board, Settings, Tune, Referral Drafts, Prepared Applications, Fill and Tidy all work today.
+It runs on a Mac.
 
 ## What you need
 
-- A Claude plan and the Claude desktop app, signed in with your claude.ai account
-- Node.js 20 or newer
-- Your resume as a PDF or Word file, or a few resumes each aimed at a different role type
-- For Fill: the [Helium](https://helium.computer) browser with the Claude extension (Claude in Chrome) signed in, and the Simplify Copilot extension with your Simplify profile filled in
+- **A Claude plan** (Pro, Max or a Team or Enterprise seat): all the work runs on your own plan's usage, with no other bill.
+- **The Claude desktop app**, signed in with your claude.ai account.
+  You use it from its **Code** tab, in a folder for your job search.
+- **Node.js 20 or newer**, from [nodejs.org](https://nodejs.org).
+  The Toolkit's small helper program runs on it.
+- **Your resume** as a PDF or Word file, or a few resumes each aimed at a different role type.
+- **For Fill**, on the same Mac:
+  - the [Helium](https://helium.computer) browser, where your applications are filled, apart from your own browser;
+  - the [Claude extension](https://chromewebstore.google.com/detail/fcoeoabgfenejglbffodgkkbkcdhcgfn) (Claude in Chrome) added to Helium and signed in with the same claude.ai account;
+  - [Simplify Copilot](https://chromewebstore.google.com/detail/pbanhockgagggenencehbnadejlgchfc) added to Helium, signed in, with your Simplify profile filled in.
+- **Optionally, the Gmail connector** (claude.ai, Settings, Connectors, Gmail), if you want Refresh to move your Progress board cards from companies' replies.
+
+Setup checks each of these and tells you how to fix anything missing.
 
 ## Install
 
@@ -24,6 +34,8 @@ claude plugin install job-app-assist@job-app-assist
 ```
 
 Then open a folder for your job search in the Code tab of the Claude desktop app and run `/job-app-assist:setup`, or just tell Claude you want to set up Job App Assist.
+Setup first checks the prerequisites above: Node.js, Helium, the Claude extension and whether it is connected, Simplify, and the Gmail connector if you want it.
+Only a missing Node.js stops it; anything else Fill needs is listed with its fix, and you can finish it later.
 Describe the jobs you want in your own words, then point Claude at your resumes in that folder and give each a short label, such as "Backend SWE" or "AI/ML Engineer".
 One resume is enough to start.
 Confirm the Search Profile and Resume Variants Claude drafts, and Claude publishes your dashboard.
@@ -32,6 +44,43 @@ Last, Setup creates `private-answers.md` in your folder: write your sensitive an
 That file stays on your computer and never goes to your dashboard; leave blank anything you would rather answer on each form yourself.
 Then Setup writes your Style Guide, `style-guide.md`: how you sound, phrases you never use, and a few answers you wrote yourself.
 Every answer Claude drafts for you follows it, so it sounds like you rather than generic.
+
+Run Setup again whenever you want to change your Search Profile, resumes, Gmail tracking or Style Guide, or to check your prerequisites again.
+Rerunning never loses data: your dashboard is updated in place, and your answers and settings are kept unless you change them.
+If you set up in a new folder, Setup finds your existing dashboard and offers to keep using it.
+
+## Commands
+
+Every command works by name or in plain words; the names are the surest way to start the one you mean.
+
+| Command                                 | What it does                                                                           |
+| --------------------------------------- | -------------------------------------------------------------------------------------- |
+| `/job-app-assist:setup`                 | Checks your prerequisites, saves your Search Profile and resumes, makes your dashboard |
+| `/job-app-assist:refresh`               | Updates your Job List, Queue, News Digest and Prepared Applications                    |
+| `/job-app-assist:fill`                  | Fills your queued applications in Helium, stopping before submit                       |
+| `/job-app-assist:fill Acme new grad`    | Fills just that Posting                                                                |
+| `/job-app-assist:tune more AI startups` | Changes what gets recommended, after you approve the exact changes                     |
+| `/job-app-assist:tidy`                  | Makes room when your dashboard storage is full                                         |
+
+A good day: run `/job-app-assist:refresh` in the morning, look over your Queue and answers on the dashboard, then run `/job-app-assist:fill` and submit the filled tabs in Helium yourself.
+
+## How many applications a day
+
+Your daily Queue target sets how many Postings Refresh queues each day, and so how much of your Claude plan Fill uses.
+Filling one Greenhouse application in a live test took about 4 minutes, 25 model responses and 10,000 output tokens, with Simplify filling the standard fields first.
+Refresh also prepares answers and a Research Brief for each queued Posting.
+Realistic daily targets to start from:
+
+| Claude plan | Daily Queue target |
+| ----------- | ------------------ |
+| Pro         | 5                  |
+| Max 5x      | 15                 |
+| Max 20x     | 40                 |
+
+On a Team or Enterprise seat, start at 5.
+These come from one measured application, and forms vary, so treat them as starting points.
+Claude logs the tokens each application uses in `.job-app-assist/fill/usage.jsonl` in your folder and reports the running average after each one; compare it with your usage in claude.ai (Settings, Usage) and raise or lower your target in the Settings panel or with `/job-app-assist:tune`.
+Starting Fill in a new session keeps each response small, so the same plan fills more applications.
 
 ## Refresh
 
@@ -101,7 +150,7 @@ Claude flags instead of guessing: questions it is unsure of, claims about you (s
 Postings that need a sign-in or a new account (Workday, for example) stay Queued with a flag: sign in yourself in Helium and ask Claude to fill that Posting again.
 You can review and submit the first tabs while the rest are still filling.
 
-Claude logs the tokens each application used in `.job-app-assist/fill/usage.jsonl` in your folder and reports the running average after each one, so you can size your daily Queue target to your Claude plan.
+Claude logs the tokens each application used in `.job-app-assist/fill/usage.jsonl` in your folder and reports the running average after each one, so you can size your daily Queue target to your Claude plan (see [How many applications a day](#how-many-applications-a-day)).
 
 ## Settings and Tune
 
@@ -121,10 +170,29 @@ On each Refresh, Claude matches your connections to the companies in your Queue 
 Open a queued Posting to see its Referral Drafts, each with a copy button and a LinkedIn search for the person.
 You send every message yourself; the Toolkit never sends anything and never opens LinkedIn.
 
+## Updates and your dashboard
+
+Update the Toolkit with:
+
+```bash
+claude plugin update job-app-assist@job-app-assist
+```
+
+When an update brings a new dashboard design, the next command you run (Refresh, Fill, Tune, Setup or Tidy) republishes your dashboard page in place.
+Your data lives in the dashboard's database, not the page, so nothing is lost; the version at the bottom of the dashboard shows which page you have.
+
+## When your dashboard storage is full
+
+A dashboard holds at most 25,000 documents and a limited total size, which takes many months of daily use to fill.
+If it fills up, the dashboard and your Claude both say so, and nothing you saved before is lost.
+Run `/job-app-assist:tidy`: it lists the old history it can remove (cards Closed for 30 days or more with their answers, leftovers with no card, skips older than 180 days and News Digests older than 90 days) and removes it only after you approve.
+Open cards, settings, Sources and your Job List always stay.
+
 ## Developing
 
 The plugin lives in `plugin/`, and the TypeScript source for the dashboard page, the dashboard contract and the `jaa` CLI lives in `src/`.
-`plugin/dist/` is generated by `npm run build` and committed, because the plugin is installed straight from this repository.
+`plugin/dist/` is generated by `npm run build` and committed, because Claude Code installs the plugin straight from this repository and runs no build step (see [ADR 0004](docs/adr/0004-built-plugin-files-are-committed.md)).
+When a merge or rebase conflicts on `plugin/dist/`, never edit it by hand: take either side, run `npm run build`, and commit the result.
 
 ```bash
 npm install

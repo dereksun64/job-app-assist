@@ -10,6 +10,7 @@ var __export = (target, all) => {
 import { homedir } from "node:os";
 import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { text as text11 } from "node:stream/consumers";
+import { fileURLToPath } from "node:url";
 
 // node_modules/zod/v4/core/util.js
 function getEnumValues(entries) {
@@ -1048,6 +1049,10 @@ var $ZodBoolean = /* @__PURE__ */ $constructor("$ZodBoolean", (inst, def) => {
     return payload;
   };
 });
+var $ZodUnknown = /* @__PURE__ */ $constructor("$ZodUnknown", (inst, def) => {
+  $ZodType.init(inst, def);
+  inst._zod.parse = (payload) => payload;
+});
 var $ZodNever = /* @__PURE__ */ $constructor("$ZodNever", (inst, def) => {
   $ZodType.init(inst, def);
   inst._zod.parse = (payload, _ctx) => {
@@ -1261,7 +1266,7 @@ var $ZodObject = /* @__PURE__ */ $constructor("$ZodObject", (inst, def) => {
     }
     return propValues;
   });
-  const isObject2 = isObject;
+  const isObject3 = isObject;
   const catchall = def.catchall;
   let value;
   const memo = globalConfig.memoizer;
@@ -1269,7 +1274,7 @@ var $ZodObject = /* @__PURE__ */ $constructor("$ZodObject", (inst, def) => {
   inst._zod.parse = (payload, ctx) => {
     value ?? (value = _normalized.value);
     const input = payload.value;
-    if (!isObject2(input)) {
+    if (!isObject3(input)) {
       payload.issues.push({
         expected: "object",
         code: "invalid_type",
@@ -1697,6 +1702,12 @@ function _boolean(Class, params) {
   });
 }
 // @__NO_SIDE_EFFECTS__
+function _unknown(Class) {
+  return new Class({
+    type: "unknown"
+  });
+}
+// @__NO_SIDE_EFFECTS__
 function _never(Class, params) {
   return new Class({
     type: "never",
@@ -1886,6 +1897,14 @@ var ZodMiniBoolean = /* @__PURE__ */ $constructor("ZodMiniBoolean", (inst, def) 
 function boolean2(params) {
   return _boolean(ZodMiniBoolean, params);
 }
+var ZodMiniUnknown = /* @__PURE__ */ $constructor("ZodMiniUnknown", (inst, def) => {
+  $ZodUnknown.init(inst, def);
+  ZodMiniType.init(inst, def);
+});
+// @__NO_SIDE_EFFECTS__
+function unknown() {
+  return _unknown(ZodMiniUnknown);
+}
 var ZodMiniNever = /* @__PURE__ */ $constructor("ZodMiniNever", (inst, def) => {
   $ZodNever.init(inst, def);
   ZodMiniType.init(inst, def);
@@ -1917,6 +1936,15 @@ function strictObject(shape, params) {
     type: "object",
     shape,
     catchall: /* @__PURE__ */ never(),
+    ...normalizeParams(params)
+  });
+}
+// @__NO_SIDE_EFFECTS__
+function looseObject(shape, params) {
+  return new ZodMiniObject({
+    type: "object",
+    shape,
+    catchall: /* @__PURE__ */ unknown(),
     ...normalizeParams(params)
   });
 }
@@ -2221,12 +2249,12 @@ var settings = strictObject({
   superRefine((value, ctx) => {
     const known = new Set(value.searchProfile.roleTypes.map((r) => r.name.toLowerCase()));
     value.resumeVariants.forEach((variant, index) => {
-      const unknown = variant.roleTypes.filter((name3) => !known.has(name3.toLowerCase()));
-      if (unknown.length === 0) return;
+      const unknown2 = variant.roleTypes.filter((name3) => !known.has(name3.toLowerCase()));
+      if (unknown2.length === 0) return;
       ctx.addIssue({
         code: "custom",
         path: ["resumeVariants", index, "roleTypes"],
-        message: `${unknown.join(", ")} ${unknown.length === 1 ? "is not a role type" : "are not role types"} in the Search Profile`,
+        message: `${unknown2.join(", ")} ${unknown2.length === 1 ? "is not a role type" : "are not role types"} in the Search Profile`,
         input: variant.roleTypes
       });
     });
@@ -2244,8 +2272,8 @@ var POSTINGS_PER_PAGE = 200;
 var MAX_JOB_LIST_PAGES = 5;
 var MAX_JOB_LIST = POSTINGS_PER_PAGE * MAX_JOB_LIST_PAGES;
 var POSTING_DESCRIPTION_MAX = 400;
-function jobListPageId(page2) {
-  return `page-${String(page2)}`;
+function jobListPageId(page3) {
+  return `page-${String(page3)}`;
 }
 var text = (max) => string2().check(
   _trim(),
@@ -2733,10 +2761,10 @@ function startFill(from, at) {
   }
   return { ...from, fillingSince: at, updatedAt: at };
 }
-function finishFill(from, record) {
-  const done = record.outcome === "filled" && from.stage === "queued" ? moveCard(from, "ready_for_review", record.at) : { ...from, updatedAt: record.at };
+function finishFill(from, record2) {
+  const done = record2.outcome === "filled" && from.stage === "queued" ? moveCard(from, "ready_for_review", record2.at) : { ...from, updatedAt: record2.at };
   delete done.fillingSince;
-  done.fill = record;
+  done.fill = record2;
   return done;
 }
 function moveCardByEmail(from, stage, email2, at) {
@@ -3468,13 +3496,13 @@ function diffSettings(before, after) {
   const gmail = (s) => s.gmailTracking === void 0 ? "not chosen" : s.gmailTracking ? "on" : "off";
   if (gmail(before) !== gmail(after))
     add("gmail", [`Gmail tracking: ${gmail(before)} \u2192 ${gmail(after)}`]);
-  const record = (s) => s;
+  const record2 = (s) => s;
   const profile = (s) => s.searchProfile;
   const names = (o) => Object.keys(o);
-  const others = /* @__PURE__ */ new Set([...names(record(before)), ...names(record(after))]);
+  const others = /* @__PURE__ */ new Set([...names(record2(before)), ...names(record2(after))]);
   for (const field of [...others].sort()) {
     if (BOOKKEEPING.has(field) || DESCRIBED.has(field)) continue;
-    if (!same(record(before)[field], record(after)[field])) add("other", [`${field} changed`]);
+    if (!same(record2(before)[field], record2(after)[field])) add("other", [`${field} changed`]);
   }
   const profileFields = /* @__PURE__ */ new Set([...names(profile(before)), ...names(profile(after))]);
   for (const field of [...profileFields].sort()) {
@@ -4014,13 +4042,13 @@ async function finish(dir, id, version2, io) {
     );
   }
   const at = io.now();
-  const record = { ...result, at };
-  const done = finishFill(card2, record);
-  const check = validateCardDocument(id, done);
-  if (!check.ok) {
+  const record2 = { ...result, at };
+  const done = finishFill(card2, record2);
+  const check2 = validateCardDocument(id, done);
+  if (!check2.ok) {
     throw new FillError(
       `${resultPath} needs fixing:
-${check.issues.map((i) => `- ${i}`).join("\n")}`
+${check2.issues.map((i) => `- ${i}`).join("\n")}`
     );
   }
   const startedAt = (await readJsonFile(io, join3(dir, "started", `${id}.json`)))?.startedAt;
@@ -4034,33 +4062,38 @@ ${check.issues.map((i) => `- ${i}`).join("\n")}`
     title: card2.posting.title,
     startedAt: typeof startedAt === "string" ? startedAt : null,
     finishedAt: at,
-    outcome: record.outcome,
-    simplify: record.simplify,
-    flags: record.flags.length,
+    outcome: record2.outcome,
+    simplify: record2.simplify,
+    flags: record2.flags.length,
     tokens: tokens ?? null
   };
   const log = `${earlier}${earlier === "" || earlier.endsWith("\n") ? "" : "\n"}${JSON.stringify(entry)}
 `;
   await io.writeFile(logPath, log);
-  const totals = [];
+  const logged = [];
   for (const line of log.split("\n")) {
     try {
       const parsed = JSON.parse(line);
-      if (parsed.outcome === "filled" && typeof parsed.tokens?.total === "number")
-        totals.push(parsed.tokens.total);
+      const t = parsed.tokens;
+      if (parsed.outcome === "filled" && typeof t?.total === "number" && typeof t.messages === "number" && typeof t.output === "number") {
+        logged.push({ total: t.total, messages: t.messages, output: t.output });
+      }
     } catch {
     }
   }
-  const flags = plural(record.flags.length, "flag");
+  const flags = plural(record2.flags.length, "flag");
   const lines = [
-    record.outcome === "filled" ? done.stage === "ready_for_review" ? `${name(card2)}: filled, moving to Ready for Review with ${flags}.` : `${name(card2)}: filled with ${flags}; it stays ${STAGE_LABELS[done.stage]}, where you moved it.` : record.outcome === "needs_sign_in" ? `${name(card2)}: needs a sign-in, staying Queued with ${flags}.` : `${name(card2)}: Fill stopped, staying Queued with ${flags}.`,
+    record2.outcome === "filled" ? done.stage === "ready_for_review" ? `${name(card2)}: filled, moving to Ready for Review with ${flags}.` : `${name(card2)}: filled with ${flags}; it stays ${STAGE_LABELS[done.stage]}, where you moved it.` : record2.outcome === "needs_sign_in" ? `${name(card2)}: needs a sign-in, staying Queued with ${flags}.` : `${name(card2)}: Fill stopped, staying Queued with ${flags}.`,
     `Send the batch in ${writesPath} with ArtifactData.`,
     tokens ? `Tokens for this application: ${fmt(tokens.total)} over ${plural(tokens.messages, "response")} (${fmt(tokens.cacheRead)} cache reads, ${fmt(tokens.cacheCreation)} cache writes, ${fmt(tokens.input)} input, ${fmt(tokens.output)} output).` : "Token use for this application could not be measured: this session's transcript was not found."
   ];
-  if (totals.length > 0) {
-    const average = Math.round(totals.reduce((a, b) => a + b, 0) / totals.length);
+  if (logged.length > 0) {
+    const mean = (pick2) => Math.round(logged.reduce((sum, u) => sum + pick2(u), 0) / logged.length);
     lines.push(
-      `${plural(totals.length, "filled application")} logged so far, averaging ${fmt(average)} tokens each.`
+      `${plural(logged.length, "filled application")} logged so far. On average each took ${plural(
+        mean((u) => u.messages),
+        "response"
+      )} and ${fmt(mean((u) => u.output))} output tokens (${fmt(mean((u) => u.total))} tokens in all, mostly cache reads).`
     );
   }
   io.stdout(`${lines.join("\n")}
@@ -5634,7 +5667,7 @@ function sameDrafts(a, b) {
 }
 function planReferrals(input) {
   const { now, connections, current, calls } = input;
-  const plan5 = {
+  const plan6 = {
     set: [],
     delete: [],
     review: [],
@@ -5664,12 +5697,12 @@ function planReferrals(input) {
     for (const [key2, postings] of byCompany) {
       const [best] = postings;
       if (!best || key2 === "") continue;
-      const record = (name3, call) => {
-        (plan5.calls[key2] ??= {})[name3] = call;
+      const record2 = (name3, call) => {
+        (plan6.calls[key2] ??= {})[name3] = call;
       };
       const asked = rankedMatches(best, connections).filter((connection) => {
         const call = callFor(calls, key2, connection.name);
-        if (call && "skip" in call) record(connection.name, call);
+        if (call && "skip" in call) record2(connection.name, call);
         return !(call && "skip" in call);
       }).slice(0, MAX_REFERRAL_DRAFTS);
       const drafts = [];
@@ -5677,7 +5710,7 @@ function planReferrals(input) {
       for (const connection of asked) {
         const call = callFor(calls, key2, connection.name);
         if (call && "message" in call) {
-          record(connection.name, call);
+          record2(connection.name, call);
           const { name: name3, company, position } = connection;
           drafts.push({
             name: name3,
@@ -5689,11 +5722,11 @@ function planReferrals(input) {
           toDraft.push(connection);
         }
       }
-      plan5.summary.matches += asked.length;
-      plan5.summary.toDraft += toDraft.length;
+      plan6.summary.matches += asked.length;
+      plan6.summary.toDraft += toDraft.length;
       const room = MAX_REFERRAL_REVIEW - listed;
       if (toDraft.length > 0 && room > 0) {
-        plan5.review.push({
+        plan6.review.push({
           key: key2,
           company: best.company,
           roles: postings.slice(0, MAX_ROLES_PER_MESSAGE).map((p) => ({
@@ -5706,8 +5739,8 @@ function planReferrals(input) {
         listed += Math.min(room, toDraft.length);
       }
       if (drafts.length > 0) {
-        plan5.summary.companies += 1;
-        plan5.summary.drafts += drafts.length;
+        plan6.summary.companies += 1;
+        plan6.summary.drafts += drafts.length;
       }
       for (const posting of postings) {
         const existing = current.get(posting.id);
@@ -5715,15 +5748,15 @@ function planReferrals(input) {
           if (existing || input.currentIds.includes(posting.id)) removals.add(posting.id);
           continue;
         }
-        plan5.summary.postings += 1;
+        plan6.summary.postings += 1;
         if (!existing || !sameDrafts(existing.drafts, drafts)) {
-          plan5.set.push({ schemaVersion: 1, postingId: posting.id, drafts, updatedAt: now });
+          plan6.set.push({ schemaVersion: 1, postingId: posting.id, drafts, updatedAt: now });
         }
       }
     }
   }
-  plan5.delete = [...removals].sort();
-  return plan5;
+  plan6.delete = [...removals].sort();
+  return plan6;
 }
 
 // src/engine/roles.ts
@@ -6141,19 +6174,19 @@ function groupDuplicates(candidates) {
     return root;
   };
   const owner = /* @__PURE__ */ new Map();
-  const join9 = (key2, i) => {
+  const join12 = (key2, i) => {
     const other = owner.get(key2);
     if (other === void 0) owner.set(key2, i);
     else parent[find(i)] = find(other);
   };
   candidates.forEach((candidate, i) => {
-    join9(`url:${candidate.canonicalUrl}`, i);
+    join12(`url:${candidate.canonicalUrl}`, i);
     const textKey = [
       companyKey(candidate.listing.company),
       titleKey(candidate.listing.title),
       [...new Set(candidate.places.map(placeKey))].sort().join(";")
     ].join("|");
-    join9(`text:${textKey}`, i);
+    join12(`text:${textKey}`, i);
   });
   const groups = /* @__PURE__ */ new Map();
   candidates.forEach((candidate, i) => {
@@ -6257,7 +6290,7 @@ function carryOver(current, failed, settings2, now) {
   const isFailed = (source) => failed.some(
     (scope) => scope.name === source.name && (scope.list === void 0 || scope.list === source.list)
   );
-  return current.pages.flatMap((page2) => page2.postings).map((posting) => ({ ...posting, sources: posting.sources.filter(isFailed) })).filter((posting) => posting.sources.length > 0).flatMap((posting) => {
+  return current.pages.flatMap((page3) => page3.postings).map((posting) => ({ ...posting, sources: posting.sources.filter(isFailed) })).filter((posting) => posting.sources.length > 0).flatMap((posting) => {
     const locationTier2 = locationTierOf(posting.locations.flatMap(parseLocations), locationTiers);
     const roleType2 = matchRoleType(posting.title, "", roleTypes);
     if (locationTier2 === void 0 || !roleType2 || !seniority.includes(posting.level)) return [];
@@ -6364,11 +6397,11 @@ function runRefresh(input) {
       }))
     ],
     delete: [
-      ...current.pages.map((page2) => jobListPageId(page2.page)).filter((docId) => !keptPages.has(docId)).sort().map((docId) => ({ collection: POSTINGS_COLLECTION, docId })),
+      ...current.pages.map((page3) => jobListPageId(page3.page)).filter((docId) => !keptPages.has(docId)).sort().map((docId) => ({ collection: POSTINGS_COLLECTION, docId })),
       ...referrals2.delete.map((docId) => ({ collection: REFERRALS_COLLECTION, docId }))
     ]
   };
-  const previousIds = new Set(current.pages.flatMap((page2) => page2.postings.map((p) => p.id)));
+  const previousIds = new Set(current.pages.flatMap((page3) => page3.postings.map((p) => p.id)));
   const nextIds = new Set(jobList.map((p) => p.id));
   const byTier = settings2.searchProfile.locationTiers.map(
     (_, index) => jobList.filter((p) => p.locationTier === index + 1).length
@@ -6821,7 +6854,7 @@ async function readState(io, dir) {
     if (docId === "meta") meta3 = result.value;
     else pages.push(result.value);
   }
-  const consistent = meta3 ? pages.filter((page2) => page2.refreshedAt === meta3.refreshedAt) : pages;
+  const consistent = meta3 ? pages.filter((page3) => page3.refreshedAt === meta3.refreshedAt) : pages;
   const current = { pages: consistent.sort((a, b) => a.page - b.page) };
   if (meta3) current.meta = meta3;
   return { current, existing };
@@ -6860,16 +6893,16 @@ async function readEnabledSources(io, now, sources, feed) {
 }
 async function readReferrals(io, dir) {
   const folder = join4(dir, "state", REFERRALS_COLLECTION);
-  const ids = await savedIds2(io, folder);
+  const ids2 = await savedIds2(io, folder);
   const docs = /* @__PURE__ */ new Map();
-  for (const docId of ids) {
+  for (const docId of ids2) {
     const result = validateReferralsDocument(
       docId,
       await readJson(io, join4(folder, `${docId}.json`))
     );
     if (result.ok) docs.set(docId, result.value);
   }
-  return { docs, ids };
+  return { docs, ids: ids2 };
 }
 async function readConnections(io, dir) {
   const path = join4(dir, "..", CONNECTIONS_FILE);
@@ -6890,15 +6923,15 @@ async function readReferralCalls(io, dir) {
   const problem = (detail) => new RefreshError(
     `${path} ${detail}. It maps each company's key, as referral-review.json lists it, to connection names, each to { "message": "<the Referral Draft>" } or { "skip": "<why this match is wrong>" }.`
   );
-  const isObject2 = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
-  if (!isObject2(json3)) throw problem("is not a JSON object");
+  const isObject3 = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
+  if (!isObject3(json3)) throw problem("is not a JSON object");
   const calls = {};
   for (const [id, byName] of Object.entries(json3)) {
     if (id.trim() === "") throw problem("has a blank company key");
-    if (!isObject2(byName)) throw problem(`gives ${id} no connections`);
+    if (!isObject3(byName)) throw problem(`gives ${id} no connections`);
     const forPosting = {};
     for (const [name3, call] of Object.entries(byName)) {
-      const { message, skip: skip2 } = isObject2(call) ? call : {};
+      const { message, skip: skip2 } = isObject3(call) ? call : {};
       if (typeof message === "string" && message.trim() !== "") {
         if (message.trim().length > REFERRAL_MESSAGE_MAX) {
           throw problem(
@@ -7236,11 +7269,11 @@ ${settings2.issues.map((i) => `- ${i}`).join("\n")}`
     const versionOf = (collection, docId) => versions[`${collection}/${docId}`];
     const writes = [];
     for (const { collection, docId, data } of changeSet.set) {
-      const check = validateDocument(collection, docId, data);
-      if (!check.ok) {
+      const check2 = validateDocument(collection, docId, data);
+      if (!check2.ok) {
         throw new RefreshError(
           `Refresh built an invalid ${collection}/${docId}:
-${check.issues.map((i) => `- ${i}`).join("\n")}`
+${check2.issues.map((i) => `- ${i}`).join("\n")}`
         );
       }
       const filePath = join4(out, collection, `${docId}.json`);
@@ -7259,12 +7292,12 @@ ${check.issues.map((i) => `- ${i}`).join("\n")}`
       [POSTINGS_COLLECTION, new Set(existing.filter((id) => !written.has(id)))]
     ]);
     for (const { collection, docId } of changeSet.delete) {
-      const ids = removals.get(collection) ?? /* @__PURE__ */ new Set();
-      ids.add(docId);
-      removals.set(collection, ids);
+      const ids2 = removals.get(collection) ?? /* @__PURE__ */ new Set();
+      ids2.add(docId);
+      removals.set(collection, ids2);
     }
-    for (const [collection, ids] of removals) {
-      for (const docId of [...ids].sort()) {
+    for (const [collection, ids2] of removals) {
+      for (const docId of [...ids2].sort()) {
         const write = { op: "delete", collection, doc_id: docId };
         const version2 = versionOf(collection, docId);
         if (version2 !== void 0) write.if_version = version2;
@@ -7760,9 +7793,9 @@ function buildApplication(card2, input, guide, preparedBy, at, planned) {
   };
   if (input.brief !== void 0) doc.brief = input.brief;
   if (problems.length > 0) return { ok: false, problems };
-  const check = validateApplicationDocument(card2.postingId, doc);
-  if (!check.ok) return { ok: false, problems: check.issues };
-  for (const q of check.value.questions) {
+  const check2 = validateApplicationDocument(card2.postingId, doc);
+  if (!check2.ok) return { ok: false, problems: check2.issues };
+  for (const q of check2.value.questions) {
     for (const phrase of avoidedPhrasesIn(q.draft, guide.avoid)) {
       problems.push(`"${q.question}": uses "${phrase}", which your Style Guide avoids`);
     }
@@ -7770,8 +7803,8 @@ function buildApplication(card2, input, guide, preparedBy, at, planned) {
   if (planned !== void 0) {
     const key2 = (text12) => text12.replace(/\s+/g, " ").trim().toLowerCase();
     const asked = new Set(planned.map((q) => key2(q.question)));
-    const answered = new Set(check.value.questions.map((q) => key2(q.question)));
-    for (const q of check.value.questions) {
+    const answered = new Set(check2.value.questions.map((q) => key2(q.question)));
+    for (const q of check2.value.questions) {
       if (!asked.has(key2(q.question))) {
         problems.push(
           `"${q.question}" is not on the form; answer only the questions the plan lists`
@@ -7784,7 +7817,7 @@ function buildApplication(card2, input, guide, preparedBy, at, planned) {
       }
     }
   }
-  return problems.length > 0 ? { ok: false, problems } : { ok: true, doc: check.value };
+  return problems.length > 0 ? { ok: false, problems } : { ok: true, doc: check2.value };
 }
 function describe5(doc) {
   if (doc.questions.length === 0) return "no free-text questions.";
@@ -8404,11 +8437,11 @@ async function match2(dir, io) {
   await io.makeDir(join6(out, CARDS_FOLDER));
   const writes = [];
   for (const [docId, card2] of [...result.cards].sort(([a], [b]) => a.localeCompare(b))) {
-    const check = validateCardDocument(docId, card2);
-    if (!check.ok) {
+    const check2 = validateCardDocument(docId, card2);
+    if (!check2.ok) {
       throw new RefreshError(
         `Gmail tracking built an invalid ${CARDS_COLLECTION}/${docId}:
-${check.issues.map((i) => `- ${i}`).join("\n")}`
+${check2.issues.map((i) => `- ${i}`).join("\n")}`
       );
     }
     const filePath = join6(out, CARDS_FOLDER, `${docId}.json`);
@@ -8563,7 +8596,7 @@ function planNews({ day: day2, postings, cards, recent }) {
 }
 var GATHERED_SECTIONS = ["forumHighlights", "companyNews", "industryNews", "gaps"];
 var SECTION_LIST = "forumHighlights, companyNews, industryNews and gaps";
-function buildDigest(plan5, gathered, builtAt) {
+function buildDigest(plan6, gathered, builtAt) {
   if (typeof gathered !== "object" || gathered === null || Array.isArray(gathered)) {
     return {
       ok: false,
@@ -8582,22 +8615,22 @@ function buildDigest(plan5, gathered, builtAt) {
   const sections2 = gathered;
   const digest2 = {
     schemaVersion: 1,
-    day: plan5.day,
+    day: plan6.day,
     builtAt,
-    newThisWeek: plan5.newThisWeek,
-    hiringSignals: plan5.hiringSignals,
+    newThisWeek: plan6.newThisWeek,
+    hiringSignals: plan6.hiringSignals,
     forumHighlights: sections2.forumHighlights ?? [],
     companyNews: sections2.companyNews ?? [],
     industryNews: sections2.industryNews ?? [],
     gaps: sections2.gaps ?? []
   };
-  const result = validateNewsDocument(plan5.day, digest2);
+  const result = validateNewsDocument(plan6.day, digest2);
   if (!result.ok) return result;
   const value = result.value;
-  const queue = new Set(plan5.queueCompanies.map(companyKey));
+  const queue = new Set(plan6.queueCompanies.map(companyKey));
   const outside = value.companyNews.flatMap(
     (item, i) => queue.has(companyKey(item.company)) ? [] : [
-      `companyNews.${String(i)}.company: "${item.company}" is not in the Queue; company news covers only ${plan5.queueCompanies.join(", ") || "companies in the Queue, and the Queue is empty"}`
+      `companyNews.${String(i)}.company: "${item.company}" is not in the Queue; company news covers only ${plan6.queueCompanies.join(", ") || "companies in the Queue, and the Queue is empty"}`
     ]
   );
   return outside.length > 0 ? { ok: false, issues: outside } : { ok: true, value };
@@ -8634,7 +8667,7 @@ async function readJobList(io, folder) {
   const docs = await readValid(io, folder, validatePostingsDocument);
   const meta3 = docs.get("meta");
   if (!meta3) return void 0;
-  return [...docs.entries()].filter(([id]) => id !== "meta").map(([, doc]) => doc).filter((page2) => page2.refreshedAt === meta3.refreshedAt).sort((a, b) => a.page - b.page).flatMap((page2) => page2.postings);
+  return [...docs.entries()].filter(([id]) => id !== "meta").map(([, doc]) => doc).filter((page3) => page3.refreshedAt === meta3.refreshedAt).sort((a, b) => a.page - b.page).flatMap((page3) => page3.postings);
 }
 async function plan4(dir, io) {
   const day2 = dayIn(io.now(), io.timeZone());
@@ -8685,8 +8718,8 @@ async function plan4(dir, io) {
 }
 function isPlan(value) {
   if (typeof value !== "object" || value === null) return false;
-  const plan5 = value;
-  return typeof plan5.day === "string" && typeof plan5.newThisWeek === "number" && Array.isArray(plan5.hiringSignals) && Array.isArray(plan5.queueCompanies) && Array.isArray(plan5.recentUrls);
+  const plan6 = value;
+  return typeof plan6.day === "string" && typeof plan6.newThisWeek === "number" && Array.isArray(plan6.hiringSignals) && Array.isArray(plan6.queueCompanies) && Array.isArray(plan6.recentUrls);
 }
 async function build(dir, io) {
   const out = join7(dir, "out");
@@ -8810,6 +8843,252 @@ Email addresses and profile links were not kept. The file stays on this computer
   return 0;
 }
 
+// src/cli/dashboard.ts
+import { join as join8 } from "node:path";
+var DASHBOARD_USAGE = `       jaa dashboard check <dir>
+       jaa dashboard page <dir>
+       jaa dashboard record <dir> <artifact-url> [--replace]`;
+var DASHBOARD_FILE = "dashboard.json";
+var PAGE_FILE = "dashboard.html";
+var UPDATE_COMMAND = "claude plugin update job-app-assist@job-app-assist";
+var ARTIFACT_URL = /^https:\/\/claude\.ai\/(?:code\/)?artifact\/[A-Za-z0-9_-]+$/;
+var artifactUrl = string2().check(
+  _regex(ARTIFACT_URL, "must be a claude.ai artifact link (https://claude.ai/artifact/...)")
+);
+var recordSchema = looseObject({
+  url: artifactUrl,
+  pageVersion: optional(string2())
+});
+var DashboardError = class extends Error {
+};
+function compareVersions(a, b) {
+  const parts = (v) => v.split(/[.+-]/).slice(0, 3).map((p) => Number.parseInt(p, 10) || 0);
+  const [x, y] = [parts(a), parts(b)];
+  for (let i = 0; i < 3; i++) {
+    const diff = (x[i] ?? 0) - (y[i] ?? 0);
+    if (diff !== 0) return diff;
+  }
+  return 0;
+}
+async function pluginVersion(io) {
+  const path = join8(io.pluginRoot(), ".claude-plugin", "plugin.json");
+  const manifest2 = JSON.parse(await io.readFile(path));
+  if (typeof manifest2.version !== "string") throw new DashboardError(`${path} has no version.`);
+  return manifest2.version;
+}
+async function readRecorded(io, dir) {
+  const path = join8(dir, DASHBOARD_FILE);
+  let text12;
+  try {
+    text12 = await io.readFile(path);
+  } catch {
+    return void 0;
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(text12);
+  } catch {
+    throw new DashboardError(`${path} is not valid JSON. Run /job-app-assist:setup to repair it.`);
+  }
+  const check2 = validateWith(recordSchema, parsed);
+  if (!check2.ok) {
+    throw new DashboardError(
+      `${path} needs fixing:
+${check2.issues.map((issue2) => `- ${issue2}`).join("\n")}
+Run /job-app-assist:setup to repair it.`
+    );
+  }
+  return check2.value;
+}
+async function copyPage(io, dir) {
+  const page3 = await io.readFile(join8(io.pluginRoot(), "dist", PAGE_FILE));
+  await io.makeDir(dir);
+  const target = join8(dir, PAGE_FILE);
+  await io.writeFile(target, page3);
+  return target;
+}
+async function check(io, dir) {
+  const recorded = await readRecorded(io, dir);
+  if (recorded === void 0) {
+    throw new DashboardError(
+      `There is no dashboard yet (no ${join8(dir, DASHBOARD_FILE)}). Run /job-app-assist:setup to create it.`
+    );
+  }
+  const latest = await pluginVersion(io);
+  const published = recorded.pageVersion;
+  const order = published === void 0 ? 1 : compareVersions(latest, published);
+  if (order === 0) {
+    io.stdout(`The dashboard page is up to date (${latest}). Nothing to publish.
+`);
+    return;
+  }
+  if (order < 0) {
+    io.stdout(
+      `The published dashboard page (${published ?? ""}) is newer than this Toolkit (${latest}), so it stays as it is. This computer has an older Toolkit: the Candidate can update it with \`${UPDATE_COMMAND}\`.
+`
+    );
+    return;
+  }
+  const page3 = await copyPage(io, dir);
+  io.stdout(
+    [
+      `The Toolkit has a newer dashboard page: ${latest}, replacing ${published ?? "an unrecorded version"}.`,
+      `Publish ${page3} to ${recorded.url} with the Artifact tool, without capabilities, so the page keeps its database and data.`,
+      `Then run: jaa dashboard record ${dir} ${recorded.url}`,
+      ""
+    ].join("\n")
+  );
+}
+async function page2(io, dir) {
+  const target = await copyPage(io, dir);
+  io.stdout(`Copied the dashboard page, version ${await pluginVersion(io)}, to ${target}.
+`);
+}
+async function record(io, dir, url, replace) {
+  const check2 = validateWith(artifactUrl, url);
+  if (!check2.ok) throw new DashboardError(`${url} ${check2.issues.join("; ")}.`);
+  const recorded = await readRecorded(io, dir).catch((error2) => {
+    if (replace) return void 0;
+    throw error2;
+  });
+  if (recorded !== void 0 && recorded.url !== url && !replace) {
+    throw new DashboardError(
+      `This Candidate folder already records the dashboard ${recorded.url}. Publish to that link to keep its data; pass --replace only when the Candidate chose to switch to another dashboard.`
+    );
+  }
+  const version2 = await pluginVersion(io);
+  const next = { ...recorded ?? {}, url, pageVersion: version2 };
+  await io.makeDir(dir);
+  await io.writeFile(join8(dir, DASHBOARD_FILE), `${JSON.stringify(next, null, 2)}
+`);
+  io.stdout(`Recorded the dashboard ${url} with page version ${version2}.
+`);
+}
+async function runDashboard(argv, io) {
+  const [step, dir, ...rest] = argv;
+  try {
+    if (step === "check" && dir && rest.length === 0) await check(io, dir);
+    else if (step === "page" && dir && rest.length === 0) await page2(io, dir);
+    else if (step === "record" && dir && rest[0] !== void 0 && (rest.length === 1 || rest.length === 2 && rest[1] === "--replace")) {
+      await record(io, dir, rest[0], rest[1] === "--replace");
+    } else {
+      io.stderr(`Usage:
+${DASHBOARD_USAGE}
+`);
+      return 2;
+    }
+    return 0;
+  } catch (error2) {
+    if (error2 instanceof DashboardError) {
+      io.stderr(`${error2.message}
+`);
+      return 1;
+    }
+    throw error2;
+  }
+}
+
+// src/cli/prerequisites.ts
+import { join as join9 } from "node:path";
+var CLAUDE_EXTENSION_ID = "fcoeoabgfenejglbffodgkkbkcdhcgfn";
+var SIMPLIFY_EXTENSION_ID = "pbanhockgagggenencehbnadejlgchfc";
+var MIN_NODE = 20;
+var HELIUM_DATA = ["Library", "Application Support", "net.imput.helium"];
+var CHROME_DATA = ["Library", "Application Support", "Google", "Chrome"];
+var webStore = (id) => `https://chromewebstore.google.com/detail/${id}`;
+async function readJson2(io, path) {
+  try {
+    return JSON.parse(await io.readFile(path));
+  } catch {
+    return void 0;
+  }
+}
+var isObject2 = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
+async function heliumInstalled(io) {
+  for (const apps of ["/Applications", join9(io.homeDir(), "Applications")]) {
+    if ((await io.readDir(join9(apps, "Helium.app"))).length > 0) return true;
+  }
+  return false;
+}
+async function profiles(io, data) {
+  const state = await readJson2(io, join9(data, "Local State"));
+  const cache = isObject2(state) && isObject2(state.profile) ? state.profile.info_cache : void 0;
+  const names = isObject2(cache) ? Object.keys(cache) : [];
+  return names.length > 0 ? names : ["Default"];
+}
+function turnedOff(entry) {
+  const reasons = entry.disable_reasons;
+  if (Array.isArray(reasons) && reasons.length > 0) return true;
+  if (typeof reasons === "number" && reasons !== 0) return true;
+  return entry.state === 0;
+}
+async function extension(io, id, browser = HELIUM_DATA) {
+  const data = join9(io.homeDir(), ...browser);
+  let found = "missing";
+  for (const profile of await profiles(io, data)) {
+    const folder = join9(data, profile);
+    if ((await io.readDir(join9(folder, "Extensions", id))).length === 0) continue;
+    for (const file of ["Secure Preferences", "Preferences"]) {
+      const prefs = await readJson2(io, join9(folder, file));
+      const settings2 = isObject2(prefs) && isObject2(prefs.extensions) ? prefs.extensions.settings : void 0;
+      const entry = isObject2(settings2) ? settings2[id] : void 0;
+      if (!isObject2(entry)) continue;
+      if (!turnedOff(entry)) return "on";
+      found = "off";
+    }
+  }
+  return found;
+}
+function extensionLine(name3, state, install) {
+  if (state === "on") return `${name3} in Helium: installed and on.`;
+  if (state === "off") {
+    return `${name3} in Helium: installed but turned off. Fix: in Helium, open the puzzle-piece menu, choose Manage extensions, and turn ${name3} on.`;
+  }
+  return `${name3} in Helium: missing. Fix: ${install}`;
+}
+async function runPrerequisites(io) {
+  const lines = [];
+  const node = io.nodeVersion();
+  const nodeOk = (Number.parseInt(node, 10) || 0) >= MIN_NODE;
+  lines.push(
+    nodeOk ? `Node.js ${node}: ready.` : `Node.js ${node}: too old. Fix: install Node.js ${String(MIN_NODE)} or newer from https://nodejs.org, then run Setup again.`
+  );
+  if (io.platform() !== "darwin") {
+    lines.push(
+      "Fill works only on a Mac, in the Helium browser. Setup, Refresh, Tune and the dashboard work here; fill applications from a Mac."
+    );
+  } else {
+    lines.push(
+      await heliumInstalled(io) ? "Helium: installed." : "Helium: missing. Fix: download Helium from https://helium.computer, move it to Applications, and open it once."
+    );
+    lines.push(
+      extensionLine(
+        "Claude extension",
+        await extension(io, CLAUDE_EXTENSION_ID),
+        `in Helium, open ${webStore(CLAUDE_EXTENSION_ID)}, choose Add to Chrome, then open the extension and sign in with the claude.ai account this Claude uses.`
+      )
+    );
+    if (await extension(io, CLAUDE_EXTENSION_ID, CHROME_DATA) === "on") {
+      lines.push(
+        "The Claude extension is also on in Google Chrome. Fill must run in Helium: when both browsers are open, Claude may connect to Chrome instead, so quit Chrome before filling, or turn the Claude extension off there."
+      );
+    }
+    lines.push(
+      extensionLine(
+        "Simplify Copilot",
+        await extension(io, SIMPLIFY_EXTENSION_ID),
+        `in Helium, open ${webStore(SIMPLIFY_EXTENSION_ID)}, choose Add to Chrome, then sign in to Simplify and fill in your Simplify profile (education, work history, links).`
+      )
+    );
+  }
+  lines.push(
+    "Still to check in this session: that the Claude extension is connected to Claude, and, for Gmail tracking, that the Gmail connector is connected."
+  );
+  io.stdout(`${lines.join("\n")}
+`);
+  return nodeOk ? 0 : 1;
+}
+
 // src/cli/resumes.ts
 import { isAbsolute as isAbsolute3, normalize as normalize5 } from "node:path";
 var RESUME_FILE = /\.(pdf|docx?)$/i;
@@ -8849,7 +9128,7 @@ var manifest = strictObject({
     })
   )
 });
-async function readJson2(io, source) {
+async function readJson3(io, source) {
   const text12 = source === "-" ? await io.readStdin() : await io.readFile(source);
   return JSON.parse(text12);
 }
@@ -8861,7 +9140,7 @@ function fail(io, lines) {
 async function runCheckResumes(manifestPath, settingsSource, io) {
   let json3;
   try {
-    json3 = await readJson2(io, manifestPath);
+    json3 = await readJson3(io, manifestPath);
   } catch (error2) {
     return fail(io, [`Could not read ${manifestPath} as JSON: ${messageOf2(error2)}`]);
   }
@@ -8882,7 +9161,7 @@ async function runCheckResumes(manifestPath, settingsSource, io) {
   if (settingsSource !== void 0) {
     let settingsJson;
     try {
-      settingsJson = await readJson2(io, settingsSource);
+      settingsJson = await readJson3(io, settingsSource);
     } catch (error2) {
       return fail(io, [`Could not read the settings document as JSON: ${messageOf2(error2)}`]);
     }
@@ -8916,7 +9195,7 @@ function messageOf2(error2) {
 }
 
 // src/tune/run.ts
-import { join as join8 } from "node:path";
+import { join as join10 } from "node:path";
 
 // src/engine/skip-patterns.ts
 var COMPANY_THRESHOLD = 2;
@@ -9081,13 +9360,13 @@ async function jsonFiles(io, folder) {
   return (await io.readDir(folder)).filter((name3) => name3.endsWith(".json")).sort();
 }
 async function readSkips(io, dir) {
-  const folder = join8(dir, "state", SKIPS_COLLECTION);
+  const folder = join10(dir, "state", SKIPS_COLLECTION);
   const skips = [];
   for (const file of await jsonFiles(io, folder)) {
     const docId = file.slice(0, -".json".length);
     let body;
     try {
-      body = JSON.parse(await io.readFile(join8(folder, file)));
+      body = JSON.parse(await io.readFile(join10(folder, file)));
     } catch {
       continue;
     }
@@ -9097,14 +9376,14 @@ async function readSkips(io, dir) {
   return skips;
 }
 async function readJobList2(io, dir) {
-  const folder = join8(dir, "state", POSTINGS_COLLECTION);
+  const folder = join10(dir, "state", POSTINGS_COLLECTION);
   let meta3;
   const pages = [];
   for (const file of await jsonFiles(io, folder)) {
     const docId = file.slice(0, -".json".length);
     let body;
     try {
-      body = JSON.parse(await io.readFile(join8(folder, file)));
+      body = JSON.parse(await io.readFile(join10(folder, file)));
     } catch {
       continue;
     }
@@ -9113,7 +9392,7 @@ async function readJobList2(io, dir) {
     if (docId === "meta") meta3 = result.value;
     else pages.push(result.value);
   }
-  return pages.filter((page2) => !meta3 || page2.refreshedAt === meta3.refreshedAt).sort((a, b) => a.page - b.page).flatMap((page2) => page2.postings);
+  return pages.filter((page3) => !meta3 || page3.refreshedAt === meta3.refreshedAt).sort((a, b) => a.page - b.page).flatMap((page3) => page3.postings);
 }
 var number4 = (n) => n.toLocaleString("en-US");
 var plural4 = (n, one, many = `${one}s`) => `${number4(n)} ${n === 1 ? one : many}`;
@@ -9211,7 +9490,7 @@ async function runTuneReport(dir, io) {
   try {
     const settings2 = await readSettingsFile(
       io,
-      join8(dir, "state", "settings", "main.json"),
+      join10(dir, "state", "settings", "main.json"),
       "The saved settings document"
     );
     const [skips, jobList] = await Promise.all([readSkips(io, dir), readJobList2(io, dir)]);
@@ -9243,8 +9522,278 @@ ${formatSettingsDiff(changes)}
   }
 }
 
+// src/tidy/run.ts
+import { join as join11 } from "node:path";
+
+// src/engine/tidy.ts
+var CLOSED_KEPT_DAYS = 30;
+var SKIPS_KEPT_DAYS = 180;
+var DAY_MS6 = 864e5;
+var daysSince2 = (iso, now) => (now - Date.parse(iso)) / DAY_MS6;
+function planTidy(state, now, options = {}) {
+  const at = Date.parse(now);
+  const closedDays = options.closedDays ?? CLOSED_KEPT_DAYS;
+  const deletes = [];
+  const has = {
+    [APPLICATIONS_COLLECTION]: new Set(state.applications),
+    [REFERRALS_COLLECTION]: new Set(state.referrals),
+    [VARIANT_OVERRIDES_COLLECTION]: new Set(state.variantOverrides)
+  };
+  const belonging = Object.keys(has);
+  const removedCards = /* @__PURE__ */ new Set();
+  for (const card2 of state.cards) {
+    if (card2.stage !== "closed") continue;
+    if (daysSince2(card2.stageChangedAt ?? card2.queuedAt, at) < closedDays) continue;
+    removedCards.add(card2.postingId);
+    deletes.push({ collection: CARDS_COLLECTION, docId: card2.postingId });
+    for (const collection of belonging) {
+      if (has[collection].has(card2.postingId)) {
+        deletes.push({ collection, docId: card2.postingId });
+      }
+    }
+  }
+  const kept = /* @__PURE__ */ new Set([
+    ...state.cards.map((c) => c.postingId).filter((id) => !removedCards.has(id)),
+    ...state.unreadableCards,
+    ...state.jobList
+  ]);
+  const orphans = [...new Set(belonging.flatMap((collection) => [...has[collection]]))].filter(
+    (id) => !kept.has(id) && !removedCards.has(id)
+  );
+  let leftovers = 0;
+  for (const id of orphans.sort()) {
+    for (const collection of belonging) {
+      if (!has[collection].has(id)) continue;
+      deletes.push({ collection, docId: id });
+      leftovers += 1;
+    }
+  }
+  const listed = new Set(state.jobList);
+  const oldSkips = state.skips.filter((s) => !listed.has(s.postingId) && daysSince2(s.skippedAt, at) >= SKIPS_KEPT_DAYS).map((s) => s.postingId).sort();
+  for (const id of oldSkips) deletes.push({ collection: SKIPS_COLLECTION, docId: id });
+  const digests = staleNewsDays(state.newsDays, options.today ?? now.slice(0, 10));
+  for (const day2 of digests) deletes.push({ collection: NEWS_COLLECTION, docId: day2 });
+  return {
+    deletes,
+    closedCards: removedCards.size,
+    leftovers,
+    oldSkips: oldSkips.length,
+    oldDigests: digests.length,
+    documentsAfter: Math.max(0, state.documentCount - deletes.length)
+  };
+}
+
+// src/tidy/run.ts
+var TIDY_USAGE = `       jaa tidy plan <dir> [--closed-days <days>]
+       jaa tidy build <dir>`;
+var PLAN_FILE3 = "tidy-plan.json";
+var NAMES_SHOWN = 15;
+var TidyError = class extends Error {
+};
+var number5 = (n) => n.toLocaleString("en-US");
+var plural5 = (n, one, many = `${one}s`) => `${number5(n)} ${n === 1 ? one : many}`;
+async function readJson4(io, path) {
+  try {
+    return JSON.parse(await io.readFile(path));
+  } catch {
+    return void 0;
+  }
+}
+async function ids(io, folder) {
+  return (await io.readDir(folder)).filter((file) => file.endsWith(".json")).map((file) => file.slice(0, -".json".length)).sort();
+}
+async function readCards3(io, state) {
+  const folder = join11(state, CARDS_COLLECTION);
+  const cards = [];
+  for (const id of await ids(io, folder)) {
+    const result = validateCardDocument(id, await readJson4(io, join11(folder, `${id}.json`)));
+    if (result.ok) cards.push(result.value);
+  }
+  return cards;
+}
+async function readSkips2(io, state) {
+  const folder = join11(state, SKIPS_COLLECTION);
+  const skips = [];
+  for (const id of await ids(io, folder)) {
+    const result = validateSkipDocument(id, await readJson4(io, join11(folder, `${id}.json`)));
+    if (result.ok) {
+      const { postingId: postingId2, skippedAt } = result.value;
+      skips.push({ postingId: postingId2, skippedAt });
+    }
+  }
+  return skips;
+}
+async function readJobList3(io, state) {
+  const folder = join11(state, POSTINGS_COLLECTION);
+  let meta3;
+  const pages = [];
+  for (const id of await ids(io, folder)) {
+    const result = validatePostingsDocument(id, await readJson4(io, join11(folder, `${id}.json`)));
+    if (!result.ok) continue;
+    if (id === "meta") meta3 = result.value;
+    else pages.push(result.value);
+  }
+  return pages.filter((page3) => !meta3 || page3.refreshedAt === meta3.refreshedAt).flatMap((page3) => page3.postings.map((p) => p.id));
+}
+async function plan5(io, dir, closedDays) {
+  const state = join11(dir, "state");
+  const collections2 = await io.readDir(state);
+  let documentCount = 0;
+  for (const collection of collections2)
+    documentCount += (await ids(io, join11(state, collection))).length;
+  if (documentCount === 0) {
+    throw new TidyError(
+      `${state} holds no documents. Save the dashboard state there with ArtifactData first.`
+    );
+  }
+  const cards = await readCards3(io, state);
+  const valid = new Set(cards.map((c) => c.postingId));
+  const result = planTidy(
+    {
+      cards,
+      unreadableCards: (await ids(io, join11(state, CARDS_COLLECTION))).filter(
+        (id) => !valid.has(id)
+      ),
+      applications: await ids(io, join11(state, APPLICATIONS_COLLECTION)),
+      referrals: await ids(io, join11(state, REFERRALS_COLLECTION)),
+      variantOverrides: await ids(io, join11(state, VARIANT_OVERRIDES_COLLECTION)),
+      skips: await readSkips2(io, state),
+      newsDays: await ids(io, join11(state, NEWS_COLLECTION)),
+      jobList: await readJobList3(io, state),
+      documentCount
+    },
+    io.now(),
+    { closedDays, today: dayIn(io.now(), io.timeZone()) }
+  );
+  const out = join11(dir, "out");
+  await io.removeDir(out);
+  await io.makeDir(out);
+  const deletes = result.deletes;
+  await io.writeFile(join11(out, PLAN_FILE3), `${JSON.stringify({ deletes }, null, 2)}
+`);
+  if (deletes.length === 0) {
+    io.stdout(
+      [
+        `Nothing to remove: the dashboard holds ${plural5(documentCount, "document")}, and none is old history Tidy removes.`,
+        `To make room, the Candidate can move cards they no longer need to Closed and run Tidy with --closed-days 0, which removes every Closed card now.`,
+        ""
+      ].join("\n")
+    );
+    return;
+  }
+  let bytes = 0;
+  for (const { collection, docId } of deletes) {
+    bytes += await io.fileSize(join11(state, collection, `${docId}.json`)) ?? 0;
+  }
+  const closed = cards.filter(
+    (c) => deletes.some((d) => d.collection === CARDS_COLLECTION && d.docId === c.postingId)
+  );
+  const lines = [
+    `Tidy would remove ${plural5(deletes.length, "document")} (about ${number5(Math.max(1, Math.round(bytes / 1024)))} KB): ${number5(documentCount)} documents now, ${number5(result.documentsAfter)} after.`
+  ];
+  if (result.closedCards > 0) {
+    lines.push(
+      `- Closed cards closed ${String(closedDays)} or more days ago: ${number5(result.closedCards)}, with their answers, Referral Drafts and Resume Variant choices.`
+    );
+    for (const c of closed.slice(0, NAMES_SHOWN)) {
+      lines.push(`  - ${c.posting.company}, ${c.posting.title} (${c.closedReason ?? "closed"})`);
+    }
+    if (closed.length > NAMES_SHOWN)
+      lines.push(`  - and ${number5(closed.length - NAMES_SHOWN)} more`);
+  }
+  if (result.leftovers > 0) {
+    lines.push(
+      `- Answers, Referral Drafts and Resume Variant choices for Postings that have no card and have left the Job List: ${number5(result.leftovers)}.`
+    );
+  }
+  if (result.oldSkips > 0) {
+    lines.push(
+      `- Skips older than 180 days whose Posting has left the Job List: ${number5(result.oldSkips)}.`
+    );
+  }
+  if (result.oldDigests > 0) {
+    lines.push(`- News Digests older than 90 days: ${number5(result.oldDigests)}.`);
+  }
+  lines.push(
+    "Open cards, settings, Sources and the Job List stay. Nothing is removed until the Candidate approves this list.",
+    `Saved the list to ${join11(out, PLAN_FILE3)}.`,
+    ""
+  );
+  io.stdout(lines.join("\n"));
+}
+async function build2(io, dir) {
+  const planPath = join11(dir, "out", PLAN_FILE3);
+  const saved = await readJson4(io, planPath);
+  if (!Array.isArray(saved?.deletes)) {
+    throw new TidyError(`${planPath} is missing. Run jaa tidy plan ${dir} first.`);
+  }
+  const versions = await readJson4(io, join11(dir, "versions.json")) ?? {};
+  const missing = [];
+  const writes = [];
+  for (const { collection, docId } of saved.deletes) {
+    const version2 = versions[`${collection}/${docId}`];
+    if (typeof version2 !== "number" || !Number.isInteger(version2) || version2 < 1) {
+      missing.push(`${collection}/${docId}`);
+      continue;
+    }
+    writes.push({
+      write: { op: "delete", collection, doc_id: docId, if_version: version2 },
+      bytes: 0
+    });
+  }
+  if (missing.length > 0) {
+    throw new TidyError(
+      `${join11(dir, "versions.json")} has no version for:
+${missing.map((m) => `- ${m}`).join("\n")}
+Add the version ArtifactData reported for each.`
+    );
+  }
+  const batches = batchesOf(writes);
+  const writesPath = join11(dir, "out", "writes.json");
+  await io.writeFile(writesPath, `${JSON.stringify({ batches }, null, 2)}
+`);
+  io.stdout(
+    `Send the ${plural5(batches.length, "batch", "batches")} in ${writesPath} with ArtifactData, in order: ${plural5(writes.length, "removal")}.
+`
+  );
+}
+async function runTidy(argv, io) {
+  const [step, dir, ...rest] = argv;
+  const usage = () => {
+    io.stderr(`Usage:
+${TIDY_USAGE}
+`);
+    return 2;
+  };
+  if (!dir || dir.startsWith("--")) return usage();
+  try {
+    if (step === "plan") {
+      let closedDays = CLOSED_KEPT_DAYS;
+      if (rest.length === 2 && rest[0] === "--closed-days") {
+        closedDays = Number(rest[1]);
+        if (!Number.isInteger(closedDays) || closedDays < 0) return usage();
+      } else if (rest.length > 0) return usage();
+      await plan5(io, dir, closedDays);
+    } else if (step === "build" && rest.length === 0) {
+      await build2(io, dir);
+    } else {
+      return usage();
+    }
+    return 0;
+  } catch (error2) {
+    if (error2 instanceof TidyError) {
+      io.stderr(`${error2.message}
+`);
+      return 1;
+    }
+    throw error2;
+  }
+}
+
 // src/cli/jaa.ts
 var USAGE = `Usage: jaa validate <collection> <doc-id> <file|->
+       jaa prerequisites
+${DASHBOARD_USAGE}
        jaa refresh <dir> [--feed <url|file> | --rerun]
        jaa news plan <dir>
        jaa news build <dir>
@@ -9258,9 +9807,18 @@ var USAGE = `Usage: jaa validate <collection> <doc-id> <file|->
        jaa style-guide init|check <file>
 ${FILL_USAGE}
 ${PREPARE_USAGE}
+${TIDY_USAGE}
 
 validate       Checks one dashboard document (JSON, from a file or from stdin with -)
                against the dashboard contract. Exits 0 when it matches, 1 when it does not.
+prerequisites  Checks this computer for what Fill needs (Node.js 20 or newer, Helium, and the
+               Claude and Simplify Copilot extensions in Helium) and says how to fix each
+               missing one. Exits 1 only when Node.js is too old.
+dashboard      check compares the dashboard page version recorded in <dir>/dashboard.json
+               with this Toolkit's page and, when the Toolkit's is newer, copies it to
+               <dir>/dashboard.html to publish in place. page copies the page for a first
+               publish. record saves the dashboard link and the page version just
+               published; it refuses a different link unless --replace is passed.
 refresh        Builds the Job List from the dashboard state saved in <dir>/state and the
                Job Feed, and writes the documents and ArtifactData batches to <dir>/out.
                --rerun rebuilds from the Sources the last run read, without the network,
@@ -9309,6 +9867,11 @@ prepare        plan lists the Queued cards without a Prepared Application (from 
                the Style Guide and the contract, and writes the Prepared Applications and
                their batch to <dir>/out. --posting builds one card's from the questions
                Fill read on its form, and prints the answers to type.
+tidy           plan lists the old history a full dashboard can let go (Closed cards closed
+               30 or more days ago, or --closed-days, with their answers; leftovers with no
+               card; old skips and News Digests) from the state saved in <dir>/state, and
+               saves it to <dir>/out/tidy-plan.json. build turns it into delete batches
+               pinned to the versions in <dir>/versions.json, in <dir>/out/writes.json.
 `;
 async function runCli(argv, io) {
   if (argv[0] === "--help" || argv[0] === "-h") {
@@ -9335,6 +9898,15 @@ async function runCli(argv, io) {
       return 2;
     }
     return runCheckResumes(manifest2, settings2, io);
+  }
+  if (argv[0] === "tidy") return runTidy(argv.slice(1), io);
+  if (argv[0] === "dashboard") return runDashboard(argv.slice(1), io);
+  if (argv[0] === "prerequisites") {
+    if (argv.length > 1) {
+      io.stderr(USAGE);
+      return 2;
+    }
+    return runPrerequisites(io);
   }
   if (argv[0] === "fill") return runFill(argv.slice(1), io);
   if (argv[0] === "prepare") return runPrepare(argv.slice(1), io);
@@ -9452,6 +10024,10 @@ process.exitCode = await runCli(process.argv.slice(2), {
   ),
   env: (name3) => process.env[name3],
   homeDir: () => homedir(),
+  // Bundled as <plugin>/dist/jaa.mjs, so the plugin's folder is one up.
+  pluginRoot: () => fileURLToPath(new URL("..", import.meta.url)),
+  platform: () => process.platform,
+  nodeVersion: () => process.versions.node,
   stdout: (chunk) => process.stdout.write(chunk),
   stderr: (chunk) => process.stderr.write(chunk)
 });

@@ -325,7 +325,7 @@ describe("dragging a card", () => {
     );
     drag("Acme", "Submitted");
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Your dashboard storage is full, so that change wasn't saved.",
+      "Your dashboard storage is full, so this change wasn't saved. To make room, ask your Claude to run /job-app-assist:tidy.",
     );
     expect(cardsIn("Queued")).toEqual(["Acme"]);
   });
