@@ -17,6 +17,8 @@ import { useHashTab } from "./useHashTab.ts";
 import { useJobList } from "./useJobList.ts";
 import { useNews } from "./useNews.ts";
 import { queueActions, useQueue } from "./useQueue.ts";
+import type { SaveApplication } from "./PreparedAnswers.tsx";
+import { useApplications } from "./useApplications.ts";
 import { useReferrals } from "./useReferrals.ts";
 import { useSettings, type SettingsState } from "./useSettings.ts";
 import { useVariantOverrides } from "./useVariantOverrides.ts";
@@ -76,6 +78,12 @@ export function App({ db, pageVersion, now }: AppProps) {
   const clock = useCallback(() => now ?? Date.now(), [now]);
   const { overrides, choose } = useVariantOverrides(db, clock);
   const referrals = useReferrals(db);
+  const { applications, save: saveApplication } = useApplications(db);
+  const onSaveApplication = useMemo<SaveApplication | null>(
+    () =>
+      saveApplication ? (change) => saveApplication(change(new Date(clock()).toISOString())) : null,
+    [saveApplication, clock],
+  );
   const [tab, selectTab] = useHashTab(TABS);
   // When the whole database stops loading, the notice above the tabs says so once; the tabs
   // stay quiet instead of repeating it.
@@ -206,6 +214,8 @@ export function App({ db, pageVersion, now }: AppProps) {
               overrides={overrides}
               onChooseVariant={choose}
               referrals={referrals}
+              applications={applications}
+              onSaveApplication={onSaveApplication}
             />
           )}
           {tab === "progress" && (
@@ -219,6 +229,8 @@ export function App({ db, pageVersion, now }: AppProps) {
               overrides={overrides}
               onChooseVariant={choose}
               referrals={referrals}
+              applications={applications}
+              onSaveApplication={onSaveApplication}
             />
           )}
         </section>
