@@ -1,8 +1,8 @@
 ---
 name: fill
-description: Fill the Candidate's queued job applications in Helium, stopping before submit. Works through the Queued cards on the Progress board in Queue order (or one Posting the Candidate names), opens each apply URL in a new Helium tab through Claude in Chrome, runs Simplify's Autofill, then checks and fills every field from the Candidate's private answers file, uploads the chosen Resume Variant, flags what the Candidate must answer, and moves each card to Ready for Review. Use when the Candidate asks to fill their Queue, fill applications, apply to their queued jobs, or fill one named Posting.
+description: Fill the Candidate's queued job applications in Helium, stopping before submit. Works through the Queued cards on the Progress board in Queue order (or one Posting the Candidate names), opens each apply URL in a new Helium tab through Claude in Chrome, runs Simplify's Autofill, then checks and fills every field from the Candidate's private answers file and Prepared Application (preparing one first for a card that has none), uploads the chosen Resume Variant, flags what the Candidate must answer, and moves each card to Ready for Review. Use when the Candidate asks to fill their Queue, fill applications, apply to their queued jobs, or fill one named Posting.
 argument-hint: "[a Posting to fill, by company and title, or leave empty for the whole Queue]"
-allowed-tools: Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs private-answers check private-answers.md) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs fill plan .job-app-assist/fill) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs fill plan .job-app-assist/fill --posting *) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs fill start .job-app-assist/fill *) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs fill finish .job-app-assist/fill *) Bash(rm -rf .job-app-assist/fill/state .job-app-assist/fill/out .job-app-assist/fill/results .job-app-assist/fill/started) Bash(mkdir -p .job-app-assist/fill/results) Bash(cp ${CLAUDE_PLUGIN_ROOT}/dist/dashboard.html .job-app-assist/dashboard.html) mcp__claude-in-chrome__tabs_context_mcp mcp__claude-in-chrome__tabs_create_mcp mcp__claude-in-chrome__navigate mcp__claude-in-chrome__computer mcp__claude-in-chrome__read_page mcp__claude-in-chrome__find mcp__claude-in-chrome__form_input mcp__claude-in-chrome__file_upload mcp__claude-in-chrome__get_page_text mcp__claude-in-chrome__javascript_tool
+allowed-tools: Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs private-answers check private-answers.md) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs fill plan .job-app-assist/fill) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs fill plan .job-app-assist/fill --posting *) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs fill start .job-app-assist/fill *) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs fill finish .job-app-assist/fill *) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs prepare build .job-app-assist/fill --posting *) Bash(rm -rf .job-app-assist/fill/state .job-app-assist/fill/out .job-app-assist/fill/results .job-app-assist/fill/started .job-app-assist/fill/prepared) Bash(mkdir -p .job-app-assist/fill/results) Bash(cp ${CLAUDE_PLUGIN_ROOT}/dist/dashboard.html .job-app-assist/dashboard.html) mcp__claude-in-chrome__tabs_context_mcp mcp__claude-in-chrome__tabs_create_mcp mcp__claude-in-chrome__navigate mcp__claude-in-chrome__computer mcp__claude-in-chrome__read_page mcp__claude-in-chrome__find mcp__claude-in-chrome__form_input mcp__claude-in-chrome__file_upload mcp__claude-in-chrome__get_page_text mcp__claude-in-chrome__javascript_tool
 ---
 
 # Fill
@@ -59,7 +59,7 @@ Keep these answers in this conversation only: never write them to the dashboard,
 Start from a clean folder:
 
 ```bash
-rm -rf .job-app-assist/fill/state .job-app-assist/fill/out .job-app-assist/fill/results .job-app-assist/fill/started
+rm -rf .job-app-assist/fill/state .job-app-assist/fill/out .job-app-assist/fill/results .job-app-assist/fill/started .job-app-assist/fill/prepared
 mkdir -p .job-app-assist/fill/results
 ```
 
@@ -68,6 +68,7 @@ Read with `ArtifactData`, saving the documents as files: pass `out_dir` as the a
 - `action: "get"`, `collection: "settings"`, `doc_id: "main"`.
 - `action: "list"`, `collection: "cards"`, reading every page of the listing.
 - `action: "list"`, `collection: "variantOverrides"`: the Resume Variants the Candidate chose in the drawer; it may be empty.
+- `action: "list"`, `collection: "applications"`, reading every page: the Prepared Applications, with the answers the Candidate reviewed, edited or wrote in the drawer; it may be empty.
 
 ## 5. Plan
 
@@ -83,7 +84,8 @@ When the Candidate named one Posting (by company and title, apply URL or Posting
 node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs fill plan .job-app-assist/fill --posting "<what the Candidate said>"
 ```
 
-It prints the Queued cards to fill in Queue order, each with its apply URL and the absolute path of its chosen Resume Variant file, and saves them in `.job-app-assist/fill/out/plan.json`.
+It prints the Queued cards to fill in Queue order, each with its apply URL, the absolute path of its chosen Resume Variant file and whether it has a Prepared Application, and saves them in `.job-app-assist/fill/out/plan.json`.
+For a card with a Prepared Application, its entry in `plan.json` holds `answers`: the final answer to each free-text question, which is what Fill types.
 If it lists several matches, ask the Candidate which one they mean and plan again with its Posting id.
 If it says the Posting is not Queued, has no match, or a resume is missing, tell the Candidate what it says and stop.
 With an empty Queue, tell the Candidate to tick Postings on the Postings tab (the dashboard `url` followed by `#postings`) and stop.
@@ -152,7 +154,11 @@ Read every field's label and current value with `mcp__claude-in-chrome__javascri
       : type === "checkbox" || type === "radio"
         ? String(el.checked)
         : el.value;
-    out.push(`${label.slice(0, 100)} = ${JSON.stringify(value)}${combo ? " (dropdown)" : ""}`);
+    const limit =
+      el.tagName === "TEXTAREA" && el.maxLength > 0 ? ` (at most ${el.maxLength} characters)` : "";
+    out.push(
+      `${label.slice(0, 100)} = ${JSON.stringify(value)}${combo ? " (dropdown)" : ""}${limit}`,
+    );
   }
   return out.join("\n");
 })();
@@ -171,8 +177,8 @@ For every field, decide what it should hold, compare that with what is in it now
   Otherwise keep the value Simplify filled from the Candidate's own Simplify profile when it fits the question, and flag the field as `missing_answer` when neither has an answer.
   Never fill a salary the Candidate did not write down.
 - **Legal claims** (whether the Candidate meets the basic or minimum qualifications, certifies their answers, agrees to terms, a privacy policy or a background check, has worked for or is related to someone at the company, or any other statement about themselves the form asks them to confirm): leave it blank or unchecked and flag it as `legal_claim`, unless the private file answers that exact question.
-- **Free-text questions** (cover letter, "Why this company?", "Anything else?", any open answer longer than a few words): leave them as they are without writing an answer, and flag each as `free_text` so the Candidate writes it.
-  Clear any text Simplify put there that is clearly not the Candidate's.
+- **Free-text questions** (cover letter, "Why this company?", "Anything else?", any open answer longer than a few words): these come only from the card's Prepared Application; see "Free-text answers" below.
+  Clear any text Simplify put there, since Simplify's answers are not the Candidate's.
 - **Anything you are not sure about**: leave it blank and flag it as `uncertain`, saying what you were unsure of.
   Never guess, and never pick a likely option to fill a required field.
 - **Resume**: upload the planned Resume Variant file with `mcp__claude-in-chrome__file_upload`, passing its absolute path from the plan and the `ref` of the resume file input from `find` or `read_page`; never click a file input, since that opens a picker you cannot reach.
@@ -180,7 +186,31 @@ For every field, decide what it should hold, compare that with what is in it now
   Leave cover letter uploads empty.
   If the upload fails or the form has no resume input, flag it as `resume`.
 
-How to fill each kind of field:
+### Free-text answers
+
+When the card's plan entry has no `answers`, prepare its Prepared Application first, from the questions on this form:
+
+1. Note each free-text question exactly as the form words it, and its character limit when the form has one (the reader script shows it as "at most N characters", or the form shows a counter).
+2. Invoke the `job-app-assist:prepare` skill for this one Posting with those questions, its company and title, and its Resume Variant file from the plan.
+   It drafts the answers and a Research Brief into `.job-app-assist/fill/prepared/<posting id>.json`.
+   If it says there is no Style Guide, leave every free-text question blank, flag each as `free_text` with the note "Write this yourself; run /job-app-assist:setup to write your Style Guide so your Claude can draft answers.", and carry on with the other fields.
+3. Build it, which checks the file and prints the answers to type:
+
+   ```bash
+   node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs prepare build .job-app-assist/fill --posting <posting id>
+   ```
+
+   Fix whatever it lists and run it again, then send the batch in `.job-app-assist/fill/out/application-writes.json` with `ArtifactData`, `action: "batch"`, exactly as listed, so the Candidate can review the answers in the drawer.
+
+Then fill each free-text question from the answers (the plan's `answers`, or the list `jaa prepare build` printed), matching the form's wording:
+
+- An answer with text: type it into the field exactly as given, then read the field back to check it all went in.
+  If the form cuts it short, leave what it took and flag it as `uncertain` ("Your answer is longer than this form allows; shorten it in the tab.").
+- An answer that is `null` is in brief mode and the Candidate has not written it: leave the field blank and flag it as `free_text` with the note "Write this from the Research Brief in the drawer, or right here in the tab."
+  Never type the AI draft in its place.
+- A free-text question the Prepared Application does not list (the form changed since it was prepared): leave it blank and flag it as `free_text`.
+
+### How to fill each kind of field
 
 - Text boxes, native selects, checkboxes and radio buttons: `form_input` with the field's `ref`.
 - Searchable dropdowns (Greenhouse, Ashby and Lever often use these): click the field with the `computer` tool, type the option, wait a moment, then press Enter, and read the field again to check the choice took.
@@ -188,6 +218,8 @@ How to fill each kind of field:
 - Change dropdowns one at a time, reading the field back after each change and getting fresh refs from `find` before the next.
   Clearing or choosing an option moves the fields around it, so a batch of clicks on refs found earlier can land on another field's options and choose a wrong answer.
 - After filling, read the form once more and compare every required field: each one is either filled with the right answer or flagged.
+
+### Stop before submit, and keep the flags
 
 Never press the submit button, even when every field is filled, and never press Enter in a field where it would send the form.
 
@@ -205,7 +237,11 @@ Write the result with the Write tool to `.job-app-assist/fill/results/<posting i
   "simplify": "filled",
   "resumeVariant": "<the Resume Variant name you uploaded>",
   "flags": [
-    { "field": "Why Acme?", "kind": "free_text", "note": "Write this answer in your own words." }
+    {
+      "field": "Why Acme?",
+      "kind": "free_text",
+      "note": "Write this from the Research Brief in the drawer, or right here in the tab."
+    }
   ]
 }
 ```
@@ -234,6 +270,7 @@ If anything stops Fill part way through a Posting, still finish that Posting wit
 Finish with a short summary:
 
 - each Posting as company and title, with what happened: filled with how many flags (and the flagged fields in a few words), needs a sign-in (and what the Candidate must do), or stopped (and why);
+- which answers Fill typed were AI-drafted, so the Candidate reads those closely in the tab before submitting, and which Prepared Applications Fill prepared from the form;
 - that every filled application is in its own tab in the Claude tab group in Helium, filled up to the submit button, and that the Candidate reviews each one, answers the flagged fields and presses submit themselves;
 - how Simplify did across the Postings;
 - the token use per application and the running average from `jaa fill finish`;

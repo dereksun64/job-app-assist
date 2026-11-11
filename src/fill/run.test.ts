@@ -1,6 +1,13 @@
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { validateCard, type Card, type Posting, type Settings } from "../contract/index.ts";
+import {
+  validateCard,
+  type Card,
+  type FinalAnswer,
+  type Posting,
+  type PreparedApplication,
+  type Settings,
+} from "../contract/index.ts";
 import { samplePosting } from "../contract/testing/fixtures.ts";
 import { PRIVATE_ANSWERS_TEMPLATE } from "./private-answers.ts";
 import { runFill } from "./run.ts";
@@ -93,6 +100,7 @@ interface PlanFile {
     resumeVariant: { name: string; file: string; byCandidate: boolean };
     signInLikely?: string;
     fillingSince?: string;
+    answers?: FinalAnswer[];
   }[];
 }
 
@@ -157,6 +165,57 @@ describe("jaa fill plan", () => {
     expect(plan.postings[0]?.fillingSince).toBe("2026-11-11T20:00:00.000Z");
     expect(io.out).toContain("Usually needs a sign-in: Workday");
     expect(io.out).toContain("Still marked as filling from an earlier Fill");
+  });
+
+  it("carries each Prepared Application's final answers, and says which cards have none", async () => {
+    const application: PreparedApplication = {
+      schemaVersion: 1,
+      postingId: first.id,
+      preparedAt: "2026-11-11T09:00:00.000Z",
+      preparedBy: "refresh",
+      questions: [
+        {
+          question: "Why Company 1?",
+          type: "why_company",
+          mode: "brief",
+          draft: "An AI draft Fill must not type.",
+        },
+        {
+          question: "Anything else?",
+          type: "additional_info",
+          mode: "ai",
+          draft: "I can start in June 2027.",
+          editedAt: "2026-11-11T12:00:00.000Z",
+        },
+      ],
+      brief: {
+        company: "Company 1 makes things.",
+        news: [],
+        team: "The platform team.",
+        fit: "Your backend internship fits.",
+      },
+      updatedAt: "2026-11-11T12:00:00.000Z",
+    };
+    const io = candidateFolder([card(first), card(second)], {
+      [`${DIR}/state/applications/${first.id}.json`]: json(application),
+    });
+    expect(await runFill(["plan", DIR], io)).toBe(0);
+    const plan = await readJson<PlanFile>(io, `${DIR}/out/plan.json`);
+    const byId = new Map(plan.postings.map((p) => [p.postingId, p]));
+    expect(byId.get(first.id)?.answers).toEqual([
+      { question: "Why Company 1?", mode: "brief", answer: null, source: "none" },
+      {
+        question: "Anything else?",
+        mode: "ai",
+        answer: "I can start in June 2027.",
+        source: "edited",
+      },
+    ]);
+    expect(byId.get(second.id)).not.toHaveProperty("answers");
+    expect(io.out).toContain(
+      "   Prepared Application: 1 answer to type, 1 brief-mode answer the Candidate has not written",
+    );
+    expect(io.out).toContain("   No Prepared Application yet: prepare it from the form");
   });
 
   it("says so when the Queue is empty", async () => {

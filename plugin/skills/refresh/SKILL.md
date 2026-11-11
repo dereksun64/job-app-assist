@@ -1,7 +1,7 @@
 ---
 name: refresh
-description: Refresh the Candidate's Job List, Queue and News Digest. Pulls Postings from the Candidate's enabled Sources (the Job Feed, their watchlist companies' job boards and Postings they added by URL), keeps the ones that match the Search Profile, ranks them, picks a Resume Variant for each, pre-queues the best ones up to the daily Queue target, drafts referral asks for the Candidate's connections at queued companies, writes them to the dashboard's Postings tab, moves Progress board cards from the Candidate's Gmail replies when they opted in, builds the day's News Digest for the News tab and ends with a short summary in chat. Use when the Candidate asks to refresh, update their jobs, see today's Postings, check their applications' status or catch up on the news.
-allowed-tools: Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs refresh .job-app-assist/refresh) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs refresh .job-app-assist/refresh --rerun) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs news plan .job-app-assist/refresh) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs news build .job-app-assist/refresh) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs gmail plan .job-app-assist/refresh) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs gmail match .job-app-assist/refresh) WebSearch WebFetch(domain:news.ycombinator.com) Bash(rm -rf .job-app-assist/refresh/state .job-app-assist/refresh/out) Bash(mkdir -p .job-app-assist/refresh) Bash(cp ${CLAUDE_PLUGIN_ROOT}/dist/dashboard.html .job-app-assist/dashboard.html)
+description: Refresh the Candidate's Job List, Queue and News Digest. Pulls Postings from the Candidate's enabled Sources (the Job Feed, their watchlist companies' job boards and Postings they added by URL), keeps the ones that match the Search Profile, ranks them, picks a Resume Variant for each, pre-queues the best ones up to the daily Queue target, drafts referral asks for the Candidate's connections at queued companies, writes them to the dashboard's Postings tab, moves Progress board cards from the Candidate's Gmail replies when they opted in, builds the day's News Digest for the News tab, prepares answers and Research Briefs for queued Postings, and ends with a short summary in chat. Use when the Candidate asks to refresh, update their jobs, see today's Postings, check their applications' status or catch up on the news.
+allowed-tools: Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs refresh .job-app-assist/refresh) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs refresh .job-app-assist/refresh --rerun) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs news plan .job-app-assist/refresh) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs news build .job-app-assist/refresh) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs gmail plan .job-app-assist/refresh) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs gmail match .job-app-assist/refresh) WebSearch WebFetch(domain:news.ycombinator.com) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs prepare plan .job-app-assist/refresh) Bash(node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs prepare build .job-app-assist/refresh) Bash(rm -rf .job-app-assist/refresh/state .job-app-assist/refresh/out .job-app-assist/refresh/prepared) Bash(mkdir -p .job-app-assist/refresh) Bash(cp ${CLAUDE_PLUGIN_ROOT}/dist/dashboard.html .job-app-assist/dashboard.html)
 ---
 
 # Refresh
@@ -12,6 +12,7 @@ Unsubmitted Queue items carry over and count toward the target, and a Posting th
 When the Candidate opted in, it reads their Gmail, read-only, and moves Progress board cards on replies from companies, keeping each email's company, date and subject as evidence.
 Last, it builds the day's News Digest on the News tab: hiring signals from the Job List, forum highlights, news about companies in the Queue, and 5 to 8 industry stories.
 When the Candidate imported their LinkedIn connections, queued Postings also get Referral Drafts: a short message asking a connection at the Posting's company for a referral, which the Candidate copies from the drawer and sends themselves.
+Queued Postings also get Prepared Applications: an answer to each free-text question on the form, AI-drafted to the Candidate's Style Guide or left for the Candidate to write from a Research Brief, which they review in the drawer before Fill types them.
 The ranking, filtering, dedupe, Resume Variant picks, pre-queueing and connection matching happen in `jaa refresh`, a deterministic program, `jaa gmail` matches emails to cards, and `jaa news` computes the hiring signals; your part is to hand them the dashboard state, review the picks `jaa refresh` is unsure about, write the Referral Drafts, gather the news in chat, apply what they produce, and tell the Candidate what changed.
 The current working directory is the Candidate folder.
 
@@ -43,7 +44,7 @@ If the publish fails, say so in the summary and carry on; the data still updates
 Start from a clean state folder:
 
 ```bash
-rm -rf .job-app-assist/refresh/state .job-app-assist/refresh/out
+rm -rf .job-app-assist/refresh/state .job-app-assist/refresh/out .job-app-assist/refresh/prepared
 mkdir -p .job-app-assist/refresh
 ```
 
@@ -62,11 +63,13 @@ Read with `ArtifactData`, saving the documents as files: pass `out_dir` as the a
   It holds one News Digest per day; it is empty before the first digest.
 - `action: "list"`, `collection: "referrals"`, every page.
   It holds the Referral Drafts earlier Refreshes wrote, and is empty until then.
+- `action: "list"`, `collection: "applications"`, every page, then `action: "list"`, `collection: "variantOverrides"`.
+  They hold the Prepared Applications already written (Refresh never replaces one, since the Candidate may have edited it) and the Resume Variants the Candidate chose in the drawer; both may be empty.
 
 Each read reports a `version` for every document.
 Use the Write tool to save `.job-app-assist/refresh/versions.json` mapping each postings, cards, news and referrals document you read to its version, for example `{ "postings/meta": 4, "postings/page-1": 4, "cards/0123456789ab": 2, "news/2026-11-09": 1, "referrals/0a1b2c3d4e5f": 2 }`, or `{}` when there were none.
 Card versions let Gmail tracking move a card without overwriting a move the Candidate makes at the same time; `jaa refresh` itself only creates new cards.
-Skips need no versions: Refresh never changes a skip.
+Skips and applications need no versions: Refresh never changes a skip, and only creates a Prepared Application where there is none.
 Do not open the saved files; `jaa refresh` reads them.
 
 ## 5. Build the Job List
@@ -337,7 +340,29 @@ Then send each batch in `news-writes.json` with `ArtifactData`, `action: "batch"
 The batch sets the day's digest (a second Refresh on the same day replaces it) and removes digests older than 90 days.
 If the news cannot be written, say so in the summary; the Job List is already saved.
 
-## 12. Summarize in chat
+## 12. Prepare Applications
+
+Queued Postings without a Prepared Application get one now, so the Candidate can review the answers before Fill.
+This step comes last because `jaa refresh` clears `.job-app-assist/refresh/out/`, and because the briefs reuse the company news you just gathered.
+
+```bash
+node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs prepare plan .job-app-assist/refresh
+```
+
+It reads each queued Greenhouse form's free-text questions from Greenhouse's public API, without opening the form, and saves the plan in `.job-app-assist/refresh/out/prepare-plan.json`.
+Postings on other sites, whose questions cannot be read ahead, are listed for Fill to prepare from the live form.
+If it says there is no Style Guide or it has no tone, skip this step and tell the Candidate in the summary that `/job-app-assist:setup` writes their Style Guide, which AI-drafted answers need.
+When it lists Postings to write, invoke the `job-app-assist:prepare` skill to draft their answers and Research Briefs, then build them:
+
+```bash
+node ${CLAUDE_PLUGIN_ROOT}/dist/jaa.mjs prepare build .job-app-assist/refresh
+```
+
+If it lists problems (a phrase the Style Guide avoids, a question left unanswered, a news link that is not https), fix those answers files and run it again.
+Send each batch in `.job-app-assist/refresh/out/application-writes.json` with `ArtifactData`, `action: "batch"`, exactly as listed, the same way as step 9.
+If the answers cannot be written, say so in the summary; Fill prepares any queued card that still has none.
+
+## 13. Summarize in chat
 
 Finish with a short summary built from the `jaa refresh` output, in plain words:
 
@@ -351,6 +376,7 @@ Finish with a short summary built from the `jaa refresh` output, in plain words:
   When Gmail was skipped, say why in one line: tracking is off or not chosen yet (they can run `/job-app-assist:setup` to switch it on), or Gmail is not connected (how to connect it);
 - Submitted cards with no reply in 14 days or more, from the last `jaa gmail` output, so the Candidate can send a short follow-up themselves;
 - the News Digest: the biggest hiring signal and one or two headlines worth reading, plus any gap `jaa news build` reported;
+- Prepared Applications: how many Postings got answers, how many answers are left for the Candidate to write from a Research Brief, that they review and edit them in each queued Posting's drawer, and how many Postings Fill will prepare from the form instead;
 - every failing Source, said plainly: which Source (or which watchlist company), what went wrong, and that today's Job List may be incomplete because of it;
 - Postings the Candidate added by URL that were left out, and why, so they can fix the details in the Sources panel or tune their Search Profile;
 - Source documents the summary says do not match the dashboard contract, with a suggestion to switch that Source off and on again in the Sources panel;

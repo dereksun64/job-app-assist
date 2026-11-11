@@ -10,6 +10,7 @@ import {
   type ChosenVariant,
   type JobListMeta,
   type Posting,
+  type PreparedApplication,
   type Skip,
   type SkipReason,
   type Referrals,
@@ -26,6 +27,7 @@ import {
   formatPostedAge,
 } from "./format.ts";
 import { PostingDrawer } from "./PostingDrawer.tsx";
+import type { SaveApplication } from "./PreparedAnswers.tsx";
 import type { JobListState } from "./useJobList.ts";
 import { saveProblem, type QueueActions, type QueueState } from "./useQueue.ts";
 
@@ -76,6 +78,10 @@ export interface ResumeVariantProps {
   onChooseVariant: (posting: Posting, variant: string) => Promise<void>;
   /** The Referral Drafts Refresh wrote, by Posting id. */
   referrals: ReadonlyMap<string, Referrals>;
+  /** The Prepared Applications, by Posting id. */
+  applications: ReadonlyMap<string, PreparedApplication>;
+  /** Saves the Candidate's change to a Prepared Application; null without a database. */
+  onSaveApplication: SaveApplication | null;
 }
 
 export interface PostingsTabProps extends ResumeVariantProps {
@@ -228,6 +234,8 @@ function JobList({
   overrides,
   onChooseVariant,
   referrals,
+  applications,
+  onSaveApplication,
 }: JobListProps) {
   const [filters, setFilters] = useState<Filters>(NO_FILTERS);
   const [openId, setOpenId] = useState<string | null>(null);
@@ -511,6 +519,9 @@ function JobList({
           override={overrides.get(open.id)}
           onChooseVariant={(variant) => onChooseVariant(open, variant)}
           referrals={openEntry.card ? referrals.get(open.id) : undefined}
+          application={
+            openEntry.card ? { doc: applications.get(open.id), save: onSaveApplication } : undefined
+          }
           onClose={() => {
             setOpenId(null);
           }}

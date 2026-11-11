@@ -2,13 +2,16 @@
  * `jaa`: the Toolkit's command-line entry point, bundled into plugin/dist/jaa.mjs.
  * Skills run it to check a document against the dashboard contract before writing it, and the
  * Refresh skill runs it to build the Job List and the News Digest and to move cards from Gmail,
- * the Tune skill to read skip patterns and show a settings diff, and the Fill skill to plan each
- * Fill, build the cards it writes and log token use.
+ * the Tune skill to read skip patterns and show a settings diff, the Fill skill to plan each
+ * Fill, build the cards it writes and log token use, and Refresh and Fill to prepare Prepared
+ * Applications.
  */
 import { validateDocument } from "../contract/index.ts";
 import type { FillIo } from "../fill/io.ts";
 import { runPrivateAnswers } from "../fill/private-answers.ts";
 import { FILL_USAGE, runFill } from "../fill/run.ts";
+import { PREPARE_USAGE, runPrepare } from "../prepare/run.ts";
+import { runStyleGuide } from "../prepare/style-guide.ts";
 import { runGmailCommand } from "../refresh/gmail.ts";
 import { runNewsCommand, type NewsIo } from "../refresh/news.ts";
 import { runRefreshCommand } from "../refresh/run.ts";
@@ -29,7 +32,9 @@ const USAGE = `Usage: jaa validate <collection> <doc-id> <file|->
        jaa settings-diff <current-file> <proposed-file|->
        jaa import-connections <export.csv> <out.json>
        jaa private-answers init|check <file>
+       jaa style-guide init|check <file>
 ${FILL_USAGE}
+${PREPARE_USAGE}
 
 validate       Checks one dashboard document (JSON, from a file or from stdin with -)
                against the dashboard contract. Exits 0 when it matches, 1 when it does not.
@@ -64,12 +69,23 @@ private-answers
                init creates the private file of sensitive answers from its template when
                it is missing, and never overwrites it; check names the blank answers
                without printing any answer. The file never goes to the dashboard.
+style-guide    init creates the Style Guide (tone, phrases to avoid, sample answers) from its
+               template when it is missing, and never overwrites it; check says what it
+               holds and fails when it has no tone yet.
 fill           plan lists the Queued cards to fill in Queue order (or the one --posting
                names) with each one's Resume Variant file, from the dashboard state saved
                in <dir>/state, and writes <dir>/out/plan.json. start marks a card as
                filling; finish records <dir>/results/<posting-id>.json on the card and
                logs the application's token use in <dir>/usage.jsonl. Both write the card
-               and its ArtifactData batch to <dir>/out.
+               and its ArtifactData batch to <dir>/out. The plan carries each card's
+               final answers from its Prepared Application.
+prepare        plan lists the Queued cards without a Prepared Application (from <dir>/state
+               and the cards in <dir>/out/cards), reading Greenhouse forms' free-text
+               questions ahead of Fill, and writes <dir>/out/prepare-plan.json. build
+               checks the answers in <dir>/prepared/<posting-id>.json against the plan,
+               the Style Guide and the contract, and writes the Prepared Applications and
+               their batch to <dir>/out. --posting builds one card's from the questions
+               Fill read on its form, and prints the answers to type.
 `;
 
 /** Runs the CLI and resolves its exit code. */
@@ -100,6 +116,15 @@ export async function runCli(argv: readonly string[], io: CliIo): Promise<number
     return runCheckResumes(manifest, settings, io);
   }
   if (argv[0] === "fill") return runFill(argv.slice(1), io);
+  if (argv[0] === "prepare") return runPrepare(argv.slice(1), io);
+  if (argv[0] === "style-guide") {
+    const [, step, file, ...rest] = argv;
+    if ((step !== "init" && step !== "check") || !file || rest.length > 0) {
+      io.stderr(USAGE);
+      return 2;
+    }
+    return runStyleGuide(step, file, io);
+  }
   if (argv[0] === "private-answers") {
     const [, step, file, ...rest] = argv;
     if ((step !== "init" && step !== "check") || !file || rest.length > 0) {

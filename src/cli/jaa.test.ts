@@ -331,3 +331,29 @@ describe("jaa private-answers and jaa fill", () => {
     expect(cli.out).toContain("jaa fill finish <dir> <posting-id> --version <n>");
   });
 });
+
+describe("jaa style-guide and jaa prepare", () => {
+  it("runs the style-guide steps and checks their arguments", async () => {
+    const cli = io();
+    expect(await runCli(["style-guide", "init", "style-guide.md"], cli)).toBe(0);
+    expect(cli.out).toBe("Created style-guide.md in the Candidate folder.\n");
+    expect(await runCli(["style-guide", "check", "style-guide.md"], cli)).toBe(1);
+    expect(await runCli(["style-guide", "show", "style-guide.md"], cli)).toBe(2);
+    expect(await runCli(["style-guide", "init"], cli)).toBe(2);
+  });
+
+  it("runs the prepare steps", async () => {
+    const cli = io();
+    expect(await runCli(["prepare", "plan", ".job-app-assist/refresh"], cli)).toBe(1);
+    expect(cli.err).toContain("There is no style-guide.md in the Candidate folder");
+    expect(await runCli(["prepare"], cli)).toBe(2);
+  });
+
+  it("lists them in its help", async () => {
+    const cli = io();
+    expect(await runCli(["--help"], cli)).toBe(0);
+    expect(cli.out).toContain("jaa style-guide init|check <file>");
+    expect(cli.out).toContain("jaa prepare plan <dir>");
+    expect(cli.out).toContain("jaa prepare build <dir> [--posting <posting-id>]");
+  });
+});

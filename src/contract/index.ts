@@ -2,6 +2,7 @@
  * The dashboard contract: the single definition of every document in the dashboard database.
  * Skills write only documents this module accepts, and the dashboard page reads through it.
  */
+import { APPLICATIONS_COLLECTION, validateApplicationDocument } from "./applications.ts";
 import { CARDS_COLLECTION, validateCardDocument } from "./cards.ts";
 import { NEWS_COLLECTION, validateNewsDocument } from "./news.ts";
 import { POSTINGS_COLLECTION, validatePostingsDocument } from "./postings.ts";
@@ -15,6 +16,7 @@ import {
   validateVariantOverrideDocument,
 } from "./variant-overrides.ts";
 
+export * from "./applications.ts";
 export * from "./cards.ts";
 export * from "./chosen-variant.ts";
 export * from "./news.ts";
@@ -45,6 +47,7 @@ const collections: Record<string, CollectionRule> = {
   [SOURCES_COLLECTION]: validateSourceDocument,
   [NEWS_COLLECTION]: validateNewsDocument,
   [REFERRALS_COLLECTION]: validateReferralsDocument,
+  [APPLICATIONS_COLLECTION]: validateApplicationDocument,
 };
 
 /** The collections the contract defines so far. */

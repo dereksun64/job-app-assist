@@ -30,6 +30,8 @@ Confirm the Search Profile and Resume Variants Claude drafts, and Claude publish
 Your resume files stay in your folder; the dashboard only knows their labels.
 Last, Setup creates `private-answers.md` in your folder: write your sensitive answers there (legal name and address, work authorization, education details, demographic questions) in your own editor.
 That file stays on your computer and never goes to your dashboard; leave blank anything you would rather answer on each form yourself.
+Then Setup writes your Style Guide, `style-guide.md`: how you sound, phrases you never use, and a few answers you wrote yourself.
+Every answer Claude drafts for you follows it, so it sounds like you rather than generic.
 
 ## Refresh
 
@@ -47,6 +49,22 @@ Queued Postings are ticked and highlighted in the Job List; tick or untick any P
 When you untick one, pick a quick reason (wrong role, location, company, too senior, or another reason): Refresh never queues that Posting again, and the Skipped filter lets you see and un-skip it.
 The Queued filter shows just your picks, and the bar at the bottom always shows how many are queued, with a link to the Progress board.
 Postings you haven't applied to stay queued from day to day with a badge saying how long they have waited, and after five days they are flagged as possibly closed.
+
+## Prepared Applications
+
+Each Refresh also prepares the free-text questions on your queued applications ("Why do you want to join Figma?", "Tell us about a project you are proud of").
+For Greenhouse forms it reads the questions ahead from Greenhouse's public job board, without opening the form; other sites are prepared by Fill from the live form.
+Claude drafts an answer to every question in your voice, following your Style Guide and your resume, and writes a Research Brief for the company: what it does, recent news, the team, how the role fits your background, and a LinkedIn search for its recruiters that you open yourself.
+
+Each question starts in one of two modes, by its type:
+
+- **AI draft**: Fill types the drafted answer, marked AI-drafted in the drawer so you know to read it closely.
+- **My own words**: questions about why this company or this role, where your own words count most, start here.
+  You write the answer from the Research Brief, typed or with your Mac's dictation, and Fill types only what you wrote; until you do, Fill leaves the question blank and flags it.
+
+Open a queued Posting to see its answers and Research Brief.
+Edit any answer, or switch any question between the two modes with one click; both texts are kept.
+The answers are free-text only: your personal details stay in `private-answers.md`.
 
 ## Sources
 
@@ -78,7 +96,8 @@ Claude works through the Queued column of your board in order, and each card sho
 Each application opens in its own new tab in Helium, in the Claude extension's tab group, apart from your own tabs, so you can keep using your computer.
 Claude clicks Simplify's "Autofill This Page" first, then reads every field, fixes what Simplify got wrong or left empty from your private answers file, and uploads the Resume Variant chosen for that Posting.
 Claude never presses submit: each filled card moves to Ready for Review, and its details list every field Claude flagged for you.
-Claude flags instead of guessing: questions it is unsure of, claims about you (such as "Do you meet the basic qualifications?"), answers missing from your private file, and free-text questions, which you write yourself for now.
+Free-text questions get your Prepared Application's answers: the AI draft, your edit of it, or your own words; a Posting with none is prepared from the form first.
+Claude flags instead of guessing: questions it is unsure of, claims about you (such as "Do you meet the basic qualifications?"), answers missing from your private file, and questions you chose to write yourself but have not written yet.
 Postings that need a sign-in or a new account (Workday, for example) stay Queued with a flag: sign in yourself in Helium and ask Claude to fill that Posting again.
 You can review and submit the first tabs while the rest are still filling.
 

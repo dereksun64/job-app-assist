@@ -1,8 +1,8 @@
 /**
  * The detail drawer: one Posting's details, its Resume Variant and the Candidate's choice of it,
- * and the Referral Drafts for a queued Posting. It is shared: the Postings tab opens it today,
- * and the Progress board opens the same drawer for its cards, adding its own sections (Stage,
- * prepared answers) as children.
+ * and, for a queued Posting, its Prepared Application (answers and Research Brief) and Referral
+ * Drafts. It is shared: the Postings tab and the Progress board open the same drawer, and the
+ * board adds its own sections (Stage, Fill) as children.
  */
 import type { ComponentChildren } from "preact";
 import { useEffect, useId, useRef, useState } from "preact/hooks";
@@ -15,6 +15,11 @@ import {
 } from "../contract/index.ts";
 import type { DbError } from "./db.ts";
 import { formatLevel, formatPostedAge } from "./format.ts";
+import {
+  PreparedAnswers,
+  ResearchBriefSection,
+  type ApplicationProps,
+} from "./PreparedAnswers.tsx";
 import { ReferralDrafts } from "./ReferralDrafts.tsx";
 
 export interface PostingDrawerProps {
@@ -27,6 +32,8 @@ export interface PostingDrawerProps {
   onChooseVariant: (variant: string) => Promise<void>;
   /** The Posting's Referral Drafts; pass them only while the Posting has a card. */
   referrals?: Referrals | undefined;
+  /** The Posting's Prepared Application and how to save changes; only while it has a card. */
+  application?: ApplicationProps | undefined;
   onClose: () => void;
   now: number;
   /** Sections the opening view adds below the Posting's details. */
@@ -74,6 +81,7 @@ export function PostingDrawer({
   override,
   onChooseVariant,
   referrals,
+  application,
   onClose,
   now,
   children,
@@ -210,6 +218,15 @@ export function PostingDrawer({
               </p>
             )}
           </section>
+
+          {application && <PreparedAnswers application={application} company={posting.company} />}
+          {application?.doc?.brief && (
+            <ResearchBriefSection
+              brief={application.doc.brief}
+              company={posting.company}
+              now={now}
+            />
+          )}
 
           {referrals && <ReferralDrafts referrals={referrals} company={posting.company} />}
 
