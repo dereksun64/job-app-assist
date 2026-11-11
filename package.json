@@ -13,7 +13,7 @@
     "format": "prettier --write .",
     "test": "vitest run",
     "validate:plugin": "claude plugin validate . --strict && claude plugin validate plugin --strict",
-    "eval": "claude plugin eval plugin",
+    "eval": "claude plugin eval plugin --allow-tools Bash WebSearch WebFetch",
     "ci": "npm run typecheck && npm run lint && npm test && npm run check:dist"
   },
   "devDependencies": {
