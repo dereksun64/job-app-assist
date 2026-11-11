@@ -2,3 +2,4 @@ node_modules
 coverage
 plugin/evals/results
 .DS_Store
+.claude/worktrees

@@ -268,6 +268,8 @@ It reads the forums' threads for the day, then prints the digest's day, the hiri
 ### Gather the news
 
 Hard rule 3 holds here: never open, search or link Blind or LinkedIn, even when the Candidate asks; offer the forums below instead.
+The News tab never carries a Blind or LinkedIn link you found or built yourself, search links included; a LinkedIn search link goes to the Candidate in chat or in a Research Brief, for them to click.
+When the Candidate asks for Blind or LinkedIn posts, decline, offer what the digest covers instead (forum highlights from r/csMajors, r/cscareerquestions and Hacker News, and news coverage of the companies they named), and tell them they can check those sites themselves.
 Pass `blocked_domains: ["teamblind.com", "linkedin.com"]` on every `WebSearch`, since searches otherwise return their posts.
 Write every summary in your own words, in a sentence or two, without quoting.
 
